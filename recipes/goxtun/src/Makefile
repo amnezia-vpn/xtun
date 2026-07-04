@@ -64,17 +64,20 @@ CFLAGS_$(1) = $(CFLAGS) -arch $(1)
 LDFLAGS_$(1) = $(LDFLAGS) -arch $(1)
 $(BUILD_DIR)/$(LIB_NAME)-$(1).a:
 	@mkdir -p $(BUILD_DIR)
-	$(GOARCH_DEFINE) $(GOOS_DEFINE) CGO_LDFLAGS=$(LDFLAGS_$(1)) CGO_CFLAGS=$(CFLAGS_$(1)) CGO_ENABLED=1 go build -ldflags=-w -o $@ -buildmode=c-archive
+	$(GOARCH_DEFINE) $(GOOS_DEFINE) CGO_LDFLAGS="$$(LDFLAGS_$(1))" CGO_CFLAGS="$$(CFLAGS_$(1))" CGO_ENABLED=1 go build -ldflags=-w -o $$@ -buildmode=c-archive
 $(BUILD_DIR)/$(LIB_NAME)-$(1).dylib:
 	@mkdir -p $(BUILD_DIR)
-	$(GOARCH_DEFINE) $(GOOS_DEFINE) CGO_LDFLAGS=$(LDFLAGS_$(1)) CGO_CFLAGS=$(CFLAGS_$(1)) CGO_ENABLED=1 go build -ldflags=-w -o $@ -buildmode=c-shared
+	$(GOARCH_DEFINE) $(GOOS_DEFINE) CGO_LDFLAGS="$$(LDFLAGS_$(1))" CGO_CFLAGS="$$(CFLAGS_$(1))" CGO_ENABLED=1 go build -ldflags=-w -o $$@ -buildmode=c-shared
 endef
-$(foreach ARCH,ARCHS,$(eval $(call,$(LIB_NAME)-singlearch,$(ARCH))))
+$(foreach ARCH,$(ARCHS),$(eval $(call $(LIB_NAME)-singlearch,$(ARCH))))
 
-$(BUILD_DIR)/$(LIB_NAME).a: $(foreach ARCH,ARCHS,$(BUILD_DIR)/$(LIB_NAME)-$(ARCH).a)
+$(BUILD_DIR)/$(LIB_NAME).a: $(foreach ARCH,$(ARCHS),$(BUILD_DIR)/$(LIB_NAME)-$(ARCH).a)
 	lipo -create -output $@ $^
-$(BUILD_DIR)/$(LIB_NAME).dylib: $(foreach ARCH,ARCHS,$(BUILD_DIR)/$(LIB_NAME)-$(ARCH).dylib)
+	cp $(BUILD_DIR)/$(LIB_NAME)-$(firstword $(ARCHS)).h $(BUILD_DIR)/$(LIB_NAME).h
+
+$(BUILD_DIR)/$(LIB_NAME).dylib: $(foreach ARCH,$(ARCHS),$(BUILD_DIR)/$(LIB_NAME)-$(ARCH).dylib)
 	lipo -create -output $@ $^
+	cp $(BUILD_DIR)/$(LIB_NAME)-$(firstword $(ARCHS)).h $(BUILD_DIR)/$(LIB_NAME).h
 
 else
 
