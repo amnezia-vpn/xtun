@@ -6,8 +6,8 @@ package main
 #include <string.h>
 #include <stdio.h>
 
-#ifndef GOGLUE_DEF
-#define GOGLUE_DEF
+#ifndef GOXTUN_DEF
+#define GOXTUN_DEF
 
 #ifdef _MSC_VER
 // MSVC does not support complex type definitions
@@ -17,26 +17,26 @@ typedef float _Fcomplex;
 typedef double _Dcomplex;
 #endif
 
-typedef int (*goglue_readcb)(void* b, int len, void *priv);
-static inline int goglue_readcb_invoke(goglue_readcb cb, void* b, int len, void *priv)
+typedef int (*goxtun_readcb)(void* b, int len, void *priv);
+static inline int goxtun_readcb_invoke(goxtun_readcb cb, void* b, int len, void *priv)
 {
 	return cb(b, len, priv);
 }
 
-typedef int (*goglue_writecb)(void* b, int len, void *priv);
-static inline int goglue_writecb_invoke(goglue_writecb cb, void* b, int len, void *priv)
+typedef int (*goxtun_writecb)(void* b, int len, void *priv);
+static inline int goxtun_writecb_invoke(goxtun_writecb cb, void* b, int len, void *priv)
 {
 	return cb(b, len, priv);
 }
 
-typedef int (*goglue_mtucb)(void *priv);
-static inline int goglue_mtucb_invoke(goglue_mtucb cb, void *priv)
+typedef int (*goxtun_mtucb)(void *priv);
+static inline int goxtun_mtucb_invoke(goxtun_mtucb cb, void *priv)
 {
 	return cb(priv);
 }
 
-typedef void (*goglue_logcb)(char *str, void *priv);
-static inline void goglue_logcb_invoke(goglue_logcb cb, char *str, void *priv)
+typedef void (*goxtun_logcb)(char *str, void *priv);
+static inline void goxtun_logcb_invoke(goxtun_logcb cb, char *str, void *priv)
 {
 	cb(str, priv);
 }
@@ -53,7 +53,7 @@ import (
 
 	"github.com/amnezia-vpn/amneziawg-go/device"
 	"github.com/amnezia-vpn/amneziawg-go/tun"
-	"github.com/amnezia-vpn/libxtun/goglue/awg"
+	"github.com/amnezia-vpn/libxtun/goxtun/awg"
 )
 
 func toCtx(v any) unsafe.Pointer {
@@ -67,20 +67,20 @@ func fromCtx[K any](ctx unsafe.Pointer) (*K, cgo.Handle) {
 	return o, h
 }
 
-//export goglue_awg_new
-func goglue_awg_new(
-	readCb C.goglue_readcb,
-	writeCb C.goglue_writecb,
-	mtuCb C.goglue_mtucb,
+//export goxtun_awg_new
+func goxtun_awg_new(
+	readCb C.goxtun_readcb,
+	writeCb C.goxtun_writecb,
+	mtuCb C.goxtun_mtucb,
 	tunPriv unsafe.Pointer,
-	verbosefCb C.goglue_logcb,
-	debugfCb C.goglue_logcb,
+	verbosefCb C.goxtun_logcb,
+	debugfCb C.goxtun_logcb,
 	logPriv unsafe.Pointer,
 ) unsafe.Pointer {
 	tun := awg.NewTun(
 		func(bufs [][]byte, sizes []int, offset int) (n int, err error) {
 			buf := bufs[0][offset:]
-			ret := int(C.goglue_readcb_invoke(readCb, unsafe.Pointer(&buf[0]), C.int(len(buf)), tunPriv))
+			ret := int(C.goxtun_readcb_invoke(readCb, unsafe.Pointer(&buf[0]), C.int(len(buf)), tunPriv))
 			if ret < 0 {
 				return 0, errors.New("failed")
 			}
@@ -88,14 +88,14 @@ func goglue_awg_new(
 			return 1, nil
 		}, func(bufs [][]byte, offset int) (int, error) {
 			buf := bufs[0][offset:]
-			ret := int(C.goglue_writecb_invoke(writeCb, unsafe.Pointer(&buf[0]), C.int(len(buf)), tunPriv))
+			ret := int(C.goxtun_writecb_invoke(writeCb, unsafe.Pointer(&buf[0]), C.int(len(buf)), tunPriv))
 			if ret < 0 {
 				return 0, errors.New("failed")
 			}
 			return 1, nil
 		},
 		func() (int, error) {
-			ret := int(C.goglue_mtucb_invoke(mtuCb, tunPriv))
+			ret := int(C.goxtun_mtucb_invoke(mtuCb, tunPriv))
 			if ret < 0 {
 				return 0, errors.New("failed")
 			}
@@ -107,13 +107,13 @@ func goglue_awg_new(
 		Verbosef: func(format string, args ...any) {
 			str := fmt.Sprintf(format, args...)
 			cstr := C.CString(str)
-			C.goglue_logcb_invoke(verbosefCb, cstr, logPriv)
+			C.goxtun_logcb_invoke(verbosefCb, cstr, logPriv)
 			C.free(unsafe.Pointer(cstr))
 		},
 		Errorf: func(format string, args ...any) {
 			str := fmt.Sprintf(format, args...)
 			cstr := C.CString(str)
-			C.goglue_logcb_invoke(debugfCb, cstr, logPriv)
+			C.goxtun_logcb_invoke(debugfCb, cstr, logPriv)
 			C.free(unsafe.Pointer(cstr))
 		},
 	}
@@ -122,23 +122,23 @@ func goglue_awg_new(
 	return toCtx(i)
 }
 
-//export goglue_awg_free
-func goglue_awg_free(ctx unsafe.Pointer) {
+//export goxtun_awg_free
+func goxtun_awg_free(ctx unsafe.Pointer) {
 	i, h := fromCtx[awg.Instance](ctx)
 
 	defer h.Delete()
 	i.Close()
 }
 
-//export goglue_awg_event
-func goglue_awg_event(ctx unsafe.Pointer, event C.int) {
+//export goxtun_awg_event
+func goxtun_awg_event(ctx unsafe.Pointer, event C.int) {
 	i, _ := fromCtx[awg.Instance](ctx)
 
 	i.TriggerEvent(tun.Event(event))
 }
 
-//export goglue_awg_set_ipc
-func goglue_awg_set_ipc(ctx unsafe.Pointer, ipc *C.char) *C.char {
+//export goxtun_awg_set_ipc
+func goxtun_awg_set_ipc(ctx unsafe.Pointer, ipc *C.char) *C.char {
 	i, _ := fromCtx[awg.Instance](ctx)
 
 	goIpc := C.GoString(ipc)

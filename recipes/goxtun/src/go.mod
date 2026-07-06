@@ -1,4 +1,4 @@
-module github.com/amnezia-vpn/libxtun/goglue
+module github.com/amnezia-vpn/libxtun/goxtun
 
 go 1.26
 

@@ -1,5 +1,5 @@
-BUILD_DIR = build
-LIB_NAME = libgoxtun
+BUILD_DIR ?= build
+LIB_NAME ?= libgoxtun
 
 GOOS_linux = linux
 GOOS_android = android

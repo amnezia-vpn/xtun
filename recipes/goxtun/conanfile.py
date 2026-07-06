@@ -9,37 +9,34 @@ import os
 class Goxtun(ConanFile):
     name = "goxtun"
     version = "1.0.0"
-
-    package_type = "application"
     settings = "os", "arch"
+    options = {
+        "shared": [True, False],
+        "fPIC": [True, False]
+    }
+    default_options = {
+        "shared": False,
+        "fPIC": True
+    }
 
+    implements = ["auto_shared_fpic"]
     exports_sources = "src/*"
 
     @property
     def _archs(self):
         return str(self.settings.arch).split("|")
-    
-    @property
-    def _is_multiarch(self):
-        return len(self._archs) > 1
 
     def layout(self):
-        basic_layout(self)
+        basic_layout(self, src_folder="src")
 
     def build_requirements(self):
         self.tool_requires("go/1.26.0")
-
-    def validate(self):
-        if not self._goos or not self._goarchs:
-            raise ConanInvalidConfiguration(
-                f"{self.name} v{self.version} does not support {self.settings.os} {self.settings.arch}"
-            )
 
     def generate(self):
         tc = AutotoolsToolchain(self)
         tc.apple_arch_flag = None
         env = tc.environment()
-        env.define("OS", self.settings.os)
+        env.define("OS", str(self.settings.os).lower())
         env.define("GOPATH", os.path.join(self.build_folder, "go"))
         env.define("GOMODCACHE", os.path.join(self.build_folder, "go", "pkg", "mod"))
         env.define("GOCACHE", os.path.join(self.build_folder, ".cache", "go-build"))
@@ -49,7 +46,7 @@ class Goxtun(ConanFile):
     def build(self):
         with chdir(self, self.source_folder):
             at = Autotools(self)
-            at.make()
+            at.make(target=("shared" if self.options.shared else "archive"))
 
     def package(self):
         copy(self, "libgoxtun.a", self.build_folder, dst=os.path.join(self.package_folder, "lib"), keep_path=False)
