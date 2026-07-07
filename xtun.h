@@ -22,6 +22,7 @@ struct libxtun_proxy {
 int libxtun_proxy_new(struct libxtun_proxy *proxy, enum libxtun_proxy_proto proto, const char *conf);
 void libxtun_proxy_free(struct libxtun_proxy *proxy);
 
+/* `list` points to `size` consecutive NUL-terminated strings. */
 struct libxtun_str_list {
     const char *list;
     size_t size;
