@@ -47,7 +47,7 @@ class Tunnel {
     std::string m_name;
     int m_ifIndex;
 
-    int m_netlinkFd;
+    int m_monitorFd;
     int m_cancelFd;
     std::thread m_monitor;
     std::atomic<bool> m_up;

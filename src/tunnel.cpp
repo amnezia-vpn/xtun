@@ -17,6 +17,23 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
+#elif defined(__APPLE__)
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
+#include <sys/kern_control.h>
+#include <sys/socket.h>
+#include <sys/sockio.h>
+#include <sys/sys_domain.h>
+#include <sys/uio.h>
+
+#include <net/if.h>
+#include <net/if_utun.h>
+#include <net/route.h>
+#include <netinet/in.h>
+
+#include <cerrno>
+#include <cstring>
 #endif
 
 namespace {
@@ -45,14 +62,14 @@ Tunnel::Tunnel(const libxtun_tunnel_opts &opts)
       m_killswitchMode(opts.killswitch_mode),
       m_tunFd(-1),
       m_ifIndex(-1),
-      m_netlinkFd(-1),
+      m_monitorFd(-1),
       m_cancelFd(-1),
       m_up(false),
       m_mtu(0) {}
 
 Tunnel::~Tunnel() {
     stopMonitor();
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
     if (m_tunFd >= 0) {
         ::close(m_tunFd);
     }
@@ -104,6 +121,59 @@ int Tunnel::openTun() {
 
     startMonitor();
     return 0;
+#elif defined(__APPLE__)
+    int fd = ::socket(AF_SYSTEM, SOCK_DGRAM, SYSPROTO_CONTROL);
+    if (fd < 0) {
+        return -1;
+    }
+
+    // Resolve the utun kernel control and connect to it. sc_unit == 0 asks the
+    // kernel to assign the next free utun unit (utunN).
+    struct ctl_info ctlInfo;
+    std::memset(&ctlInfo, 0, sizeof(ctlInfo));
+    std::strncpy(ctlInfo.ctl_name, UTUN_CONTROL_NAME, sizeof(ctlInfo.ctl_name) - 1);
+    if (::ioctl(fd, CTLIOCGINFO, &ctlInfo) < 0) {
+        ::close(fd);
+        return -1;
+    }
+
+    struct sockaddr_ctl sc;
+    std::memset(&sc, 0, sizeof(sc));
+    sc.sc_len = sizeof(sc);
+    sc.sc_family = AF_SYSTEM;
+    sc.ss_sysaddr = AF_SYS_CONTROL;
+    sc.sc_id = ctlInfo.ctl_id;
+    sc.sc_unit = 0;
+
+    if (::connect(fd, reinterpret_cast<struct sockaddr *>(&sc), sizeof(sc)) < 0) {
+        ::close(fd);
+        return -1;
+    }
+    ::fcntl(fd, F_SETFD, FD_CLOEXEC);
+
+    m_tunFd = fd;
+
+    // The kernel picks the name (utunN); read it back off the control socket.
+    char ifname[IFNAMSIZ];
+    socklen_t ifnameLen = sizeof(ifname);
+    if (::getsockopt(fd, SYSPROTO_CONTROL, UTUN_OPT_IFNAME, ifname, &ifnameLen) < 0) {
+        ::close(fd);
+        m_tunFd = -1;
+        return -1;
+    }
+    m_name = ifname;
+
+    m_ifIndex = static_cast<int>(::if_nametoindex(m_name.c_str()));
+    if (m_ifIndex == 0) {
+        ::close(fd);
+        m_tunFd = -1;
+        return -1;
+    }
+
+    m_mtu = mtu();
+
+    startMonitor();
+    return 0;
 #else
     return -1;
 #endif
@@ -112,6 +182,21 @@ int Tunnel::openTun() {
 int Tunnel::read(void *buf, size_t len) {
 #if defined(__linux__)
     return static_cast<int>(::read(m_tunFd, buf, len));
+#elif defined(__APPLE__)
+    // utun prepends a 4-byte address-family header; strip it with a scatter
+    // read so callers still deal in raw IP packets.
+    unsigned char hdr[4];
+    struct iovec iov[2];
+    iov[0].iov_base = hdr;
+    iov[0].iov_len = sizeof(hdr);
+    iov[1].iov_base = buf;
+    iov[1].iov_len = len;
+
+    ssize_t n = ::readv(m_tunFd, iov, 2);
+    if (n < static_cast<ssize_t>(sizeof(hdr))) {
+        return -1;
+    }
+    return static_cast<int>(n - sizeof(hdr));
 #else
     (void)buf;
     (void)len;
@@ -122,6 +207,34 @@ int Tunnel::read(void *buf, size_t len) {
 int Tunnel::write(const void *buf, size_t len) {
 #if defined(__linux__)
     return static_cast<int>(::write(m_tunFd, buf, len));
+#elif defined(__APPLE__)
+    // utun expects a 4-byte address-family header; prepend it with a scatter
+    // write, deriving the family from the IP version nibble.
+    if (len == 0) {
+        return -1;
+    }
+    unsigned char version = static_cast<const unsigned char *>(buf)[0] >> 4;
+    unsigned char af;
+    if (version == 4) {
+        af = AF_INET;
+    } else if (version == 6) {
+        af = AF_INET6;
+    } else {
+        return -1;
+    }
+
+    unsigned char hdr[4] = {0, 0, 0, af};
+    struct iovec iov[2];
+    iov[0].iov_base = hdr;
+    iov[0].iov_len = sizeof(hdr);
+    iov[1].iov_base = const_cast<void *>(buf);
+    iov[1].iov_len = len;
+
+    ssize_t n = ::writev(m_tunFd, iov, 2);
+    if (n < static_cast<ssize_t>(sizeof(hdr))) {
+        return -1;
+    }
+    return static_cast<int>(n - sizeof(hdr));
 #else
     (void)buf;
     (void)len;
@@ -130,11 +243,12 @@ int Tunnel::write(const void *buf, size_t len) {
 }
 
 int Tunnel::mtu() const {
-#if defined(__linux__)
-    int sock = ::socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+#if defined(__linux__) || defined(__APPLE__)
+    int sock = ::socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
         return -1;
     }
+    ::fcntl(sock, F_SETFD, FD_CLOEXEC);
 
     struct ifreq ifr;
     std::memset(&ifr, 0, sizeof(ifr));
@@ -154,8 +268,8 @@ int Tunnel::mtu() const {
 
 void Tunnel::startMonitor() {
 #if defined(__linux__)
-    m_netlinkFd = ::socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
-    if (m_netlinkFd < 0) {
+    m_monitorFd = ::socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
+    if (m_monitorFd < 0) {
         return;
     }
 
@@ -163,18 +277,26 @@ void Tunnel::startMonitor() {
     std::memset(&addr, 0, sizeof(addr));
     addr.nl_family = AF_NETLINK;
     addr.nl_groups = RTMGRP_LINK;
-    if (::bind(m_netlinkFd, reinterpret_cast<struct sockaddr *>(&addr), sizeof(addr)) < 0) {
-        ::close(m_netlinkFd);
-        m_netlinkFd = -1;
+    if (::bind(m_monitorFd, reinterpret_cast<struct sockaddr *>(&addr), sizeof(addr)) < 0) {
+        ::close(m_monitorFd);
+        m_monitorFd = -1;
         return;
     }
 
     m_cancelFd = ::eventfd(0, EFD_CLOEXEC);
     if (m_cancelFd < 0) {
-        ::close(m_netlinkFd);
-        m_netlinkFd = -1;
+        ::close(m_monitorFd);
+        m_monitorFd = -1;
         return;
     }
+
+    m_monitor = std::thread(&Tunnel::monitorLoop, this);
+#elif defined(__APPLE__)
+    m_monitorFd = ::socket(AF_ROUTE, SOCK_RAW, AF_UNSPEC);
+    if (m_monitorFd < 0) {
+        return;
+    }
+    ::fcntl(m_monitorFd, F_SETFD, FD_CLOEXEC);
 
     m_monitor = std::thread(&Tunnel::monitorLoop, this);
 #endif
@@ -187,13 +309,24 @@ void Tunnel::stopMonitor() {
         (void)::write(m_cancelFd, &one, sizeof(one));
         m_monitor.join();
     }
-    if (m_netlinkFd >= 0) {
-        ::close(m_netlinkFd);
-        m_netlinkFd = -1;
+    if (m_monitorFd >= 0) {
+        ::close(m_monitorFd);
+        m_monitorFd = -1;
     }
     if (m_cancelFd >= 0) {
         ::close(m_cancelFd);
         m_cancelFd = -1;
+    }
+#elif defined(__APPLE__)
+    // Route sockets have no eventfd equivalent; shutting the socket down
+    // unblocks the monitor thread's read() so it can exit.
+    if (m_monitor.joinable()) {
+        ::shutdown(m_monitorFd, SHUT_RDWR);
+        m_monitor.join();
+    }
+    if (m_monitorFd >= 0) {
+        ::close(m_monitorFd);
+        m_monitorFd = -1;
     }
 #endif
 }
@@ -201,7 +334,7 @@ void Tunnel::stopMonitor() {
 void Tunnel::monitorLoop() {
 #if defined(__linux__)
     struct pollfd fds[2];
-    fds[0].fd = m_netlinkFd;
+    fds[0].fd = m_monitorFd;
     fds[0].events = POLLIN;
     fds[1].fd = m_cancelFd;
     fds[1].events = POLLIN;
@@ -224,7 +357,7 @@ void Tunnel::monitorLoop() {
             continue;
         }
 
-        int len = static_cast<int>(::recv(m_netlinkFd, buf, sizeof(buf), 0));
+        int len = static_cast<int>(::recv(m_monitorFd, buf, sizeof(buf), 0));
         if (len < 0) {
             if (errno == EINTR) {
                 continue;
@@ -259,6 +392,39 @@ void Tunnel::monitorLoop() {
                     m_onEvent(Event::MtuUpdate);
                 }
             }
+        }
+    }
+#elif defined(__APPLE__)
+    alignas(4) char buf[4096];
+
+    for (;;) {
+        ssize_t n = ::read(m_monitorFd, buf, sizeof(buf));
+        if (n < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            break;
+        }
+        if (n == 0) {
+            break;  // socket shut down => cancelled
+        }
+        if (n < static_cast<ssize_t>(sizeof(struct if_msghdr))) {
+            continue;
+        }
+
+        struct if_msghdr *ifm = reinterpret_cast<struct if_msghdr *>(buf);
+        if (ifm->ifm_type != RTM_IFINFO || ifm->ifm_index != m_ifIndex) {
+            continue;
+        }
+
+        bool nowUp = (ifm->ifm_flags & IFF_UP) != 0;
+        if (nowUp != m_up.exchange(nowUp) && m_onEvent) {
+            m_onEvent(nowUp ? Event::Up : Event::Down);
+        }
+
+        int newMtu = static_cast<int>(ifm->ifm_data.ifi_mtu);
+        if (newMtu != m_mtu.exchange(newMtu) && m_onEvent) {
+            m_onEvent(Event::MtuUpdate);
         }
     }
 #endif
@@ -299,4 +465,3 @@ void libxtun_tunnel_free(struct libxtun_tunnel *tun) {
     delete reinterpret_cast<libxtun::Tunnel*>(tun->handle);
     tun->handle = nullptr;
 }
-
