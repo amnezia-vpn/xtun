@@ -9,6 +9,7 @@ set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES
 project(xtun)
 
 find_package(goxtun REQUIRED)
+find_package(Threads REQUIRED)
 
 add_library(${PROJECT_NAME}
     ${CMAKE_CURRENT_LIST_DIR}/src/proxy.cpp
@@ -17,7 +18,7 @@ add_library(${PROJECT_NAME}
 target_include_directories(${PROJECT_NAME} PUBLIC
     ${CMAKE_CURRENT_LIST_DIR}
 )
-target_link_libraries(${PROJECT_NAME} PUBLIC amnezia::goxtun)
+target_link_libraries(${PROJECT_NAME} PUBLIC amnezia::goxtun Threads::Threads)
 
 if(WIN32)
     find_package(wintun REQUIRED)
