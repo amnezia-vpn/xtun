@@ -46,9 +46,9 @@ ifdef is_windows
 shared: $(BUILD_DIR)/$(LIB_NAME).lib
 
 $(BUILD_DIR)/$(LIB_NAME).lib: $(BUILD_DIR)/$(LIB_NAME).dll
-	cd $(BUILD_DIR) && gendef $<
-	cd $(BUILD_DIR) && dlltool -d $(BUILD_DIR)/$(LIB_NAME).def -l $@ -D $<
-	rm $(BUILD_DIR)/$(LIB_DEF)
+	cd $(BUILD_DIR) && gendef $(LIB_NAME).dll
+	cd $(BUILD_DIR) && dlltool -d $(LIB_NAME).def -l $(LIB_NAME).lib -D $(LIB_NAME).dll
+	rm $(BUILD_DIR)/$(LIB_NAME).def
 
 $(BUILD_DIR)/$(LIB_NAME).dll:
 	@mkdir -p $(BUILD_DIR)
