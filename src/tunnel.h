@@ -7,6 +7,10 @@
 #include <thread>
 #include <vector>
 
+#if defined(_WIN32)
+#include <wintun.h>
+#endif
+
 #ifndef TUNNEL_H
 #define TUNNEL_H
 
@@ -53,6 +57,23 @@ class Tunnel {
     std::atomic<bool> m_up;
     std::atomic<int> m_mtu;
     std::function<void(Event)> m_onEvent;
+
+#if defined(_WIN32)
+    HMODULE m_wintun = nullptr;
+    WINTUN_ADAPTER_HANDLE m_adapter = nullptr;
+    WINTUN_SESSION_HANDLE m_session = nullptr;
+    HANDLE m_readWait = nullptr;
+    std::atomic<bool> m_closing{false};
+    std::atomic<int> m_running{0};
+    int m_forcedMtu = 1420;
+
+    WINTUN_CLOSE_ADAPTER_FUNC *m_closeAdapter = nullptr;
+    WINTUN_END_SESSION_FUNC *m_endSession = nullptr;
+    WINTUN_RECEIVE_PACKET_FUNC *m_receivePacket = nullptr;
+    WINTUN_RELEASE_RECEIVE_PACKET_FUNC *m_releaseReceivePacket = nullptr;
+    WINTUN_ALLOCATE_SEND_PACKET_FUNC *m_allocateSendPacket = nullptr;
+    WINTUN_SEND_PACKET_FUNC *m_sendPacket = nullptr;
+#endif
 };
 
 

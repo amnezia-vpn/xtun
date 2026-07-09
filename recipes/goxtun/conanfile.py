@@ -22,6 +22,11 @@ class Goxtun(ConanFile):
     implements = ["auto_shared_fpic"]
     exports_sources = "src/*"
 
+    def config_options(self):
+        # Windows has no c-archive target, only a DLL plus a generated import lib.
+        if self.settings.os == "Windows":
+            del self.options.shared
+
     @property
     def _archs(self):
         return str(self.settings.arch).split("|")
@@ -40,13 +45,15 @@ class Goxtun(ConanFile):
         env.define("GOPATH", os.path.join(self.build_folder, "go"))
         env.define("GOMODCACHE", os.path.join(self.build_folder, "go", "pkg", "mod"))
         env.define("GOCACHE", os.path.join(self.build_folder, ".cache", "go-build"))
-        env.define("BUILD_DIR", self.build_folder)
+        # Make's shell is POSIX sh, which would eat Windows path backslashes.
+        env.define("BUILD_DIR", self.build_folder.replace("\\", "/"))
         tc.generate(env)
 
     def build(self):
         with chdir(self, self.source_folder):
             at = Autotools(self)
-            at.make(target=("shared" if self.options.shared else "archive"))
+            shared = self.options.get_safe("shared", True)
+            at.make(target=("shared" if shared else "archive"))
 
     def package(self):
         copy(self, "libgoxtun.a", self.build_folder, dst=os.path.join(self.package_folder, "lib"), keep_path=False)
