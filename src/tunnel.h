@@ -25,6 +25,7 @@ class Tunnel {
     ~Tunnel();
 
     int openTun();
+    int adoptTun(int fd);
 
     int read(void *buf, size_t len);
     int write(const void *buf, size_t len);
@@ -39,6 +40,7 @@ class Tunnel {
     void attachProxy(Proxy &&proxy);
 
   private:
+    int finishOpen();
     void startMonitor();
     void stopMonitor();
     void monitorLoop();
