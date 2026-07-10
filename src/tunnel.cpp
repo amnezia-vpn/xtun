@@ -108,7 +108,7 @@ int Tunnel::openTun() {
 #if defined(__linux__)
     int fd = ::open("/dev/net/tun", O_RDWR | O_CLOEXEC);
     if (fd < 0) {
-        return -1;
+        return LIBXTUN_ERR_DRIVER_UNAVAILABLE;
     }
 
     struct ifreq ifr;
@@ -118,7 +118,7 @@ int Tunnel::openTun() {
 
     if (::ioctl(fd, TUNSETIFF, &ifr) < 0) {
         ::close(fd);
-        return -1;
+        return LIBXTUN_ERR_DEVICE_CREATE;
     }
 
     m_tunFd = fd;
@@ -131,7 +131,7 @@ int Tunnel::openTun() {
     if (sock < 0) {
         ::close(fd);
         m_tunFd = -1;
-        return -1;
+        return LIBXTUN_ERR_SYSTEM;
     }
 
     std::memset(&ifr, 0, sizeof(ifr));
@@ -140,7 +140,7 @@ int Tunnel::openTun() {
         ::close(sock);
         ::close(fd);
         m_tunFd = -1;
-        return -1;
+        return LIBXTUN_ERR_SYSTEM;
     }
     ::close(sock);
     m_ifIndex = ifr.ifr_ifindex;
@@ -148,11 +148,11 @@ int Tunnel::openTun() {
     m_mtu = mtu();
 
     startMonitor();
-    return 0;
+    return LIBXTUN_OK;
 #elif defined(__APPLE__)
     int fd = ::socket(AF_SYSTEM, SOCK_DGRAM, SYSPROTO_CONTROL);
     if (fd < 0) {
-        return -1;
+        return LIBXTUN_ERR_DRIVER_UNAVAILABLE;
     }
 
     // Resolve the utun kernel control and connect to it. sc_unit == 0 asks the
@@ -162,7 +162,7 @@ int Tunnel::openTun() {
     std::strncpy(ctlInfo.ctl_name, UTUN_CONTROL_NAME, sizeof(ctlInfo.ctl_name) - 1);
     if (::ioctl(fd, CTLIOCGINFO, &ctlInfo) < 0) {
         ::close(fd);
-        return -1;
+        return LIBXTUN_ERR_DRIVER_UNAVAILABLE;
     }
 
     struct sockaddr_ctl sc;
@@ -175,7 +175,7 @@ int Tunnel::openTun() {
 
     if (::connect(fd, reinterpret_cast<struct sockaddr *>(&sc), sizeof(sc)) < 0) {
         ::close(fd);
-        return -1;
+        return LIBXTUN_ERR_DEVICE_CREATE;
     }
     ::fcntl(fd, F_SETFD, FD_CLOEXEC);
 
@@ -187,7 +187,7 @@ int Tunnel::openTun() {
     if (::getsockopt(fd, SYSPROTO_CONTROL, UTUN_OPT_IFNAME, ifname, &ifnameLen) < 0) {
         ::close(fd);
         m_tunFd = -1;
-        return -1;
+        return LIBXTUN_ERR_SYSTEM;
     }
     m_name = ifname;
 
@@ -195,18 +195,18 @@ int Tunnel::openTun() {
     if (m_ifIndex == 0) {
         ::close(fd);
         m_tunFd = -1;
-        return -1;
+        return LIBXTUN_ERR_SYSTEM;
     }
 
     m_mtu = mtu();
 
     startMonitor();
-    return 0;
+    return LIBXTUN_OK;
 #elif defined(_WIN32)
     m_wintun = LoadLibraryExW(L"wintun.dll", nullptr,
                               LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
     if (m_wintun == nullptr) {
-        return -1;
+        return LIBXTUN_ERR_DRIVER_UNAVAILABLE;
     }
 
     auto *createAdapter = reinterpret_cast<WINTUN_CREATE_ADAPTER_FUNC *>(
@@ -236,14 +236,14 @@ int Tunnel::openTun() {
         m_sendPacket == nullptr) {
         FreeLibrary(m_wintun);
         m_wintun = nullptr;
-        return -1;
+        return LIBXTUN_ERR_DRIVER_UNAVAILABLE;
     }
 
     m_adapter = createAdapter(L"xtun", L"WireGuard", nullptr);
     if (m_adapter == nullptr) {
         FreeLibrary(m_wintun);
         m_wintun = nullptr;
-        return -1;
+        return LIBXTUN_ERR_DEVICE_CREATE;
     }
 
     m_session = startSession(m_adapter, 0x800000);  // 8 MiB ring
@@ -252,15 +252,15 @@ int Tunnel::openTun() {
         m_adapter = nullptr;
         FreeLibrary(m_wintun);
         m_wintun = nullptr;
-        return -1;
+        return LIBXTUN_ERR_DEVICE_CREATE;
     }
 
     m_readWait = getReadWaitEvent(m_session);
     m_name = "xtun";
     m_mtu = m_forcedMtu;
-    return 0;
+    return LIBXTUN_OK;
 #else
-    return -1;
+    return LIBXTUN_ERR_DRIVER_UNAVAILABLE;
 #endif
 }
 
@@ -555,28 +555,30 @@ void Tunnel::monitorLoop() {
 
 int libxtun_tunnel_new(struct libxtun_tunnel *tun, struct libxtun_tunnel_opts *opts) {
     if (tun == nullptr || opts == nullptr) {
-        return -1;
+        return LIBXTUN_ERR_INVALID_ARGS;
     }
 
     tun->handle = nullptr;
 
     if (opts->size < sizeof(*opts)) {
-        return -1;
+        return LIBXTUN_ERR_INVALID_ARGS;
     }
 
     if (opts->killswitch_mode < LIBXTUN_KILLSWITCH_MODE_DISABLED ||
         opts->killswitch_mode > LIBXTUN_KILLSWITCH_MODE_LAST) {
-        return -1;
+        return LIBXTUN_ERR_INVALID_ARGS;
     }
 
     auto *obj = new libxtun::Tunnel(*opts);
-    if (obj->openTun() != 0) {
+
+    int rc = obj->openTun();
+    if (rc != LIBXTUN_OK) {
         delete obj;
-        return -1;
+        return rc;
     }
 
     tun->handle = obj;
-    return 0;
+    return LIBXTUN_OK;
 }
 
 void libxtun_tunnel_free(struct libxtun_tunnel *tun) {
