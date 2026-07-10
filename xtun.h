@@ -7,6 +7,17 @@
 extern "C" {
 #endif
 
+enum libxtun_error {
+    LIBXTUN_OK = 0,
+    LIBXTUN_ERR_INVALID_ARGS = -1,
+    /* The tun backend could not be loaded or is not present. */
+    LIBXTUN_ERR_DRIVER_UNAVAILABLE = -2,
+    /* The backend is present but refused to create the device. */
+    LIBXTUN_ERR_DEVICE_CREATE = -3,
+    /* An ancillary system call failed. */
+    LIBXTUN_ERR_SYSTEM = -4,
+};
+
 enum libxtun_proxy_proto {
     LIBXTUN_PROXY_PROTO_AWG = 1,
     LIBXTUN_PROXY_PROTO_VLESS = 2,
