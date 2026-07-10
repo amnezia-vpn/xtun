@@ -124,31 +124,7 @@ int Tunnel::openTun() {
     m_tunFd = fd;
     m_name = ifr.ifr_name;
 
-    // SIOCGIFINDEX is a socket ioctl, not a tun-device one, so it must go
-    // through an AF_INET socket rather than the tun fd. The interface is
-    // selected by name (ifr_name), not by the socket.
-    int sock = ::socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
-    if (sock < 0) {
-        ::close(fd);
-        m_tunFd = -1;
-        return LIBXTUN_ERR_SYSTEM;
-    }
-
-    std::memset(&ifr, 0, sizeof(ifr));
-    std::strncpy(ifr.ifr_name, m_name.c_str(), IFNAMSIZ - 1);
-    if (::ioctl(sock, SIOCGIFINDEX, &ifr) < 0) {
-        ::close(sock);
-        ::close(fd);
-        m_tunFd = -1;
-        return LIBXTUN_ERR_SYSTEM;
-    }
-    ::close(sock);
-    m_ifIndex = ifr.ifr_ifindex;
-
-    m_mtu = mtu();
-
-    startMonitor();
-    return LIBXTUN_OK;
+    return finishOpen();
 #elif defined(__APPLE__)
     int fd = ::socket(AF_SYSTEM, SOCK_DGRAM, SYSPROTO_CONTROL);
     if (fd < 0) {
@@ -191,17 +167,7 @@ int Tunnel::openTun() {
     }
     m_name = ifname;
 
-    m_ifIndex = static_cast<int>(::if_nametoindex(m_name.c_str()));
-    if (m_ifIndex == 0) {
-        ::close(fd);
-        m_tunFd = -1;
-        return LIBXTUN_ERR_SYSTEM;
-    }
-
-    m_mtu = mtu();
-
-    startMonitor();
-    return LIBXTUN_OK;
+    return finishOpen();
 #elif defined(_WIN32)
     m_wintun = LoadLibraryExW(L"wintun.dll", nullptr,
                               LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -263,6 +229,89 @@ int Tunnel::openTun() {
     return LIBXTUN_ERR_DRIVER_UNAVAILABLE;
 #endif
 }
+
+int Tunnel::adoptTun(int fd) {
+#if defined(__linux__) || defined(__APPLE__)
+    fd = ::fcntl(fd, F_DUPFD_CLOEXEC, 0);
+    if (fd < 0) {
+        return errno == EBADF ? LIBXTUN_ERR_INVALID_ARGS : LIBXTUN_ERR_SYSTEM;
+    }
+#endif
+#if defined(__linux__)
+    // read()/write() exchange raw IP packets, so the device must have been
+    // attached with IFF_TUN | IFF_NO_PI; the flags cannot be changed on an
+    // already-attached descriptor.
+    struct ifreq ifr;
+    std::memset(&ifr, 0, sizeof(ifr));
+    if (::ioctl(fd, TUNGETIFF, &ifr) < 0 ||
+        (ifr.ifr_flags & IFF_TUN) == 0 || (ifr.ifr_flags & IFF_NO_PI) == 0) {
+        ::close(fd);
+        return LIBXTUN_ERR_DEVICE_CREATE;
+    }
+
+    m_tunFd = fd;
+    m_name = ifr.ifr_name;
+
+    return finishOpen();
+#elif defined(__APPLE__)
+    char ifname[IFNAMSIZ];
+    socklen_t ifnameLen = sizeof(ifname);
+    if (::getsockopt(fd, SYSPROTO_CONTROL, UTUN_OPT_IFNAME, ifname, &ifnameLen) < 0) {
+        ::close(fd);
+        return LIBXTUN_ERR_DEVICE_CREATE;
+    }
+
+    m_tunFd = fd;
+    m_name = ifname;
+
+    return finishOpen();
+#else
+    (void)fd;
+    return LIBXTUN_ERR_DRIVER_UNAVAILABLE;
+#endif
+}
+
+#if defined(__linux__) || defined(__APPLE__)
+
+int Tunnel::finishOpen() {
+#if defined(__linux__)
+    // SIOCGIFINDEX is a socket ioctl, not a tun-device one, so it must go
+    // through an AF_INET socket rather than the tun fd. The interface is
+    // selected by name (ifr_name), not by the socket.
+    int sock = ::socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    if (sock < 0) {
+        ::close(m_tunFd);
+        m_tunFd = -1;
+        return LIBXTUN_ERR_SYSTEM;
+    }
+
+    struct ifreq ifr;
+    std::memset(&ifr, 0, sizeof(ifr));
+    std::strncpy(ifr.ifr_name, m_name.c_str(), IFNAMSIZ - 1);
+    if (::ioctl(sock, SIOCGIFINDEX, &ifr) < 0) {
+        ::close(sock);
+        ::close(m_tunFd);
+        m_tunFd = -1;
+        return LIBXTUN_ERR_SYSTEM;
+    }
+    ::close(sock);
+    m_ifIndex = ifr.ifr_ifindex;
+#elif defined(__APPLE__)
+    m_ifIndex = static_cast<int>(::if_nametoindex(m_name.c_str()));
+    if (m_ifIndex == 0) {
+        ::close(m_tunFd);
+        m_tunFd = -1;
+        return LIBXTUN_ERR_SYSTEM;
+    }
+#endif
+
+    m_mtu = mtu();
+
+    startMonitor();
+    return LIBXTUN_OK;
+}
+
+#endif
 
 int Tunnel::read(void *buf, size_t len) {
 #if defined(__linux__)
@@ -572,6 +621,32 @@ int libxtun_tunnel_new(struct libxtun_tunnel *tun, struct libxtun_tunnel_opts *o
     auto *obj = new libxtun::Tunnel(*opts);
 
     int rc = obj->openTun();
+    if (rc != LIBXTUN_OK) {
+        delete obj;
+        return rc;
+    }
+
+    tun->handle = obj;
+    return LIBXTUN_OK;
+}
+
+int libxtun_tunnel_new_from_tunfile(struct libxtun_tunnel *tun, int fd) {
+    if (tun == nullptr || fd < 0) {
+        return LIBXTUN_ERR_INVALID_ARGS;
+    }
+
+    tun->handle = nullptr;
+
+    // The device was created and configured elsewhere, so no tunnel options
+    // accompany it: empty DNS lists, killswitch disabled.
+    struct libxtun_tunnel_opts opts;
+    std::memset(&opts, 0, sizeof(opts));
+    opts.size = sizeof(opts);
+    opts.killswitch_mode = LIBXTUN_KILLSWITCH_MODE_DISABLED;
+
+    auto *obj = new libxtun::Tunnel(opts);
+
+    int rc = obj->adoptTun(fd);
     if (rc != LIBXTUN_OK) {
         delete obj;
         return rc;

@@ -58,7 +58,7 @@ struct libxtun_tunnel_opts {
 };
 
 int libxtun_tunnel_new(struct libxtun_tunnel *tun, struct libxtun_tunnel_opts *opts);
-int libxtun_tunnel_new_from_tunfile(struct libxtun_tunnel *tun, const char *path);
+int libxtun_tunnel_new_from_tunfile(struct libxtun_tunnel *tun, int fd);
 void libxtun_tunnel_free(struct libxtun_tunnel *tun);
 
 void libxtun_tunnel_attach_proxy(struct libxtun_tunnel *tun, struct libxtun_proxy *proxy);
