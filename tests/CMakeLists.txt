@@ -1,6 +1,9 @@
 add_executable(tunnel_up tunnel_up.c)
 target_link_libraries(tunnel_up PRIVATE xtun)
 
+add_executable(tunnel_adopt tunnel_adopt.c)
+target_link_libraries(tunnel_adopt PRIVATE xtun)
+
 if(WIN32)
     find_file(GOXTUN_DLL libgoxtun.dll PATH_SUFFIXES bin)
     find_file(WINTUN_DLL wintun.dll PATH_SUFFIXES bin)
