@@ -26,6 +26,7 @@ class Tunnel {
 
     int openTun();
     int adoptTun(int fd);
+    int adoptTunByName(const char *name);
 
     int read(void *buf, size_t len);
     int write(const void *buf, size_t len);
@@ -41,6 +42,14 @@ class Tunnel {
 
   private:
     int finishOpen();
+#if defined(_WIN32)
+    int loadWintun(WINTUN_CREATE_ADAPTER_FUNC *&createAdapter,
+                   WINTUN_OPEN_ADAPTER_FUNC *&openAdapter,
+                   WINTUN_START_SESSION_FUNC *&startSession,
+                   WINTUN_GET_READ_WAIT_EVENT_FUNC *&getReadWaitEvent);
+    int startWintunSession(WINTUN_START_SESSION_FUNC *startSession,
+                           WINTUN_GET_READ_WAIT_EVENT_FUNC *getReadWaitEvent);
+#endif
     void startMonitor();
     void stopMonitor();
     void monitorLoop();
