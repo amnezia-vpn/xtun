@@ -169,41 +169,15 @@ int Tunnel::openTun() {
 
     return finishOpen();
 #elif defined(_WIN32)
-    m_wintun = LoadLibraryExW(L"wintun.dll", nullptr,
-                              LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
-    if (m_wintun == nullptr) {
-        return LIBXTUN_ERR_DRIVER_UNAVAILABLE;
+    WINTUN_CREATE_ADAPTER_FUNC *createAdapter;
+    WINTUN_OPEN_ADAPTER_FUNC *openAdapter;
+    WINTUN_START_SESSION_FUNC *startSession;
+    WINTUN_GET_READ_WAIT_EVENT_FUNC *getReadWaitEvent;
+    int rc = loadWintun(createAdapter, openAdapter, startSession, getReadWaitEvent);
+    if (rc != LIBXTUN_OK) {
+        return rc;
     }
-
-    auto *createAdapter = reinterpret_cast<WINTUN_CREATE_ADAPTER_FUNC *>(
-        GetProcAddress(m_wintun, "WintunCreateAdapter"));
-    auto *startSession = reinterpret_cast<WINTUN_START_SESSION_FUNC *>(
-        GetProcAddress(m_wintun, "WintunStartSession"));
-    auto *getReadWaitEvent = reinterpret_cast<WINTUN_GET_READ_WAIT_EVENT_FUNC *>(
-        GetProcAddress(m_wintun, "WintunGetReadWaitEvent"));
-
-    m_closeAdapter = reinterpret_cast<WINTUN_CLOSE_ADAPTER_FUNC *>(
-        GetProcAddress(m_wintun, "WintunCloseAdapter"));
-    m_endSession = reinterpret_cast<WINTUN_END_SESSION_FUNC *>(
-        GetProcAddress(m_wintun, "WintunEndSession"));
-    m_receivePacket = reinterpret_cast<WINTUN_RECEIVE_PACKET_FUNC *>(
-        GetProcAddress(m_wintun, "WintunReceivePacket"));
-    m_releaseReceivePacket = reinterpret_cast<WINTUN_RELEASE_RECEIVE_PACKET_FUNC *>(
-        GetProcAddress(m_wintun, "WintunReleaseReceivePacket"));
-    m_allocateSendPacket = reinterpret_cast<WINTUN_ALLOCATE_SEND_PACKET_FUNC *>(
-        GetProcAddress(m_wintun, "WintunAllocateSendPacket"));
-    m_sendPacket = reinterpret_cast<WINTUN_SEND_PACKET_FUNC *>(
-        GetProcAddress(m_wintun, "WintunSendPacket"));
-
-    if (createAdapter == nullptr || startSession == nullptr ||
-        getReadWaitEvent == nullptr || m_closeAdapter == nullptr ||
-        m_endSession == nullptr || m_receivePacket == nullptr ||
-        m_releaseReceivePacket == nullptr || m_allocateSendPacket == nullptr ||
-        m_sendPacket == nullptr) {
-        FreeLibrary(m_wintun);
-        m_wintun = nullptr;
-        return LIBXTUN_ERR_DRIVER_UNAVAILABLE;
-    }
+    (void)openAdapter;
 
     m_adapter = createAdapter(L"xtun", L"WireGuard", nullptr);
     if (m_adapter == nullptr) {
@@ -212,19 +186,8 @@ int Tunnel::openTun() {
         return LIBXTUN_ERR_DEVICE_CREATE;
     }
 
-    m_session = startSession(m_adapter, 0x800000);  // 8 MiB ring
-    if (m_session == nullptr) {
-        m_closeAdapter(m_adapter);
-        m_adapter = nullptr;
-        FreeLibrary(m_wintun);
-        m_wintun = nullptr;
-        return LIBXTUN_ERR_DEVICE_CREATE;
-    }
-
-    m_readWait = getReadWaitEvent(m_session);
     m_name = "xtun";
-    m_mtu = m_forcedMtu;
-    return LIBXTUN_OK;
+    return startWintunSession(startSession, getReadWaitEvent);
 #else
     return LIBXTUN_ERR_DRIVER_UNAVAILABLE;
 #endif
@@ -270,6 +233,143 @@ int Tunnel::adoptTun(int fd) {
     return LIBXTUN_ERR_DRIVER_UNAVAILABLE;
 #endif
 }
+
+int Tunnel::adoptTunByName(const char *name) {
+#if defined(__linux__)
+    if (std::strlen(name) >= IFNAMSIZ) {
+        return LIBXTUN_ERR_INVALID_ARGS;
+    }
+
+    // TUNSETIFF creates a fresh device when the name is free, so adoption
+    // must first check that the interface already exists.
+    int sock = ::socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    if (sock < 0) {
+        return LIBXTUN_ERR_SYSTEM;
+    }
+
+    struct ifreq ifr;
+    std::memset(&ifr, 0, sizeof(ifr));
+    std::strncpy(ifr.ifr_name, name, IFNAMSIZ - 1);
+    if (::ioctl(sock, SIOCGIFINDEX, &ifr) < 0) {
+        ::close(sock);
+        return LIBXTUN_ERR_DEVICE_CREATE;
+    }
+    ::close(sock);
+
+    int fd = ::open("/dev/net/tun", O_RDWR | O_CLOEXEC);
+    if (fd < 0) {
+        return LIBXTUN_ERR_DRIVER_UNAVAILABLE;
+    }
+
+    std::memset(&ifr, 0, sizeof(ifr));
+    ifr.ifr_flags = IFF_TUN | IFF_NO_PI;
+    std::strncpy(ifr.ifr_name, name, IFNAMSIZ - 1);
+    if (::ioctl(fd, TUNSETIFF, &ifr) < 0) {
+        ::close(fd);
+        return LIBXTUN_ERR_DEVICE_CREATE;
+    }
+
+    m_tunFd = fd;
+    m_name = ifr.ifr_name;
+
+    return finishOpen();
+#elif defined(_WIN32)
+    WINTUN_CREATE_ADAPTER_FUNC *createAdapter;
+    WINTUN_OPEN_ADAPTER_FUNC *openAdapter;
+    WINTUN_START_SESSION_FUNC *startSession;
+    WINTUN_GET_READ_WAIT_EVENT_FUNC *getReadWaitEvent;
+    int rc = loadWintun(createAdapter, openAdapter, startSession, getReadWaitEvent);
+    if (rc != LIBXTUN_OK) {
+        return rc;
+    }
+    (void)createAdapter;
+
+    WCHAR wname[256];
+    if (MultiByteToWideChar(CP_UTF8, 0, name, -1, wname, 256) == 0) {
+        FreeLibrary(m_wintun);
+        m_wintun = nullptr;
+        return LIBXTUN_ERR_INVALID_ARGS;
+    }
+
+    m_adapter = openAdapter(wname);
+    if (m_adapter == nullptr) {
+        FreeLibrary(m_wintun);
+        m_wintun = nullptr;
+        return LIBXTUN_ERR_DEVICE_CREATE;
+    }
+
+    m_name = name;
+    return startWintunSession(startSession, getReadWaitEvent);
+#else
+    (void)name;
+    return LIBXTUN_ERR_DRIVER_UNAVAILABLE;
+#endif
+}
+
+#if defined(_WIN32)
+
+int Tunnel::loadWintun(WINTUN_CREATE_ADAPTER_FUNC *&createAdapter,
+                       WINTUN_OPEN_ADAPTER_FUNC *&openAdapter,
+                       WINTUN_START_SESSION_FUNC *&startSession,
+                       WINTUN_GET_READ_WAIT_EVENT_FUNC *&getReadWaitEvent) {
+    m_wintun = LoadLibraryExW(L"wintun.dll", nullptr,
+                              LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (m_wintun == nullptr) {
+        return LIBXTUN_ERR_DRIVER_UNAVAILABLE;
+    }
+
+    createAdapter = reinterpret_cast<WINTUN_CREATE_ADAPTER_FUNC *>(
+        GetProcAddress(m_wintun, "WintunCreateAdapter"));
+    openAdapter = reinterpret_cast<WINTUN_OPEN_ADAPTER_FUNC *>(
+        GetProcAddress(m_wintun, "WintunOpenAdapter"));
+    startSession = reinterpret_cast<WINTUN_START_SESSION_FUNC *>(
+        GetProcAddress(m_wintun, "WintunStartSession"));
+    getReadWaitEvent = reinterpret_cast<WINTUN_GET_READ_WAIT_EVENT_FUNC *>(
+        GetProcAddress(m_wintun, "WintunGetReadWaitEvent"));
+
+    m_closeAdapter = reinterpret_cast<WINTUN_CLOSE_ADAPTER_FUNC *>(
+        GetProcAddress(m_wintun, "WintunCloseAdapter"));
+    m_endSession = reinterpret_cast<WINTUN_END_SESSION_FUNC *>(
+        GetProcAddress(m_wintun, "WintunEndSession"));
+    m_receivePacket = reinterpret_cast<WINTUN_RECEIVE_PACKET_FUNC *>(
+        GetProcAddress(m_wintun, "WintunReceivePacket"));
+    m_releaseReceivePacket = reinterpret_cast<WINTUN_RELEASE_RECEIVE_PACKET_FUNC *>(
+        GetProcAddress(m_wintun, "WintunReleaseReceivePacket"));
+    m_allocateSendPacket = reinterpret_cast<WINTUN_ALLOCATE_SEND_PACKET_FUNC *>(
+        GetProcAddress(m_wintun, "WintunAllocateSendPacket"));
+    m_sendPacket = reinterpret_cast<WINTUN_SEND_PACKET_FUNC *>(
+        GetProcAddress(m_wintun, "WintunSendPacket"));
+
+    if (createAdapter == nullptr || openAdapter == nullptr ||
+        startSession == nullptr || getReadWaitEvent == nullptr ||
+        m_closeAdapter == nullptr || m_endSession == nullptr ||
+        m_receivePacket == nullptr || m_releaseReceivePacket == nullptr ||
+        m_allocateSendPacket == nullptr || m_sendPacket == nullptr) {
+        FreeLibrary(m_wintun);
+        m_wintun = nullptr;
+        return LIBXTUN_ERR_DRIVER_UNAVAILABLE;
+    }
+
+    return LIBXTUN_OK;
+}
+
+int Tunnel::startWintunSession(WINTUN_START_SESSION_FUNC *startSession,
+                               WINTUN_GET_READ_WAIT_EVENT_FUNC *getReadWaitEvent) {
+    m_session = startSession(m_adapter, 0x800000);  // 8 MiB ring
+    if (m_session == nullptr) {
+        m_closeAdapter(m_adapter);
+        m_adapter = nullptr;
+        FreeLibrary(m_wintun);
+        m_wintun = nullptr;
+        return LIBXTUN_ERR_DEVICE_CREATE;
+    }
+
+    m_readWait = getReadWaitEvent(m_session);
+    m_mtu = m_forcedMtu;
+    return LIBXTUN_OK;
+}
+
+#endif
 
 #if defined(__linux__) || defined(__APPLE__)
 
@@ -647,6 +747,30 @@ int libxtun_tunnel_new_from_tunfile(struct libxtun_tunnel *tun, int fd) {
     auto *obj = new libxtun::Tunnel(opts);
 
     int rc = obj->adoptTun(fd);
+    if (rc != LIBXTUN_OK) {
+        delete obj;
+        return rc;
+    }
+
+    tun->handle = obj;
+    return LIBXTUN_OK;
+}
+
+int libxtun_tunnel_new_from_name(struct libxtun_tunnel *tun, const char *name) {
+    if (tun == nullptr || name == nullptr || name[0] == '\0') {
+        return LIBXTUN_ERR_INVALID_ARGS;
+    }
+
+    tun->handle = nullptr;
+
+    struct libxtun_tunnel_opts opts;
+    std::memset(&opts, 0, sizeof(opts));
+    opts.size = sizeof(opts);
+    opts.killswitch_mode = LIBXTUN_KILLSWITCH_MODE_DISABLED;
+
+    auto *obj = new libxtun::Tunnel(opts);
+
+    int rc = obj->adoptTunByName(name);
     if (rc != LIBXTUN_OK) {
         delete obj;
         return rc;
