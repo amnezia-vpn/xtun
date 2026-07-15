@@ -1,20 +1,27 @@
-add_executable(tunnel_up tunnel_up.c)
-target_link_libraries(tunnel_up PRIVATE xtun)
+find_package(GTest REQUIRED)
+include(GoogleTest)
 
-add_executable(tunnel_adopt tunnel_adopt.c)
-target_link_libraries(tunnel_adopt PRIVATE xtun)
+add_executable(xtun_tests
+    tunnel_contract_test.cpp
+    tunnel_lifecycle_test.cpp
+)
+target_link_libraries(xtun_tests PRIVATE xtun GTest::gtest GTest::gtest_main)
 
 if(WIN32)
-    find_file(GOXTUN_DLL libgoxtun.dll PATH_SUFFIXES bin)
-    find_file(WINTUN_DLL wintun.dll PATH_SUFFIXES bin)
+    add_custom_command(TARGET xtun_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_RUNTIME_DLLS:xtun_tests> $<TARGET_FILE_DIR:xtun_tests>
+        COMMAND_EXPAND_LISTS)
 
-    if(GOXTUN_DLL AND WINTUN_DLL)
-        add_custom_command(TARGET tunnel_up POST_BUILD
+    get_target_property(_wintun_include amnezia::wintun INTERFACE_INCLUDE_DIRECTORIES)
+    find_file(WINTUN_DLL wintun.dll HINTS ${_wintun_include} PATH_SUFFIXES ../bin bin)
+    if(WINTUN_DLL)
+        add_custom_command(TARGET xtun_tests POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    ${GOXTUN_DLL} ${WINTUN_DLL} $<TARGET_FILE_DIR:tunnel_up>)
+                    ${WINTUN_DLL} $<TARGET_FILE_DIR:xtun_tests>)
     else()
-        message(WARNING
-            "libgoxtun.dll / wintun.dll not found. Pass -DGOXTUN_DLL=... -DWINTUN_DLL=..., "
-            "or copy them next to tunnel_up manually.")
+        message(WARNING "wintun.dll not found; copy it next to xtun_tests manually.")
     endif()
 endif()
+
+gtest_discover_tests(xtun_tests)
