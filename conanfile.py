@@ -6,6 +6,7 @@ class Xtun(ConanFile):
 
     def requirements(self):
         self.requires("goxtun/1.0.0")
+        self.requires("awgconfig/1.0.20260618.2")
         if self.settings.os == "Windows":
             self.requires("wintun/0.14.1")
 

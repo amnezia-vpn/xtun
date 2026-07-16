@@ -62,7 +62,9 @@ int libxtun_tunnel_new_from_tunfile(struct libxtun_tunnel *tun, int fd);
 int libxtun_tunnel_new_from_name(struct libxtun_tunnel *tun, const char *name);
 void libxtun_tunnel_free(struct libxtun_tunnel *tun);
 
-void libxtun_tunnel_attach_proxy(struct libxtun_tunnel *tun, struct libxtun_proxy *proxy);
+/* Returns LIBXTUN_OK once the proxy is running against the tunnel, or a
+ * negative libxtun_error if it could not be started. */
+int libxtun_tunnel_attach_proxy(struct libxtun_tunnel *tun, struct libxtun_proxy *proxy);
 
 #ifdef __cplusplus
 }

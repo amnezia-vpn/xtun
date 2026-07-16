@@ -4,17 +4,16 @@
 
 #if defined(__linux__) || defined(__APPLE__)
 #include <cerrno>
+#include <cstdint>
 
 #include <fcntl.h>
+#include <poll.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
 
 #if defined(__linux__)
-#include <cstdint>
-
-#include <poll.h>
 #include <sys/eventfd.h>
 
 #include <linux/if.h>
@@ -75,20 +74,30 @@ Tunnel::Tunnel(const libxtun_tunnel_opts &opts)
       m_ifIndex(-1),
       m_monitorFd(-1),
       m_cancelFd(-1),
+      m_readCancelRd(-1),
+      m_readCancelWr(-1),
       m_up(false),
       m_mtu(0) {}
 
 Tunnel::~Tunnel() {
     stopMonitor();
+    cancelRead();
+    if (m_proxy != nullptr) {
+        m_proxy->stop();
+        m_proxy->m_tunnel = nullptr;
+        m_proxy = nullptr;
+    }
 #if defined(__linux__) || defined(__APPLE__)
     if (m_tunFd >= 0) {
         ::close(m_tunFd);
     }
-#elif defined(_WIN32)
-    m_closing.store(true);
-    if (m_readWait != nullptr) {
-        SetEvent(m_readWait);
+    if (m_readCancelRd >= 0) {
+        ::close(m_readCancelRd);
     }
+    if (m_readCancelWr >= 0 && m_readCancelWr != m_readCancelRd) {
+        ::close(m_readCancelWr);
+    }
+#elif defined(_WIN32)
     while (m_running.load() != 0) {
         std::this_thread::yield();
     }
@@ -405,6 +414,27 @@ int Tunnel::finishOpen() {
     }
 #endif
 
+#if defined(__linux__)
+    m_readCancelRd = m_readCancelWr = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    if (m_readCancelRd < 0) {
+        ::close(m_tunFd);
+        m_tunFd = -1;
+        return LIBXTUN_ERR_SYSTEM;
+    }
+#elif defined(__APPLE__)
+    int cancelPipe[2];
+    if (::pipe(cancelPipe) < 0) {
+        ::close(m_tunFd);
+        m_tunFd = -1;
+        return LIBXTUN_ERR_SYSTEM;
+    }
+    ::fcntl(cancelPipe[0], F_SETFD, FD_CLOEXEC);
+    ::fcntl(cancelPipe[1], F_SETFD, FD_CLOEXEC);
+    ::fcntl(cancelPipe[0], F_SETFL, O_NONBLOCK);
+    m_readCancelRd = cancelPipe[0];
+    m_readCancelWr = cancelPipe[1];
+#endif
+
     m_mtu = mtu();
 
     startMonitor();
@@ -414,6 +444,32 @@ int Tunnel::finishOpen() {
 #endif
 
 int Tunnel::read(void *buf, size_t len) {
+#if defined(__linux__) || defined(__APPLE__)
+    if (m_tunFd < 0) {
+        return -1;
+    }
+
+    struct pollfd fds[2];
+    fds[0].fd = m_tunFd;
+    fds[0].events = POLLIN;
+    fds[1].fd = m_readCancelRd;
+    fds[1].events = POLLIN;
+
+    for (;;) {
+        if (::poll(fds, 2, -1) < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return -1;
+        }
+        if (fds[1].revents & POLLIN) {
+            return -1;
+        }
+        if (fds[0].revents & (POLLIN | POLLERR | POLLHUP)) {
+            break;
+        }
+    }
+#endif
 #if defined(__linux__)
     return static_cast<int>(::read(m_tunFd, buf, len));
 #elif defined(__APPLE__)
@@ -536,6 +592,79 @@ int Tunnel::mtu() const {
 #endif
 }
 
+int Tunnel::attachProxy(Proxy *proxy) {
+    if (proxy == nullptr || proxy->m_tunnel != nullptr || m_proxy != nullptr) {
+        return LIBXTUN_ERR_INVALID_ARGS;
+    }
+
+    ProxyIo io;
+    io.read = [this](void *buf, int len) { return this->read(buf, static_cast<size_t>(len)); };
+    io.write = [this](const void *buf, int len) { return this->write(buf, static_cast<size_t>(len)); };
+    io.mtu = [this]() { return this->currentMtu(); };
+
+#if defined(__linux__) || defined(__APPLE__)
+    if (m_readCancelRd >= 0) {
+        uint64_t drained;
+        while (::read(m_readCancelRd, &drained, sizeof(drained)) > 0) {
+        }
+    }
+#elif defined(_WIN32)
+    m_closing.store(false);
+#endif
+
+    m_proxy = proxy;
+    proxy->m_tunnel = this;
+
+    int rc = proxy->start(io);
+    if (rc != LIBXTUN_OK) {
+        proxy->m_tunnel = nullptr;
+        m_proxy = nullptr;
+        return rc;
+    }
+    return LIBXTUN_OK;
+}
+
+void Tunnel::detachProxy(Proxy *proxy) {
+    if (m_proxy == proxy) {
+        m_proxy = nullptr;
+    }
+}
+
+void Tunnel::cancelRead() {
+#if defined(__linux__) || defined(__APPLE__)
+    if (m_readCancelWr >= 0) {
+        uint64_t one = 1;
+        (void)::write(m_readCancelWr, &one, sizeof(one));
+    }
+#elif defined(_WIN32)
+    m_closing.store(true);
+    if (m_readWait != nullptr) {
+        SetEvent(m_readWait);
+    }
+#endif
+}
+
+void Tunnel::emit(Event ev) {
+    if (m_onEvent) {
+        m_onEvent(ev);
+    }
+    if (m_proxy == nullptr) {
+        return;
+    }
+
+    switch (ev) {
+        case Event::Up:
+            m_proxy->event(ProxyEvent::Up);
+            break;
+        case Event::Down:
+            m_proxy->event(ProxyEvent::Down);
+            break;
+        case Event::MtuUpdate:
+            m_proxy->event(ProxyEvent::MtuUpdate);
+            break;
+    }
+}
+
 void Tunnel::startMonitor() {
 #if defined(__linux__)
     m_monitorFd = ::socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
@@ -647,8 +776,8 @@ void Tunnel::monitorLoop() {
             }
 
             bool nowUp = (ifi->ifi_flags & IFF_RUNNING) != 0;
-            if (nowUp != m_up.exchange(nowUp) && m_onEvent) {
-                m_onEvent(nowUp ? Event::Up : Event::Down);
+            if (nowUp != m_up.exchange(nowUp)) {
+                emit(nowUp ? Event::Up : Event::Down);
             }
 
             int rtaLen = static_cast<int>(IFLA_PAYLOAD(nh));
@@ -658,8 +787,8 @@ void Tunnel::monitorLoop() {
                     continue;
                 }
                 int newMtu = *reinterpret_cast<int *>(RTA_DATA(rta));
-                if (newMtu != m_mtu.exchange(newMtu) && m_onEvent) {
-                    m_onEvent(Event::MtuUpdate);
+                if (newMtu != m_mtu.exchange(newMtu)) {
+                    emit(Event::MtuUpdate);
                 }
             }
         }
@@ -688,13 +817,13 @@ void Tunnel::monitorLoop() {
         }
 
         bool nowUp = (ifm->ifm_flags & IFF_UP) != 0;
-        if (nowUp != m_up.exchange(nowUp) && m_onEvent) {
-            m_onEvent(nowUp ? Event::Up : Event::Down);
+        if (nowUp != m_up.exchange(nowUp)) {
+            emit(nowUp ? Event::Up : Event::Down);
         }
 
         int newMtu = static_cast<int>(ifm->ifm_data.ifi_mtu);
-        if (newMtu != m_mtu.exchange(newMtu) && m_onEvent) {
-            m_onEvent(Event::MtuUpdate);
+        if (newMtu != m_mtu.exchange(newMtu)) {
+            emit(Event::MtuUpdate);
         }
     }
 #endif
@@ -786,4 +915,13 @@ void libxtun_tunnel_free(struct libxtun_tunnel *tun) {
     }
     delete reinterpret_cast<libxtun::Tunnel*>(tun->handle);
     tun->handle = nullptr;
+}
+
+int libxtun_tunnel_attach_proxy(struct libxtun_tunnel *tun, struct libxtun_proxy *proxy) {
+    if (tun == nullptr || tun->handle == nullptr || proxy == nullptr || proxy->handle == nullptr) {
+        return LIBXTUN_ERR_INVALID_ARGS;
+    }
+
+    auto *obj = reinterpret_cast<libxtun::Tunnel*>(tun->handle);
+    return obj->attachProxy(reinterpret_cast<libxtun::Proxy*>(proxy->handle));
 }

@@ -62,7 +62,7 @@ func toCtx(v any) unsafe.Pointer {
 }
 
 func fromCtx[K any](ctx unsafe.Pointer) (*K, cgo.Handle) {
-	h := *(*cgo.Handle)(ctx)
+	h := cgo.Handle(uintptr(ctx))
 	o, _ := h.Value().(*K)
 	return o, h
 }
@@ -137,12 +137,11 @@ func goxtun_awg_event(ctx unsafe.Pointer, event C.int) {
 	i.TriggerEvent(tun.Event(event))
 }
 
-//export goxtun_awg_set_ipc
-func goxtun_awg_set_ipc(ctx unsafe.Pointer, ipc *C.char) *C.char {
+//export goxtun_awg_serve_uapi
+func goxtun_awg_serve_uapi(ctx unsafe.Pointer, name *C.char) *C.char {
 	i, _ := fromCtx[awg.Instance](ctx)
 
-	goIpc := C.GoString(ipc)
-	if err := i.IpcSet(goIpc); err != nil {
+	if err := i.ServeUAPI(C.GoString(name)); err != nil {
 		return C.CString(err.Error())
 	}
 	return nil
