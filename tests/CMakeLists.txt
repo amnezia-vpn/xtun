@@ -2,10 +2,14 @@ find_package(GTest REQUIRED)
 include(GoogleTest)
 
 add_executable(xtun_tests
+    awg_roundtrip_test.cpp
+    awg_tunnel_test.cpp
+    proxy_attach_test.cpp
     tunnel_contract_test.cpp
     tunnel_lifecycle_test.cpp
 )
-target_link_libraries(xtun_tests PRIVATE xtun GTest::gtest GTest::gtest_main)
+target_link_libraries(xtun_tests PRIVATE xtun amnezia::awgconfig GTest::gtest GTest::gtest_main)
+target_include_directories(xtun_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
 if(WIN32)
     add_custom_command(TARGET xtun_tests POST_BUILD
@@ -24,4 +28,4 @@ if(WIN32)
     endif()
 endif()
 
-gtest_discover_tests(xtun_tests)
+gtest_discover_tests(xtun_tests PROPERTIES TIMEOUT 5)

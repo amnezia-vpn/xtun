@@ -38,10 +38,15 @@ class Tunnel {
     int currentMtu() const { return m_mtu; }
     void onEvent(std::function<void(Event)> cb) { m_onEvent = std::move(cb); }
 
-    void attachProxy(Proxy &&proxy);
+    int attachProxy(Proxy *proxy);
 
   private:
+    friend class Proxy;
+
+    void detachProxy(Proxy *proxy);
+    void cancelRead();
     int finishOpen();
+    void emit(Event ev);
 #if defined(_WIN32)
     int loadWintun(WINTUN_CREATE_ADAPTER_FUNC *&createAdapter,
                    WINTUN_OPEN_ADAPTER_FUNC *&openAdapter,
@@ -64,10 +69,13 @@ class Tunnel {
 
     int m_monitorFd;
     int m_cancelFd;
+    int m_readCancelRd;
+    int m_readCancelWr;
     std::thread m_monitor;
     std::atomic<bool> m_up;
     std::atomic<int> m_mtu;
     std::function<void(Event)> m_onEvent;
+    Proxy *m_proxy = nullptr;
 
 #if defined(_WIN32)
     HMODULE m_wintun = nullptr;
