@@ -1,6 +1,8 @@
 #include <xtun.h>
 
 #include <functional>
+#include <string>
+#include <vector>
 
 #ifndef PROXY_H
 #define PROXY_H
@@ -27,6 +29,8 @@ class Proxy {
     virtual int start(const ProxyIo &io) = 0;
     virtual void event(ProxyEvent ev) = 0;
     virtual void stop() = 0;
+
+    virtual std::vector<std::string> routes() = 0;
 
     void bind(struct libxtun_proxy *cproxy) { m_cproxy = cproxy; }
 

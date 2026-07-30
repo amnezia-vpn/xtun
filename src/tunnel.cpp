@@ -70,6 +70,9 @@ Tunnel::Tunnel(const libxtun_tunnel_opts &opts)
     : m_dns(parseStrList(opts.dns)),
       m_dnsExceptions(parseStrList(opts.dns_exceptions)),
       m_killswitchMode(opts.killswitch_mode),
+      m_ifAddrs(parseStrList(opts.if_addrs)),
+      m_confMtu(opts.mtu),
+      m_router(Router::create()),
       m_tunFd(-1),
       m_ifIndex(-1),
       m_monitorFd(-1),
@@ -86,6 +89,9 @@ Tunnel::~Tunnel() {
         m_proxy->stop();
         m_proxy->m_tunnel = nullptr;
         m_proxy = nullptr;
+    }
+    if (m_router != nullptr) {
+        m_router->revert();
     }
 #if defined(__linux__) || defined(__APPLE__)
     if (m_tunFd >= 0) {
@@ -620,6 +626,24 @@ int Tunnel::attachProxy(Proxy *proxy) {
         proxy->m_tunnel = nullptr;
         m_proxy = nullptr;
         return rc;
+    }
+
+    if (m_router != nullptr) {
+        NetworkConfig cfg;
+        cfg.addresses = m_ifAddrs;
+        cfg.dns = m_dns;
+        cfg.mtu = m_confMtu;
+        cfg.routes = proxy->routes();
+
+        if (!cfg.addresses.empty() || !cfg.routes.empty() || !cfg.dns.empty() || cfg.mtu > 0) {
+            if (m_router->apply(m_name, m_ifIndex, cfg) != 0) {
+                m_router->revert();
+                proxy->stop();
+                proxy->m_tunnel = nullptr;
+                m_proxy = nullptr;
+                return LIBXTUN_ERR_SYSTEM;
+            }
+        }
     }
     return LIBXTUN_OK;
 }

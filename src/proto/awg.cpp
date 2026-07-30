@@ -111,5 +111,15 @@ void Awg::stop() {
     m_ctx = nullptr;
 }
 
+std::vector<std::string> Awg::routes() {
+    std::vector<std::string> out;
+    for (const auto &peer : m_conf.iface().peers) {
+        for (const auto &ip : peer.allowed_ips) {
+            out.push_back(ip.toUapi());
+        }
+    }
+    return out;
+}
+
 }
 }

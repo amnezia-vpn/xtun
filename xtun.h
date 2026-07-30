@@ -55,6 +55,8 @@ struct libxtun_tunnel_opts {
     struct libxtun_str_list dns;
     struct libxtun_str_list dns_exceptions;
     enum libxtun_killswitch_mode killswitch_mode;
+    struct libxtun_str_list if_addrs;
+    int mtu;
 };
 
 int libxtun_tunnel_new(struct libxtun_tunnel *tun, struct libxtun_tunnel_opts *opts);

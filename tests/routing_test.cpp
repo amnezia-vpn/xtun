@@ -1,0 +1,127 @@
+#include "proxy.h"
+#include "tunnel.h"
+#include "xtun.h"
+
+#include <gtest/gtest.h>
+
+#include <string>
+#include <vector>
+
+#if defined(__linux__)
+
+#include <arpa/inet.h>
+#include <net/if.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <cstdio>
+#include <cstring>
+
+namespace {
+
+bool privileged() {
+    return ::geteuid() == 0;
+}
+
+struct FixedRoutesProxy : libxtun::Proxy {
+    std::vector<std::string> r;
+    const char *name() override { return "fixed"; }
+    int start(const libxtun::ProxyIo &) override { return LIBXTUN_OK; }
+    void event(libxtun::ProxyEvent) override {}
+    void stop() override {}
+    std::vector<std::string> routes() override { return r; }
+};
+
+std::string ifAddr(const std::string &name) {
+    int s = ::socket(AF_INET, SOCK_DGRAM, 0);
+    struct ifreq ifr;
+    std::memset(&ifr, 0, sizeof(ifr));
+    std::strncpy(ifr.ifr_name, name.c_str(), IFNAMSIZ - 1);
+    std::string out;
+    if (::ioctl(s, SIOCGIFADDR, &ifr) == 0) {
+        char buf[64];
+        auto *sin = reinterpret_cast<struct sockaddr_in *>(&ifr.ifr_addr);
+        if (inet_ntop(AF_INET, &sin->sin_addr, buf, sizeof(buf))) {
+            out = buf;
+        }
+    }
+    ::close(s);
+    return out;
+}
+
+int ifMtu(const std::string &name) {
+    int s = ::socket(AF_INET, SOCK_DGRAM, 0);
+    struct ifreq ifr;
+    std::memset(&ifr, 0, sizeof(ifr));
+    std::strncpy(ifr.ifr_name, name.c_str(), IFNAMSIZ - 1);
+    int mtu = -1;
+    if (::ioctl(s, SIOCGIFMTU, &ifr) == 0) {
+        mtu = ifr.ifr_mtu;
+    }
+    ::close(s);
+    return mtu;
+}
+
+bool ifUp(const std::string &name) {
+    int s = ::socket(AF_INET, SOCK_DGRAM, 0);
+    struct ifreq ifr;
+    std::memset(&ifr, 0, sizeof(ifr));
+    std::strncpy(ifr.ifr_name, name.c_str(), IFNAMSIZ - 1);
+    bool up = false;
+    if (::ioctl(s, SIOCGIFFLAGS, &ifr) == 0) {
+        up = (ifr.ifr_flags & IFF_UP) != 0;
+    }
+    ::close(s);
+    return up;
+}
+
+bool routeExists(const std::string &name, const std::string &cidr) {
+    std::string cmd = "ip -o route show dev " + name + " table main 2>/dev/null";
+    FILE *f = popen(cmd.c_str(), "r");
+    if (f == nullptr) {
+        return false;
+    }
+    char line[512];
+    bool found = false;
+    while (fgets(line, sizeof(line), f) != nullptr) {
+        if (std::string(line).find(cidr) != std::string::npos) {
+            found = true;
+            break;
+        }
+    }
+    pclose(f);
+    return found;
+}
+
+libxtun_tunnel_opts routingOpts() {
+    libxtun_tunnel_opts opts{};
+    opts.size = sizeof(opts);
+    opts.killswitch_mode = LIBXTUN_KILLSWITCH_MODE_DISABLED;
+    opts.if_addrs.list = "10.99.0.2/24";
+    opts.if_addrs.size = 1;
+    opts.mtu = 1400;
+    return opts;
+}
+
+}  // namespace
+
+TEST(Routing, AppliesAddressMtuUpAndRoutes) {
+    ASSERT_TRUE(privileged()) << "configuring an interface requires root";
+
+    libxtun_tunnel_opts opts = routingOpts();
+    libxtun::Tunnel tunnel(opts);
+    ASSERT_EQ(tunnel.openTun(), LIBXTUN_OK);
+
+    FixedRoutesProxy proxy;
+    proxy.r = {"10.88.0.0/24"};
+    ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
+
+    const std::string name = tunnel.name();
+    EXPECT_EQ(ifAddr(name), "10.99.0.2");
+    EXPECT_EQ(ifMtu(name), 1400);
+    EXPECT_TRUE(ifUp(name));
+    EXPECT_TRUE(routeExists(name, "10.88.0.0/24"));
+}
+
+#endif

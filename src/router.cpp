@@ -1,0 +1,17 @@
+#include "router.h"
+
+#if defined(__linux__)
+#include "router_linux.h"
+#endif
+
+namespace libxtun {
+
+std::unique_ptr<Router> Router::create() {
+#if defined(__linux__)
+    return std::make_unique<LinuxRouter>();
+#else
+    return nullptr;
+#endif
+}
+
+}

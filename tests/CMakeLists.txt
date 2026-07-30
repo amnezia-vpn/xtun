@@ -5,6 +5,7 @@ add_executable(xtun_tests
     awg_roundtrip_test.cpp
     awg_tunnel_test.cpp
     proxy_attach_test.cpp
+    routing_test.cpp
     tunnel_contract_test.cpp
     tunnel_lifecycle_test.cpp
 )
