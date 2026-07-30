@@ -15,6 +15,7 @@ add_library(${PROJECT_NAME}
     ${CMAKE_CURRENT_LIST_DIR}/src/proto/awg.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/proto/awg_conf.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/proxy.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/router.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/tunnel.cpp
 )
 target_include_directories(${PROJECT_NAME} PUBLIC
@@ -33,6 +34,19 @@ if(WIN32)
     find_package(wintun REQUIRED)
     target_link_libraries(${PROJECT_NAME} PUBLIC amnezia::wintun)
     target_compile_definitions(${PROJECT_NAME} PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_sources(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src/router_linux.cpp)
+    find_package(PkgConfig)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(SYSTEMD libsystemd)
+        if(SYSTEMD_FOUND)
+            target_compile_definitions(${PROJECT_NAME} PRIVATE XTUN_HAVE_SYSTEMD)
+            target_include_directories(${PROJECT_NAME} PRIVATE ${SYSTEMD_INCLUDE_DIRS})
+            target_link_libraries(${PROJECT_NAME} PRIVATE ${SYSTEMD_LIBRARIES})
+        endif()
+    endif()
 endif()
 
 if(PROJECT_IS_TOP_LEVEL)

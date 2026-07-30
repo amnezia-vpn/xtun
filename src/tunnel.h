@@ -1,4 +1,5 @@
 #include "proxy.h"
+#include "router.h"
 #include "xtun.h"
 
 #include <atomic>
@@ -62,6 +63,9 @@ class Tunnel {
     std::vector<std::string> m_dns;
     std::vector<std::string> m_dnsExceptions;
     libxtun_killswitch_mode m_killswitchMode;
+    std::vector<std::string> m_ifAddrs;
+    int m_confMtu;
+    std::unique_ptr<Router> m_router;
 
     int m_tunFd;
     std::string m_name;

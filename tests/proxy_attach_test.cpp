@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <string>
 #include <vector>
 
 namespace {
@@ -28,6 +29,9 @@ struct RecordingProxy : libxtun::Proxy {
     void event(libxtun::ProxyEvent ev) override { events.push_back(ev); }
 
     void stop() override { ++stopCalls; }
+
+    std::vector<std::string> proxyRoutes;
+    std::vector<std::string> routes() override { return proxyRoutes; }
 };
 
 constexpr const char *kAwgConf =
