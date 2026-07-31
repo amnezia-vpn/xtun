@@ -26,11 +26,13 @@ bool privileged() {
 
 struct FixedRoutesProxy : libxtun::Proxy {
     std::vector<std::string> r;
+    std::vector<std::string> e;
     const char *name() override { return "fixed"; }
     int start(const libxtun::ProxyIo &) override { return LIBXTUN_OK; }
     void event(libxtun::ProxyEvent) override {}
     void stop() override {}
     std::vector<std::string> routes() override { return r; }
+    std::vector<std::string> endpoints() override { return e; }
 };
 
 std::string ifAddr(const std::string &name) {
@@ -74,6 +76,39 @@ bool ifUp(const std::string &name) {
     }
     ::close(s);
     return up;
+}
+
+bool hasDefaultRoute() {
+    FILE *f = popen("ip -o route show default 2>/dev/null", "r");
+    if (f == nullptr) {
+        return false;
+    }
+    char line[256];
+    bool has = fgets(line, sizeof(line), f) != nullptr;
+    pclose(f);
+    return has;
+}
+
+// The interface the kernel would actually use to reach ip (empty if none).
+std::string routeGetDev(const std::string &ip) {
+    std::string cmd = "ip route get " + ip + " 2>/dev/null";
+    FILE *f = popen(cmd.c_str(), "r");
+    if (f == nullptr) {
+        return "";
+    }
+    char line[512];
+    std::string dev;
+    if (fgets(line, sizeof(line), f) != nullptr) {
+        std::string s(line);
+        auto pos = s.find(" dev ");
+        if (pos != std::string::npos) {
+            pos += 5;
+            auto end = s.find(' ', pos);
+            dev = s.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+        }
+    }
+    pclose(f);
+    return dev;
 }
 
 bool routeExists(const std::string &name, const std::string &cidr) {
@@ -122,6 +157,43 @@ TEST(Routing, AppliesAddressMtuUpAndRoutes) {
     EXPECT_EQ(ifMtu(name), 1400);
     EXPECT_TRUE(ifUp(name));
     EXPECT_TRUE(routeExists(name, "10.88.0.0/24"));
+}
+
+TEST(Routing, SplitsDefaultRouteIntoHalves) {
+    ASSERT_TRUE(privileged()) << "configuring an interface requires root";
+
+    libxtun_tunnel_opts opts = routingOpts();
+    libxtun::Tunnel tunnel(opts);
+    ASSERT_EQ(tunnel.openTun(), LIBXTUN_OK);
+
+    FixedRoutesProxy proxy;
+    proxy.r = {"0.0.0.0/0"};
+    ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
+
+    const std::string name = tunnel.name();
+    EXPECT_TRUE(routeExists(name, "0.0.0.0/1"));
+    EXPECT_TRUE(routeExists(name, "128.0.0.0/1"));
+    EXPECT_FALSE(routeExists(name, "default"));
+    EXPECT_EQ(routeGetDev("8.8.8.8"), name);
+}
+
+TEST(Routing, RoutesEndpointAroundTunnel) {
+    ASSERT_TRUE(privileged()) << "configuring an interface requires root";
+    ASSERT_TRUE(hasDefaultRoute()) << "route-around needs a physical default route";
+
+    libxtun_tunnel_opts opts = routingOpts();
+    libxtun::Tunnel tunnel(opts);
+    ASSERT_EQ(tunnel.openTun(), LIBXTUN_OK);
+
+    FixedRoutesProxy proxy;
+    proxy.r = {"0.0.0.0/0"};
+    proxy.e = {"192.0.2.1"};
+    ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
+
+    const std::string name = tunnel.name();
+    EXPECT_NE(routeGetDev("192.0.2.1"), name);
+    EXPECT_FALSE(routeGetDev("192.0.2.1").empty());
+    EXPECT_EQ(routeGetDev("8.8.8.8"), name);
 }
 
 #endif

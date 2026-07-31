@@ -15,7 +15,8 @@ class LinuxRouter : public Router {
     int setMtu(int mtu);
     int setUp();
     int changeAddress(const std::string &cidr, bool add);
-    int changeRoute(const std::string &cidr, bool add);
+    int changeTunnelRoute(const std::string &cidr, bool add);
+    int changeBypassRoute(const std::string &ip, bool add);
     int setDns(const std::vector<std::string> &servers);
     void revertDns();
 
@@ -23,6 +24,7 @@ class LinuxRouter : public Router {
     std::string m_ifname;
     std::vector<std::string> m_addresses;
     std::vector<std::string> m_routes;
+    std::vector<std::string> m_bypass;
     bool m_dnsApplied = false;
 };
 

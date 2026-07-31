@@ -634,8 +634,10 @@ int Tunnel::attachProxy(Proxy *proxy) {
         cfg.dns = m_dns;
         cfg.mtu = m_confMtu;
         cfg.routes = proxy->routes();
+        cfg.bypass = proxy->endpoints();
 
-        if (!cfg.addresses.empty() || !cfg.routes.empty() || !cfg.dns.empty() || cfg.mtu > 0) {
+        if (!cfg.addresses.empty() || !cfg.routes.empty() || !cfg.bypass.empty() ||
+            !cfg.dns.empty() || cfg.mtu > 0) {
             if (m_router->apply(m_name, m_ifIndex, cfg) != 0) {
                 m_router->revert();
                 proxy->stop();
