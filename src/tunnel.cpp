@@ -701,7 +701,7 @@ void Tunnel::startMonitor() {
     struct sockaddr_nl addr;
     std::memset(&addr, 0, sizeof(addr));
     addr.nl_family = AF_NETLINK;
-    addr.nl_groups = RTMGRP_LINK;
+    addr.nl_groups = RTMGRP_LINK | RTMGRP_IPV4_ROUTE | RTMGRP_IPV6_ROUTE;
     if (::bind(m_monitorFd, reinterpret_cast<struct sockaddr *>(&addr), sizeof(addr)) < 0) {
         ::close(m_monitorFd);
         m_monitorFd = -1;
@@ -792,6 +792,16 @@ void Tunnel::monitorLoop() {
 
         for (struct nlmsghdr *nh = reinterpret_cast<struct nlmsghdr *>(buf);
              NLMSG_OK(nh, len); nh = NLMSG_NEXT(nh, len)) {
+            if (nh->nlmsg_type == RTM_NEWROUTE || nh->nlmsg_type == RTM_DELROUTE) {
+                // Only the physical default route matters here; our own /1 and
+                // bypass writes carry a non-zero dst_len and are ignored.
+                struct rtmsg *rtm = reinterpret_cast<struct rtmsg *>(NLMSG_DATA(nh));
+                if (rtm->rtm_dst_len == 0 && rtm->rtm_table == RT_TABLE_MAIN &&
+                    m_router != nullptr) {
+                    m_router->refresh();
+                }
+                continue;
+            }
             if (nh->nlmsg_type != RTM_NEWLINK) {
                 continue;
             }

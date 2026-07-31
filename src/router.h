@@ -23,6 +23,8 @@ class Router {
     virtual int apply(const std::string &ifname, int ifindex, const NetworkConfig &cfg) = 0;
     virtual void revert() = 0;
 
+    virtual void refresh() {}
+
     static std::unique_ptr<Router> create();
 };
 
