@@ -31,6 +31,7 @@ class Proxy {
     virtual void stop() = 0;
 
     virtual std::vector<std::string> routes() = 0;
+    virtual std::vector<std::string> endpoints() = 0;
 
     void bind(struct libxtun_proxy *cproxy) { m_cproxy = cproxy; }
 

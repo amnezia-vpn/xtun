@@ -45,6 +45,18 @@ int parseIp(const std::string &ip, int &family, unsigned char out[16]) {
     return -1;
 }
 
+void expandRoute(const std::string &cidr, std::vector<std::string> &out) {
+    if (cidr == "0.0.0.0/0") {
+        out.push_back("0.0.0.0/1");
+        out.push_back("128.0.0.0/1");
+    } else if (cidr == "::/0") {
+        out.push_back("::/1");
+        out.push_back("8000::/1");
+    } else {
+        out.push_back(cidr);
+    }
+}
+
 void addAttr(struct nlmsghdr *nlh, int type, const void *data, int len) {
     struct rtattr *rta = reinterpret_cast<struct rtattr *>(
         reinterpret_cast<char *>(nlh) + NLMSG_ALIGN(nlh->nlmsg_len));
@@ -54,7 +66,9 @@ void addAttr(struct nlmsghdr *nlh, int type, const void *data, int len) {
     nlh->nlmsg_len = NLMSG_ALIGN(nlh->nlmsg_len) + RTA_ALIGN(rta->rta_len);
 }
 
-int nlSend(struct nlmsghdr *nlh) {
+// Opens a NETLINK_ROUTE socket and sends nlh, returning the fd (the caller
+// closes it) so it can read the reply however it needs, or -errno on failure.
+int nlConnect(struct nlmsghdr *nlh) {
     int fd = ::socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
     if (fd < 0) {
         return -errno;
@@ -76,6 +90,80 @@ int nlSend(struct nlmsghdr *nlh) {
         int e = -errno;
         ::close(fd);
         return e;
+    }
+    return fd;
+}
+
+// Ask the kernel which router carries traffic to the internet right now: dump
+// the main routing table and pick the default route's gateway and interface.
+int findDefaultGateway(int family, unsigned char gw[16], uint32_t *oif) {
+    struct {
+        struct nlmsghdr nlh;
+        struct rtmsg rtm;
+    } req;
+    std::memset(&req, 0, sizeof(req));
+    req.nlh.nlmsg_len = NLMSG_LENGTH(sizeof(req.rtm));
+    req.nlh.nlmsg_type = RTM_GETROUTE;
+    req.nlh.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
+    req.rtm.rtm_family = family;
+
+    int fd = nlConnect(&req.nlh);
+    if (fd < 0) {
+        return fd;
+    }
+
+    int addrLen = family == AF_INET ? 4 : 16;
+    bool found = false;
+    bool done = false;
+    char buf[16384];
+    while (!found && !done) {
+        ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
+        if (n <= 0) {
+            break;
+        }
+        for (struct nlmsghdr *h = reinterpret_cast<struct nlmsghdr *>(buf); NLMSG_OK(h, n);
+             h = NLMSG_NEXT(h, n)) {
+            if (h->nlmsg_type == NLMSG_DONE || h->nlmsg_type == NLMSG_ERROR) {
+                done = true;
+                break;
+            }
+            if (h->nlmsg_type != RTM_NEWROUTE) {
+                continue;
+            }
+            struct rtmsg *rtm = reinterpret_cast<struct rtmsg *>(NLMSG_DATA(h));
+            if (rtm->rtm_family != family || rtm->rtm_dst_len != 0 ||
+                rtm->rtm_table != RT_TABLE_MAIN) {
+                continue;
+            }
+            unsigned char g[16];
+            uint32_t o = 0;
+            bool haveGw = false;
+            int rtl = static_cast<int>(RTM_PAYLOAD(h));
+            for (struct rtattr *rta = RTM_RTA(rtm); RTA_OK(rta, rtl); rta = RTA_NEXT(rta, rtl)) {
+                if (rta->rta_type == RTA_GATEWAY) {
+                    std::memcpy(g, RTA_DATA(rta), addrLen);
+                    haveGw = true;
+                } else if (rta->rta_type == RTA_OIF) {
+                    o = *reinterpret_cast<uint32_t *>(RTA_DATA(rta));
+                }
+            }
+            if (haveGw) {
+                std::memcpy(gw, g, addrLen);
+                *oif = o;
+                found = true;
+                break;
+            }
+        }
+    }
+
+    ::close(fd);
+    return found ? 0 : -ENOENT;
+}
+
+int nlSend(struct nlmsghdr *nlh) {
+    int fd = nlConnect(nlh);
+    if (fd < 0) {
+        return fd;
     }
 
     char buf[8192];
@@ -172,7 +260,7 @@ int LinuxRouter::changeAddress(const std::string &cidr, bool add) {
     return nlSend(&req.nlh);
 }
 
-int LinuxRouter::changeRoute(const std::string &cidr, bool add) {
+int LinuxRouter::changeTunnelRoute(const std::string &cidr, bool add) {
     std::string ip;
     int prefix;
     if (!splitCidr(cidr, ip, prefix)) {
@@ -207,6 +295,50 @@ int LinuxRouter::changeRoute(const std::string &cidr, bool add) {
     addAttr(&req.nlh, RTA_DST, raw, len);
     uint32_t oif = static_cast<uint32_t>(m_ifindex);
     addAttr(&req.nlh, RTA_OIF, &oif, sizeof(oif));
+    return nlSend(&req.nlh);
+}
+
+int LinuxRouter::changeBypassRoute(const std::string &ip, bool add) {
+    int family;
+    unsigned char raw[16];
+    int len = parseIp(ip, family, raw);
+    if (len < 0) {
+        return -EINVAL;
+    }
+
+    unsigned char gw[16];
+    uint32_t oif = 0;
+    if (add) {
+        int rc = findDefaultGateway(family, gw, &oif);
+        if (rc < 0) {
+            return rc;
+        }
+    }
+
+    struct {
+        struct nlmsghdr nlh;
+        struct rtmsg rtm;
+        char attr[128];
+    } req;
+    std::memset(&req, 0, sizeof(req));
+    req.nlh.nlmsg_len = NLMSG_LENGTH(sizeof(req.rtm));
+    req.nlh.nlmsg_type = add ? RTM_NEWROUTE : RTM_DELROUTE;
+    req.nlh.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+    if (add) {
+        req.nlh.nlmsg_flags |= NLM_F_CREATE | NLM_F_REPLACE;
+    }
+    req.rtm.rtm_family = family;
+    req.rtm.rtm_dst_len = family == AF_INET ? 32 : 128;
+    req.rtm.rtm_table = RT_TABLE_MAIN;
+    req.rtm.rtm_protocol = RTPROT_BOOT;
+    req.rtm.rtm_scope = add ? RT_SCOPE_UNIVERSE : RT_SCOPE_NOWHERE;
+    req.rtm.rtm_type = RTN_UNICAST;
+
+    addAttr(&req.nlh, RTA_DST, raw, len);
+    if (add) {
+        addAttr(&req.nlh, RTA_GATEWAY, gw, len);
+        addAttr(&req.nlh, RTA_OIF, &oif, sizeof(oif));
+    }
     return nlSend(&req.nlh);
 }
 
@@ -326,12 +458,25 @@ int LinuxRouter::apply(const std::string &ifname, int ifindex, const NetworkConf
     }
 
     for (const auto &route : cfg.routes) {
-        rc = changeRoute(route, true);
+        std::vector<std::string> expanded;
+        expandRoute(route, expanded);
+        for (const auto &half : expanded) {
+            rc = changeTunnelRoute(half, true);
+            if (rc < 0) {
+                revert();
+                return rc;
+            }
+            m_routes.push_back(half);
+        }
+    }
+
+    for (const auto &ip : cfg.bypass) {
+        rc = changeBypassRoute(ip, true);
         if (rc < 0) {
             revert();
             return rc;
         }
-        m_routes.push_back(route);
+        m_bypass.push_back(ip);
     }
 
     rc = setDns(cfg.dns);
@@ -345,8 +490,12 @@ int LinuxRouter::apply(const std::string &ifname, int ifindex, const NetworkConf
 
 void LinuxRouter::revert() {
     revertDns();
+    for (const auto &ip : m_bypass) {
+        changeBypassRoute(ip, false);
+    }
+    m_bypass.clear();
     for (const auto &route : m_routes) {
-        changeRoute(route, false);
+        changeTunnelRoute(route, false);
     }
     m_routes.clear();
     for (const auto &addr : m_addresses) {
