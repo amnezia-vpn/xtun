@@ -1,3 +1,7 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE  // unshare()/setns() and CLONE_NEWNET
+#endif
+
 #include "proxy.h"
 #include "tunnel.h"
 #include "xtun.h"
@@ -10,12 +14,15 @@
 #if defined(__linux__)
 
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <net/if.h>
+#include <sched.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace {
@@ -23,6 +30,39 @@ namespace {
 bool privileged() {
     return ::geteuid() == 0;
 }
+
+bool sh(const std::string &cmd) {
+    return std::system((cmd + " >/dev/null 2>&1").c_str()) == 0;
+}
+
+// Moves the calling thread into a fresh, empty network namespace and restores
+// the original on destruction, so a test can rearrange routing in full
+// isolation. Threads spawned while it is active (the tunnel monitor) inherit
+// the private namespace.
+struct NetnsGuard {
+    int fd = -1;
+    bool ok = false;
+
+    NetnsGuard() {
+        fd = ::open("/proc/self/ns/net", O_RDONLY | O_CLOEXEC);
+        if (fd < 0) {
+            return;
+        }
+        if (::unshare(CLONE_NEWNET) != 0) {
+            ::close(fd);
+            fd = -1;
+            return;
+        }
+        ok = true;
+    }
+
+    ~NetnsGuard() {
+        if (fd >= 0) {
+            ::setns(fd, CLONE_NEWNET);
+            ::close(fd);
+        }
+    }
+};
 
 struct FixedRoutesProxy : libxtun::Proxy {
     std::vector<std::string> r;
@@ -194,6 +234,53 @@ TEST(Routing, RoutesEndpointAroundTunnel) {
     EXPECT_NE(routeGetDev("192.0.2.1"), name);
     EXPECT_FALSE(routeGetDev("192.0.2.1").empty());
     EXPECT_EQ(routeGetDev("8.8.8.8"), name);
+}
+
+TEST(Routing, RepointsBypassWhenGatewayChanges) {
+    ASSERT_TRUE(privileged()) << "network namespaces require root";
+
+    // Enter a private namespace first so it is restored last, after the tunnel
+    // (and its monitor thread) have been torn down.
+    NetnsGuard netns;
+    ASSERT_TRUE(netns.ok) << "could not create a private network namespace";
+
+    // Two links, each with its own on-link gateway; default starts on dummy0.
+    ASSERT_TRUE(sh("ip link set lo up"));
+    ASSERT_TRUE(sh("ip link add dummy0 type dummy")) << "needs the 'dummy' kernel module";
+    ASSERT_TRUE(sh("ip link add dummy1 type dummy"));
+    ASSERT_TRUE(sh("ip addr add 10.10.0.2/24 dev dummy0"));
+    ASSERT_TRUE(sh("ip addr add 10.20.0.2/24 dev dummy1"));
+    ASSERT_TRUE(sh("ip link set dummy0 up"));
+    ASSERT_TRUE(sh("ip link set dummy1 up"));
+    ASSERT_TRUE(sh("ip route add default via 10.10.0.1 dev dummy0"));
+
+    libxtun_tunnel_opts opts = routingOpts();
+    libxtun::Tunnel tunnel(opts);
+    ASSERT_EQ(tunnel.openTun(), LIBXTUN_OK);
+
+    FixedRoutesProxy proxy;
+    proxy.r = {"0.0.0.0/0"};
+    proxy.e = {"192.0.2.1"};
+    ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
+
+    // Bypass follows the first gateway; everything else is tunneled.
+    EXPECT_EQ(routeGetDev("192.0.2.1"), "dummy0");
+    EXPECT_EQ(routeGetDev("8.8.8.8"), tunnel.name());
+
+    // Roam: move the default route onto the other link.
+    ASSERT_TRUE(sh("ip route replace default via 10.20.0.1 dev dummy1"));
+
+    // The monitor reacts asynchronously; poll until the bypass re-points.
+    std::string dev;
+    for (int i = 0; i < 200; ++i) {
+        dev = routeGetDev("192.0.2.1");
+        if (dev == "dummy1") {
+            break;
+        }
+        ::usleep(10 * 1000);
+    }
+    EXPECT_EQ(dev, "dummy1") << "bypass did not follow the new gateway";
+    EXPECT_EQ(routeGetDev("8.8.8.8"), tunnel.name());
 }
 
 #endif

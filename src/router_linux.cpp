@@ -433,6 +433,7 @@ void LinuxRouter::revertDns() {
 }
 
 int LinuxRouter::apply(const std::string &ifname, int ifindex, const NetworkConfig &cfg) {
+    std::lock_guard<std::recursive_mutex> lock(m_mtx);
     m_ifname = ifname;
     m_ifindex = ifindex;
 
@@ -479,6 +480,19 @@ int LinuxRouter::apply(const std::string &ifname, int ifindex, const NetworkConf
         m_bypass.push_back(ip);
     }
 
+    if (!m_bypass.empty()) {
+        unsigned char gw[16];
+        uint32_t oif;
+        m_gw4Valid = findDefaultGateway(AF_INET, gw, &oif) == 0;
+        if (m_gw4Valid) {
+            std::memcpy(m_gw4, gw, 4);
+        }
+        m_gw6Valid = findDefaultGateway(AF_INET6, gw, &oif) == 0;
+        if (m_gw6Valid) {
+            std::memcpy(m_gw6, gw, 16);
+        }
+    }
+
     rc = setDns(cfg.dns);
     if (rc < 0) {
         revert();
@@ -488,7 +502,42 @@ int LinuxRouter::apply(const std::string &ifname, int ifindex, const NetworkConf
     return 0;
 }
 
+void LinuxRouter::refresh() {
+    std::lock_guard<std::recursive_mutex> lock(m_mtx);
+    if (m_bypass.empty()) {
+        return;
+    }
+
+    bool changed = false;
+    unsigned char gw[16];
+    uint32_t oif;
+    if (findDefaultGateway(AF_INET, gw, &oif) == 0) {
+        if (!m_gw4Valid || std::memcmp(gw, m_gw4, 4) != 0) {
+            std::memcpy(m_gw4, gw, 4);
+            m_gw4Valid = true;
+            changed = true;
+        }
+    }
+    if (findDefaultGateway(AF_INET6, gw, &oif) == 0) {
+        if (!m_gw6Valid || std::memcmp(gw, m_gw6, 16) != 0) {
+            std::memcpy(m_gw6, gw, 16);
+            m_gw6Valid = true;
+            changed = true;
+        }
+    }
+    if (!changed) {
+        return;
+    }
+
+    // The gateway moved (network roamed): re-point every bypass route at it.
+    for (const auto &ip : m_bypass) {
+        changeBypass(ip, false);
+        changeBypass(ip, true);
+    }
+}
+
 void LinuxRouter::revert() {
+    std::lock_guard<std::recursive_mutex> lock(m_mtx);
     revertDns();
     for (const auto &ip : m_bypass) {
         changeBypassRoute(ip, false);
