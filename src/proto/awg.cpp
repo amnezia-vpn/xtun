@@ -1,8 +1,9 @@
 #include "awg.h"
 
+#include "../fwmark.h"
+
 #include <libgoxtun.h>
 
-#include <atomic>
 #include <cstdlib>
 #include <memory>
 #include <variant>
@@ -14,8 +15,6 @@ enum TunEvent {
     TunEventDown = 2,
     TunEventMtuUpdate = 4,
 };
-
-std::atomic<unsigned> g_instance{0};
 
 int tunRead(void *b, int len, void *priv) {
     auto *io = static_cast<libxtun::ProxyIo *>(priv);
@@ -37,22 +36,6 @@ void forwardLog(char *str, void *priv) {
     if (cproxy != nullptr && cproxy->loghandler != nullptr) {
         cproxy->loghandler(str, priv);
     }
-}
-
-std::vector<std::string> splitLines(char *s) {
-    std::vector<std::string> out;
-    for (char *p = s; *p;) {
-        char *nl = std::strchr(p, '\n');
-        size_t len = nl ? static_cast<size_t>(nl - p) : std::strlen(p);
-        if (len > 0) {
-            out.emplace_back(p, len);
-        }
-        if (nl == nullptr) {
-            break;
-        }
-        p = nl + 1;
-    }
-    return out;
 }
 
 }
@@ -89,6 +72,7 @@ int Awg::start(const ProxyIo &io) {
         return LIBXTUN_ERR_SYSTEM;
     }
 
+    m_conf.setFwmark(kProxyFwmark);
     auto uapi = m_conf.toUapi();
     if (char *err = goxtun_awg_setconf(m_ctx, &uapi[0]); err != nullptr) {
         forwardLog(err, m_cproxy);
@@ -134,16 +118,6 @@ std::vector<std::string> Awg::routes() {
             out.push_back(ip.toUapi());
         }
     }
-    return out;
-}
-
-std::vector<std::string> Awg::endpoints() {
-    char *endpoints = nullptr;
-    if (awg_config_endpoints(m_conf.c_str(), &endpoints, nullptr) != 0 || endpoints == nullptr) {
-        return {};
-    }
-    std::vector<std::string> out = splitLines(endpoints);
-    free(endpoints);
     return out;
 }
 

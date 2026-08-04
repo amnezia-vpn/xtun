@@ -1,5 +1,6 @@
 #include "router.h"
 
+#include <cstdint>
 #include <mutex>
 
 #ifndef ROUTER_LINUX_H
@@ -12,18 +13,18 @@ class LinuxRouter : public Router {
   public:
     int configureInterface(const std::string &ifname, int ifindex,
                            const std::vector<std::string> &addresses, int mtu) override;
-    int setProxyRoutes(const std::vector<std::string> &routes,
-                       const std::vector<std::string> &bypass) override;
+    int setProxyRoutes(const std::vector<std::string> &routes) override;
     void clearProxyRoutes() override;
     void revert() override;
-    void refresh() override;
 
   private:
     int setMtu(int mtu);
     int setUp();
     int changeAddress(const std::string &cidr, bool add);
     int changeTunnelRoute(const std::string &cidr, bool add);
-    int changeBypassRoute(const std::string &ip, bool add);
+    int setFullTunnel(int family, bool add);
+    int changeRule(bool add, int family, bool invert, uint32_t fwmark, uint32_t table,
+                   int suppressPrefixLen, uint32_t priority);
     int setDns(const std::vector<std::string> &servers);
     void revertDns();
 
@@ -32,11 +33,8 @@ class LinuxRouter : public Router {
     std::string m_ifname;
     std::vector<std::string> m_addresses;
     std::vector<std::string> m_routes;
-    std::vector<std::string> m_bypass;
-    unsigned char m_gw4[16] = {0};
-    unsigned char m_gw6[16] = {0};
-    bool m_gw4Valid = false;
-    bool m_gw6Valid = false;
+    bool m_fullV4 = false;
+    bool m_fullV6 = false;
     bool m_dnsApplied = false;
 };
 

@@ -15,13 +15,10 @@ class Router {
     virtual int configureInterface(const std::string &ifname, int ifindex,
                                    const std::vector<std::string> &addresses, int mtu) = 0;
 
-    virtual int setProxyRoutes(const std::vector<std::string> &routes,
-                               const std::vector<std::string> &bypass) = 0;
+    virtual int setProxyRoutes(const std::vector<std::string> &routes) = 0;
     virtual void clearProxyRoutes() = 0;
 
     virtual void revert() = 0;
-
-    virtual void refresh() {}
 
     static std::unique_ptr<Router> create();
 };

@@ -650,7 +650,7 @@ int Tunnel::attachProxy(Proxy *proxy) {
     }
 
     if (m_started && m_router != nullptr) {
-        if (m_router->setProxyRoutes(proxy->routes(), proxy->endpoints()) != 0) {
+        if (m_router->setProxyRoutes(proxy->routes()) != 0) {
             m_router->clearProxyRoutes();
             proxy->stop();
             std::lock_guard<std::mutex> lock(m_proxyMtx);
@@ -665,7 +665,7 @@ int Tunnel::attachProxy(Proxy *proxy) {
 int Tunnel::start() {
     m_started = true;
     if (m_proxy != nullptr && m_router != nullptr) {
-        if (m_router->setProxyRoutes(m_proxy->routes(), m_proxy->endpoints()) != 0) {
+        if (m_router->setProxyRoutes(m_proxy->routes()) != 0) {
             m_router->revert();
             m_started = false;
             return LIBXTUN_ERR_SYSTEM;
@@ -731,7 +731,7 @@ void Tunnel::startMonitor() {
     struct sockaddr_nl addr;
     std::memset(&addr, 0, sizeof(addr));
     addr.nl_family = AF_NETLINK;
-    addr.nl_groups = RTMGRP_LINK | RTMGRP_IPV4_ROUTE | RTMGRP_IPV6_ROUTE;
+    addr.nl_groups = RTMGRP_LINK;
     if (::bind(m_monitorFd, reinterpret_cast<struct sockaddr *>(&addr), sizeof(addr)) < 0) {
         ::close(m_monitorFd);
         m_monitorFd = -1;
@@ -822,16 +822,6 @@ void Tunnel::monitorLoop() {
 
         for (struct nlmsghdr *nh = reinterpret_cast<struct nlmsghdr *>(buf);
              NLMSG_OK(nh, len); nh = NLMSG_NEXT(nh, len)) {
-            if (nh->nlmsg_type == RTM_NEWROUTE || nh->nlmsg_type == RTM_DELROUTE) {
-                // Only the physical default route matters here; our own /1 and
-                // bypass writes carry a non-zero dst_len and are ignored.
-                struct rtmsg *rtm = reinterpret_cast<struct rtmsg *>(NLMSG_DATA(nh));
-                if (rtm->rtm_dst_len == 0 && rtm->rtm_table == RT_TABLE_MAIN &&
-                    m_router != nullptr) {
-                    m_router->refresh();
-                }
-                continue;
-            }
             if (nh->nlmsg_type != RTM_NEWLINK) {
                 continue;
             }
