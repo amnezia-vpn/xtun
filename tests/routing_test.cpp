@@ -191,6 +191,7 @@ TEST(Routing, AppliesAddressMtuUpAndRoutes) {
     FixedRoutesProxy proxy;
     proxy.r = {"10.88.0.0/24"};
     ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
+    ASSERT_EQ(tunnel.start(), LIBXTUN_OK);
 
     const std::string name = tunnel.name();
     EXPECT_EQ(ifAddr(name), "10.99.0.2");
@@ -209,6 +210,7 @@ TEST(Routing, SplitsDefaultRouteIntoHalves) {
     FixedRoutesProxy proxy;
     proxy.r = {"0.0.0.0/0"};
     ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
+    ASSERT_EQ(tunnel.start(), LIBXTUN_OK);
 
     const std::string name = tunnel.name();
     EXPECT_TRUE(routeExists(name, "0.0.0.0/1"));
@@ -229,6 +231,7 @@ TEST(Routing, RoutesEndpointAroundTunnel) {
     proxy.r = {"0.0.0.0/0"};
     proxy.e = {"192.0.2.1"};
     ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
+    ASSERT_EQ(tunnel.start(), LIBXTUN_OK);
 
     const std::string name = tunnel.name();
     EXPECT_NE(routeGetDev("192.0.2.1"), name);
@@ -262,6 +265,7 @@ TEST(Routing, RepointsBypassWhenGatewayChanges) {
     proxy.r = {"0.0.0.0/0"};
     proxy.e = {"192.0.2.1"};
     ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
+    ASSERT_EQ(tunnel.start(), LIBXTUN_OK);
 
     // Bypass follows the first gateway; everything else is tunneled.
     EXPECT_EQ(routeGetDev("192.0.2.1"), "dummy0");

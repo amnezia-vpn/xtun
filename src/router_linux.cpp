@@ -432,13 +432,14 @@ void LinuxRouter::revertDns() {
     m_dnsApplied = false;
 }
 
-int LinuxRouter::apply(const std::string &ifname, int ifindex, const NetworkConfig &cfg) {
+int LinuxRouter::configureInterface(const std::string &ifname, int ifindex,
+                                    const std::vector<std::string> &addresses, int mtu) {
     std::lock_guard<std::recursive_mutex> lock(m_mtx);
     m_ifname = ifname;
     m_ifindex = ifindex;
 
-    if (cfg.mtu > 0) {
-        int rc = setMtu(cfg.mtu);
+    if (mtu > 0) {
+        int rc = setMtu(mtu);
         if (rc < 0) {
             return rc;
         }
@@ -449,7 +450,7 @@ int LinuxRouter::apply(const std::string &ifname, int ifindex, const NetworkConf
         return rc;
     }
 
-    for (const auto &addr : cfg.addresses) {
+    for (const auto &addr : addresses) {
         rc = changeAddress(addr, true);
         if (rc < 0) {
             revert();
@@ -457,24 +458,29 @@ int LinuxRouter::apply(const std::string &ifname, int ifindex, const NetworkConf
         }
         m_addresses.push_back(addr);
     }
+    return 0;
+}
 
-    for (const auto &route : cfg.routes) {
+int LinuxRouter::setProxyRoutes(const std::vector<std::string> &routes,
+                                const std::vector<std::string> &bypass) {
+    std::lock_guard<std::recursive_mutex> lock(m_mtx);
+    for (const auto &route : routes) {
         std::vector<std::string> expanded;
         expandRoute(route, expanded);
         for (const auto &half : expanded) {
-            rc = changeTunnelRoute(half, true);
+            int rc = changeTunnelRoute(half, true);
             if (rc < 0) {
-                revert();
+                clearProxyRoutes();
                 return rc;
             }
             m_routes.push_back(half);
         }
     }
 
-    for (const auto &ip : cfg.bypass) {
-        rc = changeBypassRoute(ip, true);
+    for (const auto &ip : bypass) {
+        int rc = changeBypassRoute(ip, true);
         if (rc < 0) {
-            revert();
+            clearProxyRoutes();
             return rc;
         }
         m_bypass.push_back(ip);
@@ -492,13 +498,6 @@ int LinuxRouter::apply(const std::string &ifname, int ifindex, const NetworkConf
             std::memcpy(m_gw6, gw, 16);
         }
     }
-
-    rc = setDns(cfg.dns);
-    if (rc < 0) {
-        revert();
-        return rc;
-    }
-
     return 0;
 }
 
@@ -536,9 +535,8 @@ void LinuxRouter::refresh() {
     }
 }
 
-void LinuxRouter::revert() {
+void LinuxRouter::clearProxyRoutes() {
     std::lock_guard<std::recursive_mutex> lock(m_mtx);
-    revertDns();
     for (const auto &ip : m_bypass) {
         changeBypassRoute(ip, false);
     }
@@ -547,6 +545,12 @@ void LinuxRouter::revert() {
         changeTunnelRoute(route, false);
     }
     m_routes.clear();
+}
+
+void LinuxRouter::revert() {
+    std::lock_guard<std::recursive_mutex> lock(m_mtx);
+    revertDns();
+    clearProxyRoutes();
     for (const auto &addr : m_addresses) {
         changeAddress(addr, false);
     }

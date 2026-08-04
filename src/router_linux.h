@@ -10,7 +10,11 @@ namespace libxtun {
 
 class LinuxRouter : public Router {
   public:
-    int apply(const std::string &ifname, int ifindex, const NetworkConfig &cfg) override;
+    int configureInterface(const std::string &ifname, int ifindex,
+                           const std::vector<std::string> &addresses, int mtu) override;
+    int setProxyRoutes(const std::vector<std::string> &routes,
+                       const std::vector<std::string> &bypass) override;
+    void clearProxyRoutes() override;
     void revert() override;
     void refresh() override;
 

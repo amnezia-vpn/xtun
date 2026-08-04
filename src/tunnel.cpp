@@ -441,6 +441,11 @@ int Tunnel::finishOpen() {
     m_readCancelWr = cancelPipe[1];
 #endif
 
+    if (m_router != nullptr &&
+        m_router->configureInterface(m_name, m_ifIndex, m_ifAddrs, m_confMtu) != 0) {
+        return LIBXTUN_ERR_SYSTEM;
+    }
+
     m_mtu = mtu();
 
     startMonitor();
@@ -628,23 +633,25 @@ int Tunnel::attachProxy(Proxy *proxy) {
         return rc;
     }
 
-    if (m_router != nullptr) {
-        NetworkConfig cfg;
-        cfg.addresses = m_ifAddrs;
-        cfg.dns = m_dns;
-        cfg.mtu = m_confMtu;
-        cfg.routes = proxy->routes();
-        cfg.bypass = proxy->endpoints();
+    if (m_started && m_router != nullptr) {
+        if (m_router->setProxyRoutes(proxy->routes(), proxy->endpoints()) != 0) {
+            m_router->clearProxyRoutes();
+            proxy->stop();
+            proxy->m_tunnel = nullptr;
+            m_proxy = nullptr;
+            return LIBXTUN_ERR_SYSTEM;
+        }
+    }
+    return LIBXTUN_OK;
+}
 
-        if (!cfg.addresses.empty() || !cfg.routes.empty() || !cfg.bypass.empty() ||
-            !cfg.dns.empty() || cfg.mtu > 0) {
-            if (m_router->apply(m_name, m_ifIndex, cfg) != 0) {
-                m_router->revert();
-                proxy->stop();
-                proxy->m_tunnel = nullptr;
-                m_proxy = nullptr;
-                return LIBXTUN_ERR_SYSTEM;
-            }
+int Tunnel::start() {
+    m_started = true;
+    if (m_proxy != nullptr && m_router != nullptr) {
+        if (m_router->setProxyRoutes(m_proxy->routes(), m_proxy->endpoints()) != 0) {
+            m_router->revert();
+            m_started = false;
+            return LIBXTUN_ERR_SYSTEM;
         }
     }
     return LIBXTUN_OK;
@@ -652,6 +659,9 @@ int Tunnel::attachProxy(Proxy *proxy) {
 
 void Tunnel::detachProxy(Proxy *proxy) {
     if (m_proxy == proxy) {
+        if (m_router != nullptr) {
+            m_router->clearProxyRoutes();
+        }
         m_proxy = nullptr;
     }
 }
@@ -893,6 +903,13 @@ int libxtun_tunnel_new(struct libxtun_tunnel *tun, struct libxtun_tunnel_opts *o
 
     tun->handle = obj;
     return LIBXTUN_OK;
+}
+
+int libxtun_tunnel_start(struct libxtun_tunnel *tun) {
+    if (tun == nullptr || tun->handle == nullptr) {
+        return LIBXTUN_ERR_INVALID_ARGS;
+    }
+    return reinterpret_cast<libxtun::Tunnel *>(tun->handle)->start();
 }
 
 int libxtun_tunnel_new_from_tunfile(struct libxtun_tunnel *tun, int fd) {

@@ -40,6 +40,7 @@ class Tunnel {
     void onEvent(std::function<void(Event)> cb) { m_onEvent = std::move(cb); }
 
     int attachProxy(Proxy *proxy);
+    int start();
 
   private:
     friend class Proxy;
@@ -66,6 +67,7 @@ class Tunnel {
     std::vector<std::string> m_ifAddrs;
     int m_confMtu;
     std::unique_ptr<Router> m_router;
+    bool m_started = false;
 
     int m_tunFd;
     std::string m_name;
