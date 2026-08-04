@@ -31,9 +31,7 @@ struct RecordingProxy : libxtun::Proxy {
     void stop() override { ++stopCalls; }
 
     std::vector<std::string> proxyRoutes;
-    std::vector<std::string> proxyEndpoints;
     std::vector<std::string> routes() override { return proxyRoutes; }
-    std::vector<std::string> endpoints() override { return proxyEndpoints; }
 };
 
 constexpr const char *kAwgConf =

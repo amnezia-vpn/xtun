@@ -1,5 +1,7 @@
 #include "router_linux.h"
 
+#include "fwmark.h"
+
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
@@ -11,6 +13,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <linux/fib_rules.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 #include <linux/sockios.h>
@@ -43,18 +46,6 @@ int parseIp(const std::string &ip, int &family, unsigned char out[16]) {
         return 16;
     }
     return -1;
-}
-
-void expandRoute(const std::string &cidr, std::vector<std::string> &out) {
-    if (cidr == "0.0.0.0/0") {
-        out.push_back("0.0.0.0/1");
-        out.push_back("128.0.0.0/1");
-    } else if (cidr == "::/0") {
-        out.push_back("::/1");
-        out.push_back("8000::/1");
-    } else {
-        out.push_back(cidr);
-    }
 }
 
 void addAttr(struct nlmsghdr *nlh, int type, const void *data, int len) {
@@ -92,72 +83,6 @@ int nlConnect(struct nlmsghdr *nlh) {
         return e;
     }
     return fd;
-}
-
-// Ask the kernel which router carries traffic to the internet right now: dump
-// the main routing table and pick the default route's gateway and interface.
-int findDefaultGateway(int family, unsigned char gw[16], uint32_t *oif) {
-    struct {
-        struct nlmsghdr nlh;
-        struct rtmsg rtm;
-    } req;
-    std::memset(&req, 0, sizeof(req));
-    req.nlh.nlmsg_len = NLMSG_LENGTH(sizeof(req.rtm));
-    req.nlh.nlmsg_type = RTM_GETROUTE;
-    req.nlh.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
-    req.rtm.rtm_family = family;
-
-    int fd = nlConnect(&req.nlh);
-    if (fd < 0) {
-        return fd;
-    }
-
-    int addrLen = family == AF_INET ? 4 : 16;
-    bool found = false;
-    bool done = false;
-    char buf[16384];
-    while (!found && !done) {
-        ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
-        if (n <= 0) {
-            break;
-        }
-        for (struct nlmsghdr *h = reinterpret_cast<struct nlmsghdr *>(buf); NLMSG_OK(h, n);
-             h = NLMSG_NEXT(h, n)) {
-            if (h->nlmsg_type == NLMSG_DONE || h->nlmsg_type == NLMSG_ERROR) {
-                done = true;
-                break;
-            }
-            if (h->nlmsg_type != RTM_NEWROUTE) {
-                continue;
-            }
-            struct rtmsg *rtm = reinterpret_cast<struct rtmsg *>(NLMSG_DATA(h));
-            if (rtm->rtm_family != family || rtm->rtm_dst_len != 0 ||
-                rtm->rtm_table != RT_TABLE_MAIN) {
-                continue;
-            }
-            unsigned char g[16];
-            uint32_t o = 0;
-            bool haveGw = false;
-            int rtl = static_cast<int>(RTM_PAYLOAD(h));
-            for (struct rtattr *rta = RTM_RTA(rtm); RTA_OK(rta, rtl); rta = RTA_NEXT(rta, rtl)) {
-                if (rta->rta_type == RTA_GATEWAY) {
-                    std::memcpy(g, RTA_DATA(rta), addrLen);
-                    haveGw = true;
-                } else if (rta->rta_type == RTA_OIF) {
-                    o = *reinterpret_cast<uint32_t *>(RTA_DATA(rta));
-                }
-            }
-            if (haveGw) {
-                std::memcpy(gw, g, addrLen);
-                *oif = o;
-                found = true;
-                break;
-            }
-        }
-    }
-
-    ::close(fd);
-    return found ? 0 : -ENOENT;
 }
 
 int nlSend(struct nlmsghdr *nlh) {
@@ -298,27 +223,46 @@ int LinuxRouter::changeTunnelRoute(const std::string &cidr, bool add) {
     return nlSend(&req.nlh);
 }
 
-int LinuxRouter::changeBypassRoute(const std::string &ip, bool add) {
-    int family;
-    unsigned char raw[16];
-    int len = parseIp(ip, family, raw);
-    if (len < 0) {
-        return -EINVAL;
-    }
-
-    unsigned char gw[16];
-    uint32_t oif = 0;
+int LinuxRouter::changeRule(bool add, int family, bool invert, uint32_t fwmark, uint32_t table,
+                            int suppressPrefixLen, uint32_t priority) {
+    struct {
+        struct nlmsghdr nlh;
+        struct fib_rule_hdr frh;
+        char attr[64];
+    } req;
+    std::memset(&req, 0, sizeof(req));
+    req.nlh.nlmsg_len = NLMSG_LENGTH(sizeof(req.frh));
+    req.nlh.nlmsg_type = add ? RTM_NEWRULE : RTM_DELRULE;
+    req.nlh.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
     if (add) {
-        int rc = findDefaultGateway(family, gw, &oif);
-        if (rc < 0) {
-            return rc;
-        }
+        req.nlh.nlmsg_flags |= NLM_F_CREATE | NLM_F_EXCL;
+    }
+    req.frh.family = static_cast<uint8_t>(family);
+    req.frh.action = FR_ACT_TO_TBL;
+    req.frh.table = RT_TABLE_UNSPEC;
+    if (invert) {
+        req.frh.flags |= FIB_RULE_INVERT;
     }
 
+    addAttr(&req.nlh, FRA_PRIORITY, &priority, sizeof(priority));
+    if (fwmark != 0) {
+        addAttr(&req.nlh, FRA_FWMARK, &fwmark, sizeof(fwmark));
+    }
+    if (table != 0) {
+        addAttr(&req.nlh, FRA_TABLE, &table, sizeof(table));
+    }
+    if (suppressPrefixLen >= 0) {
+        uint32_t spl = static_cast<uint32_t>(suppressPrefixLen);
+        addAttr(&req.nlh, FRA_SUPPRESS_PREFIXLEN, &spl, sizeof(spl));
+    }
+    return nlSend(&req.nlh);
+}
+
+int LinuxRouter::setFullTunnel(int family, bool add) {
     struct {
         struct nlmsghdr nlh;
         struct rtmsg rtm;
-        char attr[128];
+        char attr[64];
     } req;
     std::memset(&req, 0, sizeof(req));
     req.nlh.nlmsg_len = NLMSG_LENGTH(sizeof(req.rtm));
@@ -328,18 +272,33 @@ int LinuxRouter::changeBypassRoute(const std::string &ip, bool add) {
         req.nlh.nlmsg_flags |= NLM_F_CREATE | NLM_F_REPLACE;
     }
     req.rtm.rtm_family = family;
-    req.rtm.rtm_dst_len = family == AF_INET ? 32 : 128;
-    req.rtm.rtm_table = RT_TABLE_MAIN;
+    req.rtm.rtm_dst_len = 0;
+    req.rtm.rtm_table = RT_TABLE_UNSPEC;
     req.rtm.rtm_protocol = RTPROT_BOOT;
-    req.rtm.rtm_scope = add ? RT_SCOPE_UNIVERSE : RT_SCOPE_NOWHERE;
+    req.rtm.rtm_scope = RT_SCOPE_LINK;
     req.rtm.rtm_type = RTN_UNICAST;
+    uint32_t table = kProxyTable;
+    addAttr(&req.nlh, RTA_TABLE, &table, sizeof(table));
+    uint32_t oif = static_cast<uint32_t>(m_ifindex);
+    addAttr(&req.nlh, RTA_OIF, &oif, sizeof(oif));
 
-    addAttr(&req.nlh, RTA_DST, raw, len);
-    if (add) {
-        addAttr(&req.nlh, RTA_GATEWAY, gw, len);
-        addAttr(&req.nlh, RTA_OIF, &oif, sizeof(oif));
+    int rc = nlSend(&req.nlh);
+    if (add && rc < 0) {
+        return rc;
     }
-    return nlSend(&req.nlh);
+
+    // Unmarked traffic uses the private table (the tun); the proxy's own marked
+    // packets fall through to the main table and reach the physical link.
+    rc = changeRule(add, family, true, kProxyFwmark, kProxyTable, -1, 32765);
+    if (add && rc < 0) {
+        return rc;
+    }
+    // Ignore the main table's default route so more-specific routes (LAN) still win.
+    rc = changeRule(add, family, false, 0, RT_TABLE_MAIN, 0, 32764);
+    if (add && rc < 0) {
+        return rc;
+    }
+    return 0;
 }
 
 int LinuxRouter::setDns(const std::vector<std::string> &servers) {
@@ -461,86 +420,49 @@ int LinuxRouter::configureInterface(const std::string &ifname, int ifindex,
     return 0;
 }
 
-int LinuxRouter::setProxyRoutes(const std::vector<std::string> &routes,
-                                const std::vector<std::string> &bypass) {
+int LinuxRouter::setProxyRoutes(const std::vector<std::string> &routes) {
     std::lock_guard<std::recursive_mutex> lock(m_mtx);
     for (const auto &route : routes) {
-        std::vector<std::string> expanded;
-        expandRoute(route, expanded);
-        for (const auto &half : expanded) {
-            int rc = changeTunnelRoute(half, true);
+        if (route == "0.0.0.0/0") {
+            if (!m_fullV4) {
+                int rc = setFullTunnel(AF_INET, true);
+                if (rc < 0) {
+                    clearProxyRoutes();
+                    return rc;
+                }
+                m_fullV4 = true;
+            }
+        } else if (route == "::/0") {
+            if (!m_fullV6) {
+                int rc = setFullTunnel(AF_INET6, true);
+                if (rc < 0) {
+                    clearProxyRoutes();
+                    return rc;
+                }
+                m_fullV6 = true;
+            }
+        } else {
+            int rc = changeTunnelRoute(route, true);
             if (rc < 0) {
                 clearProxyRoutes();
                 return rc;
             }
-            m_routes.push_back(half);
-        }
-    }
-
-    for (const auto &ip : bypass) {
-        int rc = changeBypassRoute(ip, true);
-        if (rc < 0) {
-            clearProxyRoutes();
-            return rc;
-        }
-        m_bypass.push_back(ip);
-    }
-
-    if (!m_bypass.empty()) {
-        unsigned char gw[16];
-        uint32_t oif;
-        m_gw4Valid = findDefaultGateway(AF_INET, gw, &oif) == 0;
-        if (m_gw4Valid) {
-            std::memcpy(m_gw4, gw, 4);
-        }
-        m_gw6Valid = findDefaultGateway(AF_INET6, gw, &oif) == 0;
-        if (m_gw6Valid) {
-            std::memcpy(m_gw6, gw, 16);
+            m_routes.push_back(route);
         }
     }
     return 0;
 }
 
-void LinuxRouter::refresh() {
-    std::lock_guard<std::recursive_mutex> lock(m_mtx);
-    if (m_bypass.empty()) {
-        return;
-    }
-
-    bool changed = false;
-    unsigned char gw[16];
-    uint32_t oif;
-    if (findDefaultGateway(AF_INET, gw, &oif) == 0) {
-        if (!m_gw4Valid || std::memcmp(gw, m_gw4, 4) != 0) {
-            std::memcpy(m_gw4, gw, 4);
-            m_gw4Valid = true;
-            changed = true;
-        }
-    }
-    if (findDefaultGateway(AF_INET6, gw, &oif) == 0) {
-        if (!m_gw6Valid || std::memcmp(gw, m_gw6, 16) != 0) {
-            std::memcpy(m_gw6, gw, 16);
-            m_gw6Valid = true;
-            changed = true;
-        }
-    }
-    if (!changed) {
-        return;
-    }
-
-    // The gateway moved (network roamed): re-point every bypass route at it.
-    for (const auto &ip : m_bypass) {
-        changeBypass(ip, false);
-        changeBypass(ip, true);
-    }
-}
-
 void LinuxRouter::clearProxyRoutes() {
     std::lock_guard<std::recursive_mutex> lock(m_mtx);
-    for (const auto &ip : m_bypass) {
-        changeBypassRoute(ip, false);
+    if (m_fullV4) {
+        setFullTunnel(AF_INET, false);
+        m_fullV4 = false;
     }
-    m_bypass.clear();
+    if (m_fullV6) {
+        setFullTunnel(AF_INET6, false);
+        m_fullV6 = false;
+    }
     for (const auto &route : m_routes) {
         changeTunnelRoute(route, false);
     }

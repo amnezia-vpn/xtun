@@ -26,7 +26,6 @@ class Awg : public Proxy, private NonCopyable {
     void event(ProxyEvent ev) override;
     void stop() override;
     std::vector<std::string> routes() override;
-    std::vector<std::string> endpoints() override;
 
   private:
     awg::Config m_conf;

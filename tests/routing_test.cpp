@@ -66,13 +66,11 @@ struct NetnsGuard {
 
 struct FixedRoutesProxy : libxtun::Proxy {
     std::vector<std::string> r;
-    std::vector<std::string> e;
     const char *name() override { return "fixed"; }
     int start(const libxtun::ProxyIo &) override { return LIBXTUN_OK; }
     void event(libxtun::ProxyEvent) override {}
     void stop() override {}
     std::vector<std::string> routes() override { return r; }
-    std::vector<std::string> endpoints() override { return e; }
 };
 
 std::string ifAddr(const std::string &name) {
@@ -118,20 +116,14 @@ bool ifUp(const std::string &name) {
     return up;
 }
 
-bool hasDefaultRoute() {
-    FILE *f = popen("ip -o route show default 2>/dev/null", "r");
-    if (f == nullptr) {
-        return false;
+// The interface the kernel would use to reach ip, optionally as if the packet
+// carried fwmark (0 = unmarked).
+std::string routeGetDev(const std::string &ip, unsigned mark) {
+    std::string cmd = "ip route get " + ip;
+    if (mark != 0) {
+        cmd += " mark " + std::to_string(mark);
     }
-    char line[256];
-    bool has = fgets(line, sizeof(line), f) != nullptr;
-    pclose(f);
-    return has;
-}
-
-// The interface the kernel would actually use to reach ip (empty if none).
-std::string routeGetDev(const std::string &ip) {
-    std::string cmd = "ip route get " + ip + " 2>/dev/null";
+    cmd += " 2>/dev/null";
     FILE *f = popen(cmd.c_str(), "r");
     if (f == nullptr) {
         return "";
@@ -200,61 +192,16 @@ TEST(Routing, AppliesAddressMtuUpAndRoutes) {
     EXPECT_TRUE(routeExists(name, "10.88.0.0/24"));
 }
 
-TEST(Routing, SplitsDefaultRouteIntoHalves) {
-    ASSERT_TRUE(privileged()) << "configuring an interface requires root";
-
-    libxtun_tunnel_opts opts = routingOpts();
-    libxtun::Tunnel tunnel(opts);
-    ASSERT_EQ(tunnel.openTun(), LIBXTUN_OK);
-
-    FixedRoutesProxy proxy;
-    proxy.r = {"0.0.0.0/0"};
-    ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
-    ASSERT_EQ(tunnel.start(), LIBXTUN_OK);
-
-    const std::string name = tunnel.name();
-    EXPECT_TRUE(routeExists(name, "0.0.0.0/1"));
-    EXPECT_TRUE(routeExists(name, "128.0.0.0/1"));
-    EXPECT_FALSE(routeExists(name, "default"));
-    EXPECT_EQ(routeGetDev("8.8.8.8"), name);
-}
-
-TEST(Routing, RoutesEndpointAroundTunnel) {
-    ASSERT_TRUE(privileged()) << "configuring an interface requires root";
-    ASSERT_TRUE(hasDefaultRoute()) << "route-around needs a physical default route";
-
-    libxtun_tunnel_opts opts = routingOpts();
-    libxtun::Tunnel tunnel(opts);
-    ASSERT_EQ(tunnel.openTun(), LIBXTUN_OK);
-
-    FixedRoutesProxy proxy;
-    proxy.r = {"0.0.0.0/0"};
-    proxy.e = {"192.0.2.1"};
-    ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
-    ASSERT_EQ(tunnel.start(), LIBXTUN_OK);
-
-    const std::string name = tunnel.name();
-    EXPECT_NE(routeGetDev("192.0.2.1"), name);
-    EXPECT_FALSE(routeGetDev("192.0.2.1").empty());
-    EXPECT_EQ(routeGetDev("8.8.8.8"), name);
-}
-
-TEST(Routing, RepointsBypassWhenGatewayChanges) {
+TEST(Routing, FullTunnelMarksBypassPhysical) {
     ASSERT_TRUE(privileged()) << "network namespaces require root";
 
-    // Enter a private namespace first so it is restored last, after the tunnel
-    // (and its monitor thread) have been torn down.
     NetnsGuard netns;
     ASSERT_TRUE(netns.ok) << "could not create a private network namespace";
 
-    // Two links, each with its own on-link gateway; default starts on dummy0.
     ASSERT_TRUE(sh("ip link set lo up"));
     ASSERT_TRUE(sh("ip link add dummy0 type dummy")) << "needs the 'dummy' kernel module";
-    ASSERT_TRUE(sh("ip link add dummy1 type dummy"));
     ASSERT_TRUE(sh("ip addr add 10.10.0.2/24 dev dummy0"));
-    ASSERT_TRUE(sh("ip addr add 10.20.0.2/24 dev dummy1"));
     ASSERT_TRUE(sh("ip link set dummy0 up"));
-    ASSERT_TRUE(sh("ip link set dummy1 up"));
     ASSERT_TRUE(sh("ip route add default via 10.10.0.1 dev dummy0"));
 
     libxtun_tunnel_opts opts = routingOpts();
@@ -263,28 +210,13 @@ TEST(Routing, RepointsBypassWhenGatewayChanges) {
 
     FixedRoutesProxy proxy;
     proxy.r = {"0.0.0.0/0"};
-    proxy.e = {"192.0.2.1"};
     ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
     ASSERT_EQ(tunnel.start(), LIBXTUN_OK);
 
-    // Bypass follows the first gateway; everything else is tunneled.
-    EXPECT_EQ(routeGetDev("192.0.2.1"), "dummy0");
-    EXPECT_EQ(routeGetDev("8.8.8.8"), tunnel.name());
-
-    // Roam: move the default route onto the other link.
-    ASSERT_TRUE(sh("ip route replace default via 10.20.0.1 dev dummy1"));
-
-    // The monitor reacts asynchronously; poll until the bypass re-points.
-    std::string dev;
-    for (int i = 0; i < 200; ++i) {
-        dev = routeGetDev("192.0.2.1");
-        if (dev == "dummy1") {
-            break;
-        }
-        ::usleep(10 * 1000);
-    }
-    EXPECT_EQ(dev, "dummy1") << "bypass did not follow the new gateway";
-    EXPECT_EQ(routeGetDev("8.8.8.8"), tunnel.name());
+    const std::string name = tunnel.name();
+    // Unmarked traffic is captured by the tunnel; the proxy's marked traffic bypasses it.
+    EXPECT_EQ(routeGetDev("8.8.8.8", 0), name);
+    EXPECT_EQ(routeGetDev("8.8.8.8", 0x7874), "dummy0");
 }
 
 #endif

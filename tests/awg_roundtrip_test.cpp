@@ -181,6 +181,9 @@ TEST(AwgRoundtrip, DeliversDataBetweenTwoInstances) {
     a.bind(&cproxyA);
     b.bind(&cproxyB);
 
+    a.setInterface("xtuna");
+    b.setInterface("xtunb");
+
     ASSERT_EQ(a.start(tunA.io()), LIBXTUN_OK);
     ASSERT_EQ(b.start(tunB.io()), LIBXTUN_OK);
 
@@ -212,6 +215,7 @@ TEST(AwgRoundtrip, StopUnblocksParkedReader) {
     MemTun tun;
 
     libxtun::proto::Awg a(confA());
+    a.setInterface("xtuna");
     ASSERT_EQ(a.start(tun.io()), LIBXTUN_OK);
 
     tun.cancel();
