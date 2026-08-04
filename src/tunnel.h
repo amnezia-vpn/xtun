@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <functional>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -81,6 +82,7 @@ class Tunnel {
     std::atomic<bool> m_up;
     std::atomic<int> m_mtu;
     std::function<void(Event)> m_onEvent;
+    std::mutex m_proxyMtx;
     Proxy *m_proxy = nullptr;
 
 #if defined(_WIN32)

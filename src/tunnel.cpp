@@ -604,8 +604,20 @@ int Tunnel::mtu() const {
 }
 
 int Tunnel::attachProxy(Proxy *proxy) {
-    if (proxy == nullptr || proxy->m_tunnel != nullptr || m_proxy != nullptr) {
+    if (proxy == nullptr || proxy->m_tunnel != nullptr) {
         return LIBXTUN_ERR_INVALID_ARGS;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(m_proxyMtx);
+        if (m_proxy != nullptr) {
+            m_proxy->stop();
+            if (m_router != nullptr) {
+                m_router->clearProxyRoutes();
+            }
+            m_proxy->m_tunnel = nullptr;
+            m_proxy = nullptr;
+        }
     }
 
     ProxyIo io;
@@ -623,20 +635,25 @@ int Tunnel::attachProxy(Proxy *proxy) {
     m_closing.store(false);
 #endif
 
-    m_proxy = proxy;
+    proxy->setInterface(m_name);
     proxy->m_tunnel = this;
 
     int rc = proxy->start(io);
     if (rc != LIBXTUN_OK) {
         proxy->m_tunnel = nullptr;
-        m_proxy = nullptr;
         return rc;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(m_proxyMtx);
+        m_proxy = proxy;
     }
 
     if (m_started && m_router != nullptr) {
         if (m_router->setProxyRoutes(proxy->routes(), proxy->endpoints()) != 0) {
             m_router->clearProxyRoutes();
             proxy->stop();
+            std::lock_guard<std::mutex> lock(m_proxyMtx);
             proxy->m_tunnel = nullptr;
             m_proxy = nullptr;
             return LIBXTUN_ERR_SYSTEM;
@@ -658,6 +675,7 @@ int Tunnel::start() {
 }
 
 void Tunnel::detachProxy(Proxy *proxy) {
+    std::lock_guard<std::mutex> lock(m_proxyMtx);
     if (m_proxy == proxy) {
         if (m_router != nullptr) {
             m_router->clearProxyRoutes();
@@ -684,6 +702,8 @@ void Tunnel::emit(Event ev) {
     if (m_onEvent) {
         m_onEvent(ev);
     }
+
+    std::lock_guard<std::mutex> lock(m_proxyMtx);
     if (m_proxy == nullptr) {
         return;
     }

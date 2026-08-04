@@ -34,11 +34,13 @@ class Proxy {
     virtual std::vector<std::string> endpoints() = 0;
 
     void bind(struct libxtun_proxy *cproxy) { m_cproxy = cproxy; }
+    void setInterface(const std::string &ifname) { m_ifname = ifname; }
 
   protected:
     void cancelIo();
 
     struct libxtun_proxy *m_cproxy = nullptr;
+    std::string m_ifname;
 
   private:
     friend class Tunnel;
