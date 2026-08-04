@@ -112,18 +112,28 @@ TEST(ProxyAttach, ProxyDestroyedFirstDetachesItself) {
     EXPECT_EQ(fresh.startCalls, 1);
 }
 
-TEST(ProxyAttach, RejectsAttachingTwice) {
+TEST(ProxyAttach, RejectsReattachingSameProxy) {
     RecordingProxy proxy;
-    RecordingProxy other;
     libxtun_tunnel_opts opts = default_opts();
     libxtun::Tunnel tunnel(opts);
 
     ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
 
     EXPECT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_ERR_INVALID_ARGS);
-    EXPECT_EQ(tunnel.attachProxy(&other), LIBXTUN_ERR_INVALID_ARGS);
     EXPECT_EQ(proxy.startCalls, 1);
-    EXPECT_EQ(other.startCalls, 0);
+}
+
+TEST(ProxyAttach, AttachingAnotherProxyReplaces) {
+    RecordingProxy proxy;
+    RecordingProxy other;
+    libxtun_tunnel_opts opts = default_opts();
+    libxtun::Tunnel tunnel(opts);
+
+    ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
+    ASSERT_EQ(tunnel.attachProxy(&other), LIBXTUN_OK);
+
+    EXPECT_EQ(proxy.stopCalls, 1);
+    EXPECT_EQ(other.startCalls, 1);
 }
 
 TEST(ProxyAttach, StopsProxyOnTunnelDestruction) {
