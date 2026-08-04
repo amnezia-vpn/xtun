@@ -8,19 +8,17 @@
 namespace libxtun {
 
 
-struct NetworkConfig {
-    std::vector<std::string> addresses;
-    std::vector<std::string> routes;
-    std::vector<std::string> bypass;
-    std::vector<std::string> dns;
-    int mtu = 0;
-};
-
 class Router {
   public:
     virtual ~Router() = default;
 
-    virtual int apply(const std::string &ifname, int ifindex, const NetworkConfig &cfg) = 0;
+    virtual int configureInterface(const std::string &ifname, int ifindex,
+                                   const std::vector<std::string> &addresses, int mtu) = 0;
+
+    virtual int setProxyRoutes(const std::vector<std::string> &routes,
+                               const std::vector<std::string> &bypass) = 0;
+    virtual void clearProxyRoutes() = 0;
+
     virtual void revert() = 0;
 
     virtual void refresh() {}
