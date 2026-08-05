@@ -2,6 +2,7 @@ find_package(GTest REQUIRED)
 include(GoogleTest)
 
 add_executable(xtun_tests
+    awg_realtun_test.cpp
     awg_roundtrip_test.cpp
     awg_tunnel_test.cpp
     proxy_attach_test.cpp
