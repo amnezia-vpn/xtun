@@ -17,27 +17,48 @@
 #include <string>
 #include <vector>
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <net/if.h>
 #include <netinet/in.h>
-#include <sched.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+#include <cstring>
+
+#if defined(__linux__)
+#include <sched.h>
 
 #include <linux/if_ether.h>
 #include <linux/if_packet.h>
 
 #include <cstdlib>
-#include <cstring>
+#elif defined(__APPLE__)
+#include <net/bpf.h>
+#include <sys/ioctl.h>
+
+#include <cerrno>
+#endif
 
 namespace {
 
 bool privileged() {
     return ::geteuid() == 0;
 }
+
+libxtun_tunnel_opts realtunOpts() {
+    libxtun_tunnel_opts opts{};
+    opts.size = sizeof(opts);
+    opts.killswitch_mode = LIBXTUN_KILLSWITCH_MODE_DISABLED;
+    opts.if_addrs.list = "10.9.9.1/24";
+    opts.if_addrs.size = 1;
+    opts.mtu = 1420;
+    return opts;
+}
+
+#if defined(__linux__)
 
 bool sh(const std::string &cmd) {
     return std::system((cmd + " >/dev/null 2>&1").c_str()) == 0;
@@ -193,16 +214,6 @@ std::string confRemote() {
            "PersistentKeepalive = 5\n";
 }
 
-libxtun_tunnel_opts realtunOpts() {
-    libxtun_tunnel_opts opts{};
-    opts.size = sizeof(opts);
-    opts.killswitch_mode = LIBXTUN_KILLSWITCH_MODE_DISABLED;
-    opts.if_addrs.list = "10.9.9.1/24";
-    opts.if_addrs.size = 1;
-    opts.mtu = 1420;
-    return opts;
-}
-
 bool contains(const std::vector<unsigned char> &hay, const std::string &needle) {
     return std::search(hay.begin(), hay.end(), needle.begin(), needle.end()) != hay.end();
 }
@@ -242,7 +253,116 @@ void drainTunnel(int cap, unsigned tunidx, const unsigned char app[4],
     }
 }
 
+#elif defined(__APPLE__)
+
+// True if the host has a usable default route. A UDP connect only resolves a
+// route and picks a source; nothing is sent.
+bool hasDefaultRoute() {
+    int s = ::socket(AF_INET, SOCK_DGRAM, 0);
+    if (s < 0) {
+        return false;
+    }
+    sockaddr_in d{};
+    d.sin_family = AF_INET;
+    d.sin_port = htons(53);
+    ::inet_pton(AF_INET, "1.1.1.1", &d.sin_addr);
+    bool ok = ::connect(s, reinterpret_cast<sockaddr *>(&d), sizeof(d)) == 0;
+    ::close(s);
+    return ok;
+}
+
+libxtun::proto::awg::Config confSplit() {
+    const std::string str =
+        "[Interface]\n"
+        "PrivateKey = YHJIKcg6kMlHqmHvpdetXH9300wKO4NxqX1L+v9h20A=\n"
+        "ListenPort = 56911\n"
+        "Jc = 2\nJmin = 8\nJmax = 16\nS1 = 4\nS2 = 6\n"
+        "H1 = 1234567891\nH2 = 1234567892\nH3 = 1234567893\nH4 = 1234567894\n"
+        "\n"
+        "[Peer]\n"
+        "PublicKey = sB1wCAUCSBg8mrN8n4mPMAs4Z2C9QUCu3i6Emfb9omo=\n"
+        "Endpoint = 203.0.113.2:51820\n"
+        "AllowedIPs = 203.0.113.0/24\n"
+        "PersistentKeepalive = 5\n";
+    return libxtun::proto::awg::Config::fromConf(str).value();
+}
+
+// Opens a BPF device tapping ifname in immediate, non-blocking mode; returns the
+// kernel's required read buffer length in blen.
+int openBpf(const std::string &ifname, size_t &blen) {
+    int fd = -1;
+    for (int i = 0; i < 64; ++i) {
+        std::string dev = "/dev/bpf" + std::to_string(i);
+        fd = ::open(dev.c_str(), O_RDWR | O_CLOEXEC);
+        if (fd >= 0) {
+            break;
+        }
+        if (errno == ENOENT) {
+            return -1;
+        }
+    }
+    if (fd < 0) {
+        return -1;
+    }
+
+    struct ifreq ifr;
+    std::memset(&ifr, 0, sizeof(ifr));
+    std::strncpy(ifr.ifr_name, ifname.c_str(), IFNAMSIZ - 1);
+    unsigned yes = 1;
+    unsigned len = 0;
+    if (::ioctl(fd, BIOCSETIF, &ifr) < 0 || ::ioctl(fd, BIOCIMMEDIATE, &yes) < 0 ||
+        ::ioctl(fd, BIOCGBLEN, &len) < 0 || len == 0) {
+        ::close(fd);
+        return -1;
+    }
+    blen = len;
+    int fl = ::fcntl(fd, F_GETFL, 0);
+    ::fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+    return fd;
+}
+
+void drainBpf(int fd, size_t blen, const unsigned char app[4], const unsigned char proxy[4],
+              bool &sawApp, bool &sawProxy) {
+    std::vector<char> buf(blen);
+    for (;;) {
+        ssize_t n = ::read(fd, buf.data(), blen);
+        if (n <= 0) {
+            return;
+        }
+        char *p = buf.data();
+        char *lim = buf.data() + n;
+        while (p + sizeof(struct bpf_hdr) <= lim) {
+            auto *bh = reinterpret_cast<struct bpf_hdr *>(p);
+            unsigned char *frame = reinterpret_cast<unsigned char *>(p) + bh->bh_hdrlen;
+            unsigned c = bh->bh_caplen;
+            const unsigned char *ip = nullptr;
+            if (c >= 20 && (frame[0] >> 4) == 4) {
+                ip = frame;
+            } else if (c >= 24 && (frame[4] >> 4) == 4) {
+                ip = frame + 4;
+            }
+            if (ip != nullptr) {
+                if (std::memcmp(ip + 16, app, 4) == 0) {
+                    sawApp = true;
+                }
+                if (std::memcmp(ip + 16, proxy, 4) == 0) {
+                    sawProxy = true;
+                }
+            }
+            unsigned step = BPF_WORDALIGN(bh->bh_hdrlen + bh->bh_caplen);
+            if (step == 0) {
+                break;
+            }
+            p += step;
+        }
+    }
+}
+
+#endif
+
 }  // namespace
+
+#if defined(__linux__)
 
 TEST(AwgRealTun, FullTunnelDeliversThroughKernelTun) {
     ASSERT_TRUE(privileged()) << "real tun + netns + AWG UAPI need root";
@@ -368,7 +488,68 @@ TEST(AwgRealTun, MarkedHandshakeBypassesTunnel) {
 
     EXPECT_TRUE(sawApp) << "sanity check failed: ordinary traffic never crossed the tun";
     ASSERT_FALSE(sawProxy)
-        << "the proxy's own handshake was pulled into the tunnel — the fwmark bypass failed";
+        << "the proxy's own handshake was pulled into the tunnel - the fwmark bypass failed";
+}
+
+#elif defined(__APPLE__)
+
+TEST(AwgRealTun, MarkedHandshakeBypassesTunnel) {
+    ASSERT_TRUE(privileged()) << "real utun + AWG UAPI + BPF need root";
+    if (!hasDefaultRoute()) {
+        GTEST_SKIP() << "no physical uplink for the handshake to bypass to";
+    }
+
+    unsigned char proxyDst[4];
+    unsigned char appDst[4];
+    ::inet_pton(AF_INET, "203.0.113.2", proxyDst);
+    ::inet_pton(AF_INET, "203.0.113.5", appDst);
+
+    libxtun_tunnel_opts opts = realtunOpts();
+    libxtun::Tunnel tunnel(opts);
+    ASSERT_EQ(tunnel.openTun(), LIBXTUN_OK);
+    const std::string name = tunnel.name();
+
+    size_t blen = 0;
+    int cap = openBpf(name, blen);
+    ASSERT_GE(cap, 0) << "could not open a BPF device on the utun";
+
+    libxtun_proxy cproxyA{};
+    libxtun::proto::Awg a(confSplit());
+    a.bind(&cproxyA);
+    ASSERT_EQ(tunnel.attachProxy(&a), LIBXTUN_OK);
+    ASSERT_EQ(tunnel.start(), LIBXTUN_OK);
+    a.event(libxtun::ProxyEvent::Up);
+
+    int inj = ::socket(AF_INET, SOCK_DGRAM, 0);
+    ASSERT_GE(inj, 0);
+    sockaddr_in src{};
+    src.sin_family = AF_INET;
+    ::inet_pton(AF_INET, "10.9.9.1", &src.sin_addr);
+    ::bind(inj, reinterpret_cast<sockaddr *>(&src), sizeof(src));
+    sockaddr_in dst{};
+    dst.sin_family = AF_INET;
+    dst.sin_port = htons(9999);
+    ::inet_pton(AF_INET, "203.0.113.5", &dst.sin_addr);
+
+    // Poke the tun so the proxy has something to send and initiates a handshake.
+    bool sawApp = false;
+    bool sawProxy = false;
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+    while (std::chrono::steady_clock::now() < deadline) {
+        const char poke = 0;
+        ::sendto(inj, &poke, sizeof(poke), 0, reinterpret_cast<sockaddr *>(&dst), sizeof(dst));
+        drainBpf(cap, blen, appDst, proxyDst, sawApp, sawProxy);
+        ::usleep(50 * 1000);
+    }
+
+    ::close(inj);
+    ::close(cap);
+
+    EXPECT_TRUE(sawApp) << "sanity check failed: ordinary traffic never crossed the utun";
+    ASSERT_FALSE(sawProxy)
+        << "the proxy's own handshake was pulled into the tunnel - the fwmark bypass failed";
 }
 
 #endif
+
+#endif  // defined(__linux__) || defined(__APPLE__)

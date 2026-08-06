@@ -16,7 +16,10 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/sockio.h>
+#include <sys/sysctl.h>
 #include <unistd.h>
+
+#include <vector>
 
 namespace {
 
@@ -42,6 +45,13 @@ int parseIp(const std::string &ip, int &family, unsigned char out[16]) {
         return 16;
     }
     return -1;
+}
+
+// The space a route-message sockaddr occupies: its length rounded up to a 4-byte
+// boundary (a zero length still counts as one word), used to walk a dump.
+size_t saSize(const struct sockaddr *sa) {
+    size_t l = sa->sa_len ? sa->sa_len : sizeof(uint32_t);
+    return (l + sizeof(uint32_t) - 1) & ~(sizeof(uint32_t) - 1);
 }
 
 // Route-message sockaddrs are packed after the header, each padded to a 4-byte
@@ -91,9 +101,6 @@ int MacosRouter::setUp() {
     return rc;
 }
 
-// utun is point-to-point, so the address gets a host mask and itself as the
-// destination; subnet reachability comes from the routes, not the interface.
-// No removal path: the utun and its addresses are gone once the tun fd closes.
 int MacosRouter::addAddress(const std::string &cidr) {
     std::string ip;
     int prefix;
@@ -127,7 +134,7 @@ int MacosRouter::addAddress(const std::string &cidr) {
         return rc;
     }
 
-    int fd = ::socket(AF_INET6, SOCK_DGRAM, IPPROTO_IPV6);
+    int fd = ::socket(AF_INET6, SOCK_DGRAM, IPPROTO_IP);
     if (fd < 0) {
         return -errno;
     }
@@ -147,16 +154,15 @@ int MacosRouter::addAddress(const std::string &cidr) {
     return rc;
 }
 
-// Routes a prefix to the tunnel: the gateway is the tun's own link address, so
-// the kernel treats it as an interface (scope-link) route.
-int MacosRouter::changeRoute(int family, const unsigned char *dst, int prefix, bool add) {
+int MacosRouter::rtSend(int family, const unsigned char *dst, int prefix, const void *gw,
+                           unsigned gwLen, int flags, unsigned index, bool add) {
     char buf[512];
     std::memset(buf, 0, sizeof(buf));
     auto *rtm = reinterpret_cast<struct rt_msghdr *>(buf);
     rtm->rtm_version = RTM_VERSION;
     rtm->rtm_type = add ? RTM_ADD : RTM_DELETE;
-    rtm->rtm_index = static_cast<unsigned short>(m_ifindex);
-    rtm->rtm_flags = RTF_STATIC | RTF_UP;
+    rtm->rtm_index = static_cast<unsigned short>(index);
+    rtm->rtm_flags = flags;
     rtm->rtm_addrs = RTA_DST | RTA_GATEWAY | RTA_NETMASK;
     rtm->rtm_seq = m_rtseq++;
 
@@ -178,15 +184,7 @@ int MacosRouter::changeRoute(int family, const unsigned char *dst, int prefix, b
         appendSa(buf, len, &sin6, sin6.sin6_len);
     }
 
-    struct sockaddr_dl sdl;
-    std::memset(&sdl, 0, sizeof(sdl));
-    sdl.sdl_family = AF_LINK;
-    sdl.sdl_index = static_cast<unsigned short>(m_ifindex);
-    sdl.sdl_type = IFT_OTHER;
-    sdl.sdl_nlen = static_cast<unsigned char>(m_ifname.size());
-    sdl.sdl_len = static_cast<unsigned char>(offsetof(struct sockaddr_dl, sdl_data) + sdl.sdl_nlen);
-    std::memcpy(sdl.sdl_data, m_ifname.c_str(), sdl.sdl_nlen);
-    appendSa(buf, len, &sdl, sdl.sdl_len);
+    appendSa(buf, len, gw, gwLen);
 
     if (family == AF_INET) {
         struct sockaddr_in mask;
@@ -231,7 +229,39 @@ int MacosRouter::changeRoute(int family, const unsigned char *dst, int prefix, b
     return -e;
 }
 
-int MacosRouter::changeTunnelRoute(const std::string &cidr, bool add) {
+int MacosRouter::updateRoute(int family, const unsigned char *dst, int prefix, bool add) {
+    struct sockaddr_dl sdl;
+    std::memset(&sdl, 0, sizeof(sdl));
+    sdl.sdl_family = AF_LINK;
+    sdl.sdl_index = static_cast<unsigned short>(m_ifindex);
+    sdl.sdl_type = IFT_OTHER;
+    sdl.sdl_nlen = static_cast<unsigned char>(m_ifname.size());
+    sdl.sdl_len = static_cast<unsigned char>(offsetof(struct sockaddr_dl, sdl_data) + sdl.sdl_nlen);
+    std::memcpy(sdl.sdl_data, m_ifname.c_str(), sdl.sdl_nlen);
+    return rtSend(family, dst, prefix, &sdl, sdl.sdl_len, RTF_STATIC | RTF_UP,
+                     static_cast<unsigned>(m_ifindex), add);
+}
+
+int MacosRouter::updateScopedRoute(int family, const unsigned char *dst, int prefix,
+                                   const unsigned char *gw, unsigned scope, bool add) {
+    int flags = RTF_STATIC | RTF_UP | RTF_GATEWAY | RTF_IFSCOPE;
+    if (family == AF_INET) {
+        struct sockaddr_in sin;
+        std::memset(&sin, 0, sizeof(sin));
+        sin.sin_family = AF_INET;
+        sin.sin_len = sizeof(sin);
+        std::memcpy(&sin.sin_addr, gw, 4);
+        return rtSend(family, dst, prefix, &sin, sin.sin_len, flags, scope, add);
+    }
+    struct sockaddr_in6 sin6;
+    std::memset(&sin6, 0, sizeof(sin6));
+    sin6.sin6_family = AF_INET6;
+    sin6.sin6_len = sizeof(sin6);
+    std::memcpy(&sin6.sin6_addr, gw, 16);
+    return rtSend(family, dst, prefix, &sin6, sin6.sin6_len, flags, scope, add);
+}
+
+int MacosRouter::updateRouteFor(const std::string &cidr, bool add) {
     std::string ip;
     int prefix;
     if (!splitCidr(cidr, ip, prefix)) {
@@ -242,26 +272,46 @@ int MacosRouter::changeTunnelRoute(const std::string &cidr, bool add) {
     if (parseIp(ip, family, raw) < 0) {
         return -EINVAL;
     }
-    return changeRoute(family, raw, prefix, add);
+    return updateRoute(family, raw, prefix, add);
 }
 
-// Full tunnel with no policy routing: two half-default routes more specific than
-// the physical default, so unmarked traffic falls into the tun while the
-// OS-managed default stays put. The proxy's own socket bypasses these via
-// IP_BOUND_IF, so no host route for the endpoint is needed.
-int MacosRouter::setFullTunnel(int family, bool add) {
+int MacosRouter::updateFullTunnelRoutes(int family, bool add) {
     unsigned char lo[16];
     unsigned char hi[16];
     std::memset(lo, 0, sizeof(lo));
     std::memset(hi, 0, sizeof(hi));
     hi[0] = 0x80;
-    int rc = changeRoute(family, lo, 1, add);
+
+    int rc = updateRoute(family, lo, 1, add);
     if (add && rc < 0) {
         return rc;
     }
-    rc = changeRoute(family, hi, 1, add);
+    rc = updateRoute(family, hi, 1, add);
     if (add && rc < 0) {
         return rc;
+    }
+
+    ScopedBypass &sb = family == AF_INET ? m_bypassV4 : m_bypassV6;
+    if (add) {
+        int idx = 0;
+        unsigned char gw[16] = {0};
+        if (getGatewayAndIface(family, idx, gw)) {
+            rc = updateScopedRoute(family, lo, 1, gw, static_cast<unsigned>(idx), true);
+            if (rc < 0) {
+                return rc;
+            }
+            rc = updateScopedRoute(family, hi, 1, gw, static_cast<unsigned>(idx), true);
+            if (rc < 0) {
+                return rc;
+            }
+            sb.active = true;
+            sb.scope = static_cast<unsigned>(idx);
+            std::memcpy(sb.gw, gw, sizeof(sb.gw));
+        }
+    } else if (sb.active) {
+        updateScopedRoute(family, lo, 1, sb.gw, sb.scope, false);
+        updateScopedRoute(family, hi, 1, sb.gw, sb.scope, false);
+        sb.active = false;
     }
     return 0;
 }
@@ -300,7 +350,7 @@ int MacosRouter::setProxyRoutes(const std::vector<std::string> &routes) {
     for (const auto &route : routes) {
         if (route == "0.0.0.0/0") {
             if (!m_fullV4) {
-                int rc = setFullTunnel(AF_INET, true);
+                int rc = updateFullTunnelRoutes(AF_INET, true);
                 if (rc < 0) {
                     clearProxyRoutes();
                     return rc;
@@ -309,7 +359,7 @@ int MacosRouter::setProxyRoutes(const std::vector<std::string> &routes) {
             }
         } else if (route == "::/0") {
             if (!m_fullV6) {
-                int rc = setFullTunnel(AF_INET6, true);
+                int rc = updateFullTunnelRoutes(AF_INET6, true);
                 if (rc < 0) {
                     clearProxyRoutes();
                     return rc;
@@ -317,7 +367,7 @@ int MacosRouter::setProxyRoutes(const std::vector<std::string> &routes) {
                 m_fullV6 = true;
             }
         } else {
-            int rc = changeTunnelRoute(route, true);
+            int rc = updateRouteFor(route, true);
             if (rc < 0) {
                 clearProxyRoutes();
                 return rc;
@@ -331,15 +381,15 @@ int MacosRouter::setProxyRoutes(const std::vector<std::string> &routes) {
 void MacosRouter::clearProxyRoutes() {
     std::lock_guard<std::recursive_mutex> lock(m_mtx);
     if (m_fullV4) {
-        setFullTunnel(AF_INET, false);
+        updateFullTunnelRoutes(AF_INET, false);
         m_fullV4 = false;
     }
     if (m_fullV6) {
-        setFullTunnel(AF_INET6, false);
+        updateFullTunnelRoutes(AF_INET6, false);
         m_fullV6 = false;
     }
     for (const auto &route : m_routes) {
-        changeTunnelRoute(route, false);
+        updateRouteFor(route, false);
     }
     m_routes.clear();
 }
@@ -349,6 +399,82 @@ void MacosRouter::revert() {
     clearProxyRoutes();
     // The utun and its addresses are destroyed when the tun fd closes.
     m_addresses.clear();
+}
+
+bool MacosRouter::getGatewayAndIface(int family, int &ifindex, unsigned char *gw) {
+    int mib[6] = {CTL_NET, PF_ROUTE, 0, family, NET_RT_FLAGS, RTF_GATEWAY};
+    size_t need = 0;
+    if (::sysctl(mib, 6, nullptr, &need, nullptr, 0) < 0 || need == 0) {
+        return false;
+    }
+    std::vector<char> buf(need);
+    if (::sysctl(mib, 6, buf.data(), &need, nullptr, 0) < 0) {
+        return false;
+    }
+
+    char *lim = buf.data() + need;
+    for (char *p = buf.data(); p + sizeof(struct rt_msghdr) <= lim;) {
+        auto *rtm = reinterpret_cast<struct rt_msghdr *>(p);
+        if (rtm->rtm_msglen == 0) {
+            break;
+        }
+        p += rtm->rtm_msglen;
+
+        if ((rtm->rtm_flags & (RTF_GATEWAY | RTF_UP)) != (RTF_GATEWAY | RTF_UP)) {
+            continue;
+        }
+        if (rtm->rtm_flags & RTF_IFSCOPE) {
+            continue;
+        }
+        if (rtm->rtm_index == static_cast<unsigned short>(m_ifindex)) {
+            continue;
+        }
+        if ((rtm->rtm_addrs & (RTA_DST | RTA_GATEWAY)) != (RTA_DST | RTA_GATEWAY)) {
+            continue;
+        }
+
+        auto *dst = reinterpret_cast<struct sockaddr *>(rtm + 1);
+        bool isDefault = dst->sa_len == 0;
+        if (!isDefault && dst->sa_family == AF_INET) {
+            isDefault = reinterpret_cast<struct sockaddr_in *>(dst)->sin_addr.s_addr == 0;
+        }
+        if (!isDefault && dst->sa_family == AF_INET6) {
+            auto &a = reinterpret_cast<struct sockaddr_in6 *>(dst)->sin6_addr;
+            isDefault = true;
+            for (int i = 0; i < 16; ++i) {
+                if (a.s6_addr[i] != 0) {
+                    isDefault = false;
+                    break;
+                }
+            }
+        }
+        if (!isDefault) {
+            continue;
+        }
+
+        auto *gwsa = reinterpret_cast<struct sockaddr *>(reinterpret_cast<char *>(dst) + saSize(dst));
+        if (family == AF_INET && gwsa->sa_family == AF_INET) {
+            std::memcpy(gw, &reinterpret_cast<struct sockaddr_in *>(gwsa)->sin_addr, 4);
+            ifindex = rtm->rtm_index;
+            return true;
+        }
+        if (family == AF_INET6 && gwsa->sa_family == AF_INET6) {
+            std::memcpy(gw, &reinterpret_cast<struct sockaddr_in6 *>(gwsa)->sin6_addr, 16);
+            ifindex = rtm->rtm_index;
+            return true;
+        }
+    }
+    return false;
+}
+
+uint32_t MacosRouter::bypassToken() {
+    std::lock_guard<std::recursive_mutex> lock(m_mtx);
+    int idx = 0;
+    unsigned char gw[16] = {0};
+    if (!getGatewayAndIface(AF_INET, idx, gw)) {
+        return 0;
+    }
+    return static_cast<uint32_t>(idx);
 }
 
 }

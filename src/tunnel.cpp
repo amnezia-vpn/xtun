@@ -636,6 +636,7 @@ int Tunnel::attachProxy(Proxy *proxy) {
 #endif
 
     proxy->setInterface(m_name);
+    proxy->setBypassToken(m_router != nullptr ? m_router->bypassToken() : 0);
     proxy->m_tunnel = this;
 
     int rc = proxy->start(io);

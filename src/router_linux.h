@@ -16,14 +16,15 @@ class LinuxRouter : public Router {
     int setProxyRoutes(const std::vector<std::string> &routes) override;
     void clearProxyRoutes() override;
     void revert() override;
+    uint32_t bypassToken() override;
 
   private:
     int setMtu(int mtu);
     int setUp();
-    int changeAddress(const std::string &cidr, bool add);
-    int changeTunnelRoute(const std::string &cidr, bool add);
-    int setFullTunnel(int family, bool add);
-    int changeRule(bool add, int family, bool invert, uint32_t fwmark, uint32_t table,
+    int updateAddress(const std::string &cidr, bool add);
+    int updateRouteFor(const std::string &cidr, bool add);
+    int updateFullTunnelRoutes(int family, bool add);
+    int updateRule(bool add, int family, bool invert, uint32_t fwmark, uint32_t table,
                    int suppressPrefixLen, uint32_t priority);
     int setDns(const std::vector<std::string> &servers);
     void revertDns();
