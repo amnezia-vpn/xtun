@@ -1,7 +1,5 @@
 #include "awg.h"
 
-#include "../fwmark.h"
-
 #include <libgoxtun.h>
 
 #include <cstdlib>
@@ -72,7 +70,7 @@ int Awg::start(const ProxyIo &io) {
         return LIBXTUN_ERR_SYSTEM;
     }
 
-    m_conf.setFwmark(kProxyFwmark);
+    m_conf.setFwmark(m_bypassToken);
     auto uapi = m_conf.toUapi();
     if (char *err = goxtun_awg_setconf(m_ctx, &uapi[0]); err != nullptr) {
         forwardLog(err, m_cproxy);

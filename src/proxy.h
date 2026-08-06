@@ -1,5 +1,6 @@
 #include <xtun.h>
 
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
@@ -34,12 +35,14 @@ class Proxy {
 
     void bind(struct libxtun_proxy *cproxy) { m_cproxy = cproxy; }
     void setInterface(const std::string &ifname) { m_ifname = ifname; }
+    void setBypassToken(uint32_t token) { m_bypassToken = token; }
 
   protected:
     void cancelIo();
 
     struct libxtun_proxy *m_cproxy = nullptr;
     std::string m_ifname;
+    uint32_t m_bypassToken = 0;
 
   private:
     friend class Tunnel;

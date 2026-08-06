@@ -150,7 +150,7 @@ int LinuxRouter::setUp() {
     return rc;
 }
 
-int LinuxRouter::changeAddress(const std::string &cidr, bool add) {
+int LinuxRouter::updateAddress(const std::string &cidr, bool add) {
     std::string ip;
     int prefix;
     if (!splitCidr(cidr, ip, prefix)) {
@@ -185,7 +185,7 @@ int LinuxRouter::changeAddress(const std::string &cidr, bool add) {
     return nlSend(&req.nlh);
 }
 
-int LinuxRouter::changeTunnelRoute(const std::string &cidr, bool add) {
+int LinuxRouter::updateRouteFor(const std::string &cidr, bool add) {
     std::string ip;
     int prefix;
     if (!splitCidr(cidr, ip, prefix)) {
@@ -223,7 +223,7 @@ int LinuxRouter::changeTunnelRoute(const std::string &cidr, bool add) {
     return nlSend(&req.nlh);
 }
 
-int LinuxRouter::changeRule(bool add, int family, bool invert, uint32_t fwmark, uint32_t table,
+int LinuxRouter::updateRule(bool add, int family, bool invert, uint32_t fwmark, uint32_t table,
                             int suppressPrefixLen, uint32_t priority) {
     struct {
         struct nlmsghdr nlh;
@@ -258,7 +258,7 @@ int LinuxRouter::changeRule(bool add, int family, bool invert, uint32_t fwmark, 
     return nlSend(&req.nlh);
 }
 
-int LinuxRouter::setFullTunnel(int family, bool add) {
+int LinuxRouter::updateFullTunnelRoutes(int family, bool add) {
     struct {
         struct nlmsghdr nlh;
         struct rtmsg rtm;
@@ -289,12 +289,12 @@ int LinuxRouter::setFullTunnel(int family, bool add) {
 
     // Unmarked traffic uses the private table (the tun); the proxy's own marked
     // packets fall through to the main table and reach the physical link.
-    rc = changeRule(add, family, true, kProxyFwmark, kProxyTable, -1, 32765);
+    rc = updateRule(add, family, true, kProxyFwmark, kProxyTable, -1, 32765);
     if (add && rc < 0) {
         return rc;
     }
     // Ignore the main table's default route so more-specific routes (LAN) still win.
-    rc = changeRule(add, family, false, 0, RT_TABLE_MAIN, 0, 32764);
+    rc = updateRule(add, family, false, 0, RT_TABLE_MAIN, 0, 32764);
     if (add && rc < 0) {
         return rc;
     }
@@ -410,7 +410,7 @@ int LinuxRouter::configureInterface(const std::string &ifname, int ifindex,
     }
 
     for (const auto &addr : addresses) {
-        rc = changeAddress(addr, true);
+        rc = updateAddress(addr, true);
         if (rc < 0) {
             revert();
             return rc;
@@ -425,7 +425,7 @@ int LinuxRouter::setProxyRoutes(const std::vector<std::string> &routes) {
     for (const auto &route : routes) {
         if (route == "0.0.0.0/0") {
             if (!m_fullV4) {
-                int rc = setFullTunnel(AF_INET, true);
+                int rc = updateFullTunnelRoutes(AF_INET, true);
                 if (rc < 0) {
                     clearProxyRoutes();
                     return rc;
@@ -434,7 +434,7 @@ int LinuxRouter::setProxyRoutes(const std::vector<std::string> &routes) {
             }
         } else if (route == "::/0") {
             if (!m_fullV6) {
-                int rc = setFullTunnel(AF_INET6, true);
+                int rc = updateFullTunnelRoutes(AF_INET6, true);
                 if (rc < 0) {
                     clearProxyRoutes();
                     return rc;
@@ -442,7 +442,7 @@ int LinuxRouter::setProxyRoutes(const std::vector<std::string> &routes) {
                 m_fullV6 = true;
             }
         } else {
-            int rc = changeTunnelRoute(route, true);
+            int rc = updateRouteFor(route, true);
             if (rc < 0) {
                 clearProxyRoutes();
                 return rc;
@@ -456,15 +456,15 @@ int LinuxRouter::setProxyRoutes(const std::vector<std::string> &routes) {
 void LinuxRouter::clearProxyRoutes() {
     std::lock_guard<std::recursive_mutex> lock(m_mtx);
     if (m_fullV4) {
-        setFullTunnel(AF_INET, false);
+        updateFullTunnelRoutes(AF_INET, false);
         m_fullV4 = false;
     }
     if (m_fullV6) {
-        setFullTunnel(AF_INET6, false);
+        updateFullTunnelRoutes(AF_INET6, false);
         m_fullV6 = false;
     }
     for (const auto &route : m_routes) {
-        changeTunnelRoute(route, false);
+        updateRouteFor(route, false);
     }
     m_routes.clear();
 }
@@ -474,9 +474,13 @@ void LinuxRouter::revert() {
     revertDns();
     clearProxyRoutes();
     for (const auto &addr : m_addresses) {
-        changeAddress(addr, false);
+        updateAddress(addr, false);
     }
     m_addresses.clear();
+}
+
+uint32_t LinuxRouter::bypassToken() {
+    return kProxyFwmark;
 }
 
 }
