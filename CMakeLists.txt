@@ -8,6 +8,10 @@ set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES
 
 project(xtun)
 
+if(PROJECT_IS_TOP_LEVEL)
+    include(${CMAKE_CURRENT_LIST_DIR}/cmake/recipes_bootstrap.cmake)
+endif()
+
 find_package(goxtun REQUIRED)
 find_package(Threads REQUIRED)
 
@@ -55,7 +59,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     target_sources(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src/router_macos.cpp)
 endif()
 
-if(PROJECT_IS_TOP_LEVEL)
+if(PROJECT_IS_TOP_LEVEL AND NOT WIN32)
     enable_testing()
     add_subdirectory(tests)
 endif()

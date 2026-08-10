@@ -51,6 +51,9 @@ class Goxtun(ConanFile):
 
     def build_requirements(self):
         self.tool_requires("go/1.26.0")
+        if self.settings.os == "Windows":
+            self.tool_requires("mingw-builds/15.1.0")
+            self.tool_requires("msys2/cci.latest")
 
     def generate(self):
         tc = AutotoolsToolchain(self)
@@ -101,7 +104,8 @@ class Goxtun(ConanFile):
 
     def build(self):
         with chdir(self, self.source_folder):
-            self._patch_awg_module()
+            if self.settings.os == "Macos":
+                self._patch_awg_module()
             at = Autotools(self)
             shared = self.options.get_safe("shared", True)
             at.make(target=("shared" if shared else "archive"))
