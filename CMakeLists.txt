@@ -32,7 +32,9 @@ target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_20)
 
 if(WIN32)
     find_package(wintun REQUIRED)
+    target_sources(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src/router_windows.cpp)
     target_link_libraries(${PROJECT_NAME} PUBLIC amnezia::wintun)
+    target_link_libraries(${PROJECT_NAME} PRIVATE iphlpapi ws2_32)
     target_compile_definitions(${PROJECT_NAME} PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
 endif()
 
