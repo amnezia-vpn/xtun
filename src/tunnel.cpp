@@ -501,6 +501,10 @@ int Tunnel::read(void *buf, size_t len) {
 #elif defined(_WIN32)
     RunGuard guard(m_running);
 
+    if (m_session == nullptr) {
+        return -1;
+    }
+
     for (;;) {
         if (m_closing.load()) {
             return -1;
@@ -560,7 +564,7 @@ int Tunnel::write(const void *buf, size_t len) {
 #elif defined(_WIN32)
     RunGuard guard(m_running);
 
-    if (m_closing.load() || len == 0) {
+    if (m_session == nullptr || m_closing.load() || len == 0) {
         return -1;
     }
     BYTE *packet = m_allocateSendPacket(m_session, static_cast<DWORD>(len));
