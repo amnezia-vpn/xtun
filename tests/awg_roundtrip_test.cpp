@@ -13,14 +13,9 @@
 #include <string>
 #include <vector>
 
-#include <unistd.h>
-
 namespace {
 
-bool privileged() {
-    return ::geteuid() == 0;
-}
-
+constexpr bool kVerbose = false;
 
 constexpr const char *kPrivA = "YHJIKcg6kMlHqmHvpdetXH9300wKO4NxqX1L+v9h20A=";
 constexpr const char *kPubA = "dpY/lgMy5OZPe6EVFl25AYL8hCsNEPxzO2uZZdzLnlo=";
@@ -42,11 +37,15 @@ constexpr const char *kAwgParams =
     "H4 = 1234567894\n";
 
 void logA(const char *str, void *) {
-    std::fprintf(stderr, "[A] %s\n", str);
+    if (kVerbose) {
+        std::fprintf(stderr, "[A] %s\n", str);
+    }
 }
 
 void logB(const char *str, void *) {
-    std::fprintf(stderr, "[B] %s\n", str);
+    if (kVerbose) {
+        std::fprintf(stderr, "[B] %s\n", str);
+    }
 }
 
 class MemTun {
@@ -209,9 +208,62 @@ TEST(AwgRoundtrip, DeliversDataBetweenTwoInstances) {
     EXPECT_EQ(got, sent);
 }
 
-TEST(AwgRoundtrip, StopUnblocksParkedReader) {
-    ASSERT_TRUE(privileged()) << "AWG UAPI socket needs root (/var/run/amneziawg)";
+TEST(AwgRoundtrip, ReapplyBypassPreservesLiveSession) {
+    libxtun_proxy cproxyA{};
+    libxtun_proxy cproxyB{};
+    cproxyA.loghandler = logA;
+    cproxyB.loghandler = logB;
 
+    MemTun tunA;
+    MemTun tunB;
+
+    libxtun::proto::Awg a(confA());
+    libxtun::proto::Awg b(confB());
+
+    a.bind(&cproxyA);
+    b.bind(&cproxyB);
+
+    a.setInterface("xtuna");
+    b.setInterface("xtunb");
+
+    ASSERT_EQ(a.start(tunA.io()), LIBXTUN_OK);
+    ASSERT_EQ(b.start(tunB.io()), LIBXTUN_OK);
+
+    a.event(libxtun::ProxyEvent::Up);
+    b.event(libxtun::ProxyEvent::Up);
+
+    std::vector<unsigned char> first = ipv4Packet("before-remark");
+    std::vector<unsigned char> got;
+    bool delivered = false;
+
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (!delivered && std::chrono::steady_clock::now() < deadline) {
+        tunA.inject(first);
+        delivered = tunB.awaitDelivery(got, std::chrono::milliseconds(250));
+    }
+    ASSERT_TRUE(delivered) << "handshake never completed before the re-mark";
+
+    a.reapplyBypass();
+    b.reapplyBypass();
+
+    std::vector<unsigned char> second = ipv4Packet("after-remark");
+    bool redelivered = false;
+    deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (!redelivered && std::chrono::steady_clock::now() < deadline) {
+        tunA.inject(second);
+        redelivered = tunB.awaitDelivery(got, std::chrono::milliseconds(250));
+    }
+
+    tunA.cancel();
+    tunB.cancel();
+    a.stop();
+    b.stop();
+
+    ASSERT_TRUE(redelivered) << "re-mark tore down the live session";
+    EXPECT_EQ(got, second);
+}
+
+TEST(AwgRoundtrip, StopUnblocksParkedReader) {
     MemTun tun;
 
     libxtun::proto::Awg a(confA());

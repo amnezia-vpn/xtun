@@ -2,16 +2,28 @@
 
 #include <gtest/gtest.h>
 
-#if defined(__linux__) || defined(__APPLE__)
+#if defined(_WIN32)
+#include <windows.h>
+#else
 #include <unistd.h>
 #endif
-
-#if defined(__linux__)
 
 namespace {
 
 bool privileged() {
+#if defined(_WIN32)
+    BOOL isAdmin = FALSE;
+    PSID adminGroup = nullptr;
+    SID_IDENTIFIER_AUTHORITY ntAuthority = SECURITY_NT_AUTHORITY;
+    if (::AllocateAndInitializeSid(&ntAuthority, 2, SECURITY_BUILTIN_DOMAIN_RID,
+                                   DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0, 0, &adminGroup)) {
+        ::CheckTokenMembership(nullptr, adminGroup, &isAdmin);
+        ::FreeSid(adminGroup);
+    }
+    return isAdmin != FALSE;
+#else
     return ::geteuid() == 0;
+#endif
 }
 
 constexpr const char *kConf =
@@ -66,5 +78,3 @@ TEST(AwgTunnel, AttachAndTeardownProxyFirst) {
     libxtun_proxy_free(&proxy);
     libxtun_tunnel_free(&tun);
 }
-
-#endif

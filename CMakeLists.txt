@@ -59,7 +59,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     target_sources(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src/router_macos.cpp)
 endif()
 
-if(PROJECT_IS_TOP_LEVEL AND NOT WIN32)
+if(PROJECT_IS_TOP_LEVEL)
     enable_testing()
     add_subdirectory(tests)
 endif()
