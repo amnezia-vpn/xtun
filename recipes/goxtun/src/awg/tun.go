@@ -3,7 +3,7 @@ package awg
 import (
 	"os"
 
-	"github.com/amnezia-vpn/amneziawg-go/tun"
+	"github.com/amnezia-vpn/amneziawg-go/v3/tun"
 )
 
 func NewTun(readCb TunReadCb, writeCb TunWriteCb, mtuCb TunMtuCb) *Tun {

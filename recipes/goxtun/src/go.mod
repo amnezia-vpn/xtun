@@ -2,7 +2,7 @@ module github.com/amnezia-vpn/libxtun/goxtun
 
 go 1.26
 
-require github.com/amnezia-vpn/amneziawg-go v0.2.18
+require github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260814-0.20260813135540-08271d00b330
 
 require (
 	golang.org/x/crypto v0.49.0 // indirect
