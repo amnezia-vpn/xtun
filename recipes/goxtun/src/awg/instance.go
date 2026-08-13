@@ -1,13 +1,12 @@
 package awg
 
 import (
-	"github.com/amnezia-vpn/amneziawg-go/conn"
-	"github.com/amnezia-vpn/amneziawg-go/device"
-	"github.com/amnezia-vpn/amneziawg-go/tun"
+	"github.com/amnezia-vpn/amneziawg-go/v3/device"
+	"github.com/amnezia-vpn/amneziawg-go/v3/tun"
 )
 
-func NewInstance(tun *Tun, logger *device.Logger) *Instance {
-	dev := device.NewDevice(tun, conn.NewDefaultBind(), logger)
+func NewInstance(tun *Tun, bind *Bind, logger *device.Logger) *Instance {
+	dev := device.NewDevice(tun, bind, logger)
 	return &Instance{
 		Device: dev,
 		tun:    tun,
