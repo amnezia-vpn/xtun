@@ -100,6 +100,7 @@ class Tunnel {
     WINTUN_RELEASE_RECEIVE_PACKET_FUNC *m_releaseReceivePacket = nullptr;
     WINTUN_ALLOCATE_SEND_PACKET_FUNC *m_allocateSendPacket = nullptr;
     WINTUN_SEND_PACKET_FUNC *m_sendPacket = nullptr;
+    WINTUN_GET_ADAPTER_LUID_FUNC *m_getAdapterLuid = nullptr;
 #endif
 };
 

@@ -33,6 +33,10 @@
 #include <netinet/in.h>
 #endif
 
+#if defined(_WIN32)
+#include <iphlpapi.h>
+#endif
+
 namespace {
 
 std::vector<std::string> parseStrList(const libxtun_str_list &l) {
@@ -202,7 +206,24 @@ int Tunnel::openTun() {
     }
 
     m_name = "xtun";
-    return startWintunSession(startSession, getReadWaitEvent);
+    rc = startWintunSession(startSession, getReadWaitEvent);
+    if (rc != LIBXTUN_OK) {
+        return rc;
+    }
+
+    NET_LUID luid;
+    m_getAdapterLuid(m_adapter, &luid);
+    NET_IFINDEX ifindex = 0;
+    if (ConvertInterfaceLuidToIndex(&luid, &ifindex) != NO_ERROR) {
+        return LIBXTUN_ERR_SYSTEM;
+    }
+    m_ifIndex = static_cast<int>(ifindex);
+
+    if (m_router != nullptr &&
+        m_router->configureInterface(m_name, m_ifIndex, m_ifAddrs, m_confMtu) != 0) {
+        return LIBXTUN_ERR_SYSTEM;
+    }
+    return LIBXTUN_OK;
 #else
     return LIBXTUN_ERR_DRIVER_UNAVAILABLE;
 #endif
@@ -354,12 +375,15 @@ int Tunnel::loadWintun(WINTUN_CREATE_ADAPTER_FUNC *&createAdapter,
         GetProcAddress(m_wintun, "WintunAllocateSendPacket"));
     m_sendPacket = reinterpret_cast<WINTUN_SEND_PACKET_FUNC *>(
         GetProcAddress(m_wintun, "WintunSendPacket"));
+    m_getAdapterLuid = reinterpret_cast<WINTUN_GET_ADAPTER_LUID_FUNC *>(
+        GetProcAddress(m_wintun, "WintunGetAdapterLUID"));
 
     if (createAdapter == nullptr || openAdapter == nullptr ||
         startSession == nullptr || getReadWaitEvent == nullptr ||
         m_closeAdapter == nullptr || m_endSession == nullptr ||
         m_receivePacket == nullptr || m_releaseReceivePacket == nullptr ||
-        m_allocateSendPacket == nullptr || m_sendPacket == nullptr) {
+        m_allocateSendPacket == nullptr || m_sendPacket == nullptr ||
+        m_getAdapterLuid == nullptr) {
         FreeLibrary(m_wintun);
         m_wintun = nullptr;
         return LIBXTUN_ERR_DRIVER_UNAVAILABLE;

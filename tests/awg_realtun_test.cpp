@@ -12,6 +12,8 @@
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
+#include <cstdio>
+#include <cstring>
 #include <deque>
 #include <mutex>
 #include <string>
@@ -41,12 +43,34 @@
 
 #include <cerrno>
 #endif
+#elif defined(_WIN32)
+
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <iphlpapi.h>
+#include <windows.h>
+
+#endif
 
 namespace {
 
+#if defined(__linux__) || defined(__APPLE__)
 bool privileged() {
     return ::geteuid() == 0;
 }
+#elif defined(_WIN32)
+bool privileged() {
+    BOOL isAdmin = FALSE;
+    PSID adminGroup = nullptr;
+    SID_IDENTIFIER_AUTHORITY ntAuthority = SECURITY_NT_AUTHORITY;
+    if (::AllocateAndInitializeSid(&ntAuthority, 2, SECURITY_BUILTIN_DOMAIN_RID,
+                                   DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0, 0, &adminGroup)) {
+        ::CheckTokenMembership(nullptr, adminGroup, &isAdmin);
+        ::FreeSid(adminGroup);
+    }
+    return isAdmin != FALSE;
+}
+#endif
 
 libxtun_tunnel_opts realtunOpts() {
     libxtun_tunnel_opts opts{};
@@ -90,6 +114,8 @@ struct NetnsGuard {
         }
     }
 };
+
+#endif  // defined(__linux__)
 
 class MemTun {
   public:
@@ -171,23 +197,25 @@ constexpr const char *kAwgParams =
     "H3 = 1234567893\n"
     "H4 = 1234567894\n";
 
-std::string confA() {
+std::string confA(const std::string &allowed = "0.0.0.0/0", const std::string &host = "127.0.0.1") {
     return std::string("[Interface]\n") + "PrivateKey = " + kPrivA + "\n" +
            "ListenPort = " + std::to_string(kPortA) + "\n" + kAwgParams +
            "\n"
            "[Peer]\n" +
-           "PublicKey = " + kPubB + "\n" + "Endpoint = 127.0.0.1:" + std::to_string(kPortB) +
+           "PublicKey = " + kPubB + "\n" + "Endpoint = " + host + ":" + std::to_string(kPortB) +
            "\n"
-           "AllowedIPs = 0.0.0.0/0\n"
+           "AllowedIPs = " +
+           allowed +
+           "\n"
            "PersistentKeepalive = 5\n";
 }
 
-std::string confB() {
+std::string confB(const std::string &host = "127.0.0.1") {
     return std::string("[Interface]\n") + "PrivateKey = " + kPrivB + "\n" +
            "ListenPort = " + std::to_string(kPortB) + "\n" + kAwgParams +
            "\n"
            "[Peer]\n" +
-           "PublicKey = " + kPubA + "\n" + "Endpoint = 127.0.0.1:" + std::to_string(kPortA) +
+           "PublicKey = " + kPubA + "\n" + "Endpoint = " + host + ":" + std::to_string(kPortA) +
            "\n"
            "AllowedIPs = 10.9.9.1/32\n";
 }
@@ -217,6 +245,8 @@ std::string confRemote() {
 bool contains(const std::vector<unsigned char> &hay, const std::string &needle) {
     return std::search(hay.begin(), hay.end(), needle.begin(), needle.end()) != hay.end();
 }
+
+#if defined(__linux__)
 
 int openCaptureAll() {
     int cap = ::socket(AF_PACKET, SOCK_DGRAM, htons(ETH_P_ALL));
@@ -550,6 +580,129 @@ TEST(AwgRealTun, MarkedHandshakeBypassesTunnel) {
         << "the proxy's own handshake was pulled into the tunnel - the fwmark bypass failed";
 }
 
-#endif
+#elif defined(_WIN32)
 
-#endif  // defined(__linux__) || defined(__APPLE__)
+namespace {
+constexpr bool kVerbose = false;
+
+void logA(const char *str, void *) {
+    if (kVerbose) {
+        std::fprintf(stderr, "[A] %s\n", str);
+    }
+}
+
+void logB(const char *str, void *) {
+    if (kVerbose) {
+        std::fprintf(stderr, "[B] %s\n", str);
+    }
+}
+
+std::string localPhysicalIp() {
+    PMIB_IPFORWARD_TABLE2 routes = nullptr;
+    if (::GetIpForwardTable2(AF_INET, &routes) != NO_ERROR || routes == nullptr) {
+        return "";
+    }
+    NET_IFINDEX ifidx = 0;
+    ULONG best = ~0UL;
+    for (ULONG i = 0; i < routes->NumEntries; ++i) {
+        const MIB_IPFORWARD_ROW2 &r = routes->Table[i];
+        if (r.DestinationPrefix.PrefixLength == 0 && r.Metric < best) {
+            best = r.Metric;
+            ifidx = r.InterfaceIndex;
+        }
+    }
+    ::FreeMibTable(routes);
+    if (ifidx == 0) {
+        return "";
+    }
+
+    PMIB_UNICASTIPADDRESS_TABLE addrs = nullptr;
+    if (::GetUnicastIpAddressTable(AF_INET, &addrs) != NO_ERROR || addrs == nullptr) {
+        return "";
+    }
+    std::string ip;
+    for (ULONG i = 0; i < addrs->NumEntries; ++i) {
+        const MIB_UNICASTIPADDRESS_ROW &a = addrs->Table[i];
+        if (a.InterfaceIndex == ifidx) {
+            char buf[64] = {0};
+            ::inet_ntop(AF_INET, &a.Address.Ipv4.sin_addr, buf, sizeof(buf));
+            ip = buf;
+            break;
+        }
+    }
+    ::FreeMibTable(addrs);
+    return ip;
+}
+}  // namespace
+
+TEST(AwgRealTun, DeliversThroughWintunAdapter) {
+    ASSERT_TRUE(privileged()) << "wintun adapter + AWG UAPI need Administrator/SYSTEM";
+
+    WSADATA wsa;
+    ASSERT_EQ(::WSAStartup(MAKEWORD(2, 2), &wsa), 0);
+
+    std::string host = localPhysicalIp();
+    if (host.empty()) {
+        ::WSACleanup();
+        GTEST_SKIP() << "no physical default route to host the peer endpoint";
+    }
+
+    MemTun tunB;
+    libxtun_proxy cproxyB{};
+    cproxyB.loghandler = logB;
+    libxtun::proto::Awg b(confB(host));
+    b.bind(&cproxyB);
+    b.setInterface("xtunrtb");
+    ASSERT_EQ(b.start(tunB.io()), LIBXTUN_OK);
+
+    libxtun_tunnel_opts opts = realtunOpts();
+    libxtun::Tunnel tunnel(opts);
+    ASSERT_EQ(tunnel.openTun(), LIBXTUN_OK);
+
+    libxtun_proxy cproxyA{};
+    cproxyA.loghandler = logA;
+    libxtun::proto::Awg a(confA("10.9.9.2/32", host));
+    a.bind(&cproxyA);
+    a.setInterface("xtunrta");
+    ASSERT_EQ(tunnel.attachProxy(&a), LIBXTUN_OK);
+    ASSERT_EQ(tunnel.start(), LIBXTUN_OK);
+
+    a.event(libxtun::ProxyEvent::Up);
+    b.event(libxtun::ProxyEvent::Up);
+
+    SOCKET s = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    ASSERT_NE(s, INVALID_SOCKET);
+
+    sockaddr_in src{};
+    src.sin_family = AF_INET;
+    ::inet_pton(AF_INET, "10.9.9.1", &src.sin_addr);
+    ASSERT_EQ(::bind(s, reinterpret_cast<sockaddr *>(&src), sizeof(src)), 0)
+        << "binding to the tun address requires configureInterface to have assigned it";
+
+    sockaddr_in dst{};
+    dst.sin_family = AF_INET;
+    dst.sin_port = htons(9999);
+    ::inet_pton(AF_INET, "10.9.9.2", &dst.sin_addr);
+
+    const std::string payload = "xtun-winrealtun-ping";
+    std::vector<unsigned char> got;
+    bool delivered = false;
+
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!delivered && std::chrono::steady_clock::now() < deadline) {
+        ::sendto(s, payload.data(), static_cast<int>(payload.size()), 0,
+                 reinterpret_cast<sockaddr *>(&dst), sizeof(dst));
+        if (tunB.awaitDelivery(got, std::chrono::milliseconds(250)) && contains(got, payload)) {
+            delivered = true;
+        }
+    }
+
+    ::closesocket(s);
+    tunB.cancel();
+    b.stop();
+
+    EXPECT_TRUE(delivered) << "packet did not traverse the wintun tun to peer B";
+    ::WSACleanup();
+}
+
+#endif

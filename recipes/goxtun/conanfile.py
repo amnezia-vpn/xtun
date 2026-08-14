@@ -1,5 +1,5 @@
 from conan import ConanFile
-from conan.errors import ConanInvalidConfiguration
+from conan.errors import ConanInvalidConfiguration, ConanException
 from conan.tools.layout import basic_layout
 from conan.tools.files import copy, chdir, collect_libs
 from conan.tools.gnu import Autotools, AutotoolsToolchain
@@ -96,15 +96,34 @@ class Goxtun(ConanFile):
         shutil.copytree(cache_dir, dest)
         _make_writable(dest)
 
-        patch_conn = os.path.join(self.source_folder, "_awgpatch", "conn")
-        for name in ("mark_default.go", "mark_darwin.go"):
-            shutil.copyfile(os.path.join(patch_conn, name), os.path.join(dest, "conn", name))
+        if self.settings.os == "Macos":
+            patch_conn = os.path.join(self.source_folder, "_awgpatch", "conn")
+            for name in ("mark_default.go", "mark_darwin.go"):
+                shutil.copyfile(os.path.join(patch_conn, name), os.path.join(dest, "conn", name))
+        elif self.settings.os == "Windows":
+            bind = os.path.join(dest, "conn", "bind_windows.go")
+            with open(bind) as f:
+                src = f.read()
+            old = 'func (bind *WinRingBind) SetMark(mark uint32) error {\n\treturn nil\n}'
+            new = ('func (bind *WinRingBind) SetMark(mark uint32) error {\n'
+                   '\tif err := bind.BindSocketToInterface4(mark, false); err != nil && err != net.ErrClosed {\n'
+                   '\t\treturn err\n'
+                   '\t}\n'
+                   '\tif err := bind.BindSocketToInterface6(mark, false); err != nil && err != net.ErrClosed {\n'
+                   '\t\treturn err\n'
+                   '\t}\n'
+                   '\treturn nil\n'
+                   '}')
+            if old not in src:
+                raise ConanException("bind_windows.go: SetMark stub not found")
+            with open(bind, "w") as f:
+                f.write(src.replace(old, new, 1))
 
         self.run(f"go mod edit -replace {self._awg_module}={dest}")
 
     def build(self):
         with chdir(self, self.source_folder):
-            if self.settings.os == "Macos":
+            if self.settings.os in ("Macos", "Windows"):
                 self._patch_awg_module()
             at = Autotools(self)
             shared = self.options.get_safe("shared", True)
