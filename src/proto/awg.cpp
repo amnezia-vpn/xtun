@@ -109,6 +109,13 @@ void Awg::stop() {
     m_ctx = nullptr;
 }
 
+void Awg::reapplyBypass() {
+    if (m_ctx == nullptr) {
+        return;
+    }
+    goxtun_awg_set_fwmark(m_ctx, m_bypassToken);
+}
+
 std::vector<std::string> Awg::routes() {
     std::vector<std::string> out;
     for (const auto &peer : m_conf.iface().peers) {

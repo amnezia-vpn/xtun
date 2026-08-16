@@ -242,8 +242,16 @@ unsigned WindowsRouter::physicalDefaultIfindex() {
         if (static_cast<unsigned long>(r.InterfaceIndex) == m_ifindex) {
             continue;  // never bypass onto our own tun
         }
-        if (r.Metric < bestMetric) {
-            bestMetric = r.Metric;
+        MIB_IPINTERFACE_ROW iface;
+        std::memset(&iface, 0, sizeof(iface));
+        iface.Family = AF_INET;
+        iface.InterfaceIndex = r.InterfaceIndex;
+        ULONG effective = r.Metric;
+        if (GetIpInterfaceEntry(&iface) == NO_ERROR) {
+            effective += iface.Metric;
+        }
+        if (effective < bestMetric) {
+            bestMetric = effective;
             best = r.InterfaceIndex;
         }
     }

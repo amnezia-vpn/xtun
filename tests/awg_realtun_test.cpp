@@ -49,6 +49,7 @@
 #include <ws2tcpip.h>
 #include <iphlpapi.h>
 #include <windows.h>
+#include <wintun.h>
 
 #endif
 
@@ -633,6 +634,165 @@ std::string localPhysicalIp() {
     ::FreeMibTable(addrs);
     return ip;
 }
+
+NET_IFINDEX defaultWinner() {
+    PMIB_IPFORWARD_TABLE2 table = nullptr;
+    if (::GetIpForwardTable2(AF_INET, &table) != NO_ERROR || table == nullptr) {
+        return 0;
+    }
+    NET_IFINDEX best = 0;
+    ULONG bestMetric = ~0UL;
+    for (ULONG i = 0; i < table->NumEntries; ++i) {
+        const MIB_IPFORWARD_ROW2 &r = table->Table[i];
+        if (r.DestinationPrefix.PrefixLength != 0) {
+            continue;
+        }
+        MIB_IPINTERFACE_ROW iface;
+        std::memset(&iface, 0, sizeof(iface));
+        iface.Family = AF_INET;
+        iface.InterfaceIndex = r.InterfaceIndex;
+        ULONG effective = r.Metric;
+        if (::GetIpInterfaceEntry(&iface) == NO_ERROR) {
+            effective += iface.Metric;
+        }
+        if (effective < bestMetric) {
+            bestMetric = effective;
+            best = r.InterfaceIndex;
+        }
+    }
+    ::FreeMibTable(table);
+    return best;
+}
+
+class SpyProxy : public libxtun::Proxy {
+  public:
+    const char *name() override { return "spy"; }
+    int start(const libxtun::ProxyIo &) override { return LIBXTUN_OK; }
+    void event(libxtun::ProxyEvent) override {}
+    void stop() override {}
+    std::vector<std::string> routes() override { return {}; }
+
+    void reapplyBypass() override {
+        std::lock_guard<std::mutex> lock(m_mtx);
+        m_token = m_bypassToken;
+        m_seen = true;
+        m_cond.notify_all();
+    }
+
+    uint32_t waitForToken(uint32_t want, std::chrono::milliseconds timeout) {
+        std::unique_lock<std::mutex> lock(m_mtx);
+        m_cond.wait_for(lock, timeout, [&] { return m_seen && m_token == want; });
+        return m_token;
+    }
+
+  private:
+    std::mutex m_mtx;
+    std::condition_variable m_cond;
+    uint32_t m_token = 0;
+    bool m_seen = false;
+};
+
+struct PhysAdapter {
+    HMODULE wintun = nullptr;
+    WINTUN_ADAPTER_HANDLE adapter = nullptr;
+    WINTUN_SESSION_HANDLE session = nullptr;
+    WINTUN_CLOSE_ADAPTER_FUNC *closeAdapter = nullptr;
+    WINTUN_END_SESSION_FUNC *endSession = nullptr;
+    NET_IFINDEX ifindex = 0;
+    bool routeAdded = false;
+    bool addrAdded = false;
+    MIB_IPFORWARD_ROW2 route{};
+    MIB_UNICASTIPADDRESS_ROW addr{};
+
+    bool create() {
+        wintun = ::LoadLibraryExW(L"wintun.dll", nullptr,
+                                  LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
+        if (wintun == nullptr) {
+            return false;
+        }
+        auto createAdapter = reinterpret_cast<WINTUN_CREATE_ADAPTER_FUNC *>(
+            ::GetProcAddress(wintun, "WintunCreateAdapter"));
+        closeAdapter = reinterpret_cast<WINTUN_CLOSE_ADAPTER_FUNC *>(
+            ::GetProcAddress(wintun, "WintunCloseAdapter"));
+        auto getLuid = reinterpret_cast<WINTUN_GET_ADAPTER_LUID_FUNC *>(
+            ::GetProcAddress(wintun, "WintunGetAdapterLUID"));
+        auto startSession = reinterpret_cast<WINTUN_START_SESSION_FUNC *>(
+            ::GetProcAddress(wintun, "WintunStartSession"));
+        endSession = reinterpret_cast<WINTUN_END_SESSION_FUNC *>(
+            ::GetProcAddress(wintun, "WintunEndSession"));
+        if (createAdapter == nullptr || closeAdapter == nullptr || getLuid == nullptr ||
+            startSession == nullptr || endSession == nullptr) {
+            return false;
+        }
+        adapter = createAdapter(L"xtunphys", L"WireGuard", nullptr);
+        if (adapter == nullptr) {
+            return false;
+        }
+        session = startSession(adapter, 0x20000);
+        if (session == nullptr) {
+            return false;
+        }
+        NET_LUID luid;
+        getLuid(adapter, &luid);
+        return ::ConvertInterfaceLuidToIndex(&luid, &ifindex) == NO_ERROR;
+    }
+
+    bool addAddress(const char *ip, UINT8 prefix) {
+        ::InitializeUnicastIpAddressEntry(&addr);
+        addr.InterfaceIndex = ifindex;
+        addr.Address.Ipv4.sin_family = AF_INET;
+        ::inet_pton(AF_INET, ip, &addr.Address.Ipv4.sin_addr);
+        addr.OnLinkPrefixLength = prefix;
+        addr.DadState = IpDadStatePreferred;
+        DWORD rc = ::CreateUnicastIpAddressEntry(&addr);
+        addrAdded = rc == NO_ERROR || rc == ERROR_OBJECT_ALREADY_EXISTS;
+        return addrAdded;
+    }
+
+    bool setLowMetric() {
+        MIB_IPINTERFACE_ROW row;
+        std::memset(&row, 0, sizeof(row));
+        row.Family = AF_INET;
+        row.InterfaceIndex = ifindex;
+        if (::GetIpInterfaceEntry(&row) != NO_ERROR) {
+            return false;
+        }
+        row.UseAutomaticMetric = FALSE;
+        row.Metric = 1;
+        row.SitePrefixLength = 0;
+        return ::SetIpInterfaceEntry(&row) == NO_ERROR;
+    }
+
+    bool addDefaultRoute() {
+        ::InitializeIpForwardEntry(&route);
+        route.InterfaceIndex = ifindex;
+        route.DestinationPrefix.Prefix.si_family = AF_INET;
+        route.DestinationPrefix.PrefixLength = 0;
+        route.NextHop.si_family = AF_INET;
+        route.Metric = 0;
+        DWORD rc = ::CreateIpForwardEntry2(&route);
+        routeAdded = rc == NO_ERROR || rc == ERROR_OBJECT_ALREADY_EXISTS;
+        return routeAdded;
+    }
+
+    ~PhysAdapter() {
+        if (routeAdded) {
+            ::DeleteIpForwardEntry2(&route);
+        }
+        if (addrAdded) {
+            ::DeleteUnicastIpAddressEntry(&addr);
+        }
+        if (session != nullptr && endSession != nullptr) {
+            endSession(session);
+        }
+        if (adapter != nullptr && closeAdapter != nullptr) {
+            closeAdapter(adapter);
+        }
+        if (wintun != nullptr) {
+            ::FreeLibrary(wintun);
+        }
+    }
+};
 }  // namespace
 
 TEST(AwgRealTun, DeliversThroughWintunAdapter) {
@@ -703,6 +863,43 @@ TEST(AwgRealTun, DeliversThroughWintunAdapter) {
 
     EXPECT_TRUE(delivered) << "packet did not traverse the wintun tun to peer B";
     ::WSACleanup();
+}
+
+TEST(AwgRealTun, RoamRemarkFollowsDefaultRouteChange) {
+    ASSERT_TRUE(privileged()) << "second wintun adapter + route table need Administrator/SYSTEM";
+
+    WSADATA wsa;
+    ASSERT_EQ(::WSAStartup(MAKEWORD(2, 2), &wsa), 0);
+
+    SpyProxy spy;
+
+    libxtun_tunnel_opts opts = realtunOpts();
+    libxtun::Tunnel tunnel(opts);
+    ASSERT_EQ(tunnel.openTun(), LIBXTUN_OK);
+    ASSERT_EQ(tunnel.attachProxy(&spy), LIBXTUN_OK);
+
+    NET_IFINDEX before = defaultWinner();
+
+    PhysAdapter phys;
+    ASSERT_TRUE(phys.create()) << "could not create the simulated physical wintun adapter";
+    ASSERT_TRUE(phys.addAddress("10.77.0.1", 24));
+    ASSERT_TRUE(phys.setLowMetric());
+    ASSERT_TRUE(phys.addDefaultRoute());
+
+    uint32_t seen = spy.waitForToken(phys.ifindex, std::chrono::seconds(3));
+    NET_IFINDEX after = defaultWinner();
+    bool wonRace = after == phys.ifindex;
+
+    ::WSACleanup();
+
+    if (!wonRace) {
+        GTEST_SKIP() << "the simulated adapter (" << phys.ifindex
+                     << ") never became the lowest-metric default route (winner=" << after
+                     << "); cannot exercise the roam trigger on this host";
+    }
+    EXPECT_NE(before, phys.ifindex);
+    EXPECT_EQ(seen, phys.ifindex)
+        << "the default route moved to the new interface but onRouteChange did not re-mark to it";
 }
 
 #endif
