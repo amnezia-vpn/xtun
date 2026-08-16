@@ -8,24 +8,26 @@ set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES
 
 project(xtun)
 
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
 find_package(goxtun REQUIRED)
-find_package(awgconfig REQUIRED)
 find_package(Threads REQUIRED)
 
 add_library(${PROJECT_NAME}
     ${CMAKE_CURRENT_LIST_DIR}/src/proto/awg.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/proto/awg_conf.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/proxy.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/tunnel.cpp
 )
-target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
 target_include_directories(${PROJECT_NAME} PUBLIC
+    ${CMAKE_CURRENT_LIST_DIR}/src
     ${CMAKE_CURRENT_LIST_DIR}
 )
 target_link_libraries(${PROJECT_NAME} PUBLIC amnezia::goxtun Threads::Threads)
-target_link_libraries(${PROJECT_NAME} PRIVATE amnezia::awgconfig)
+
+# We compile against c++20, but remain runnable against c++17
+# Do NOT use any runtime-based features like:
+#   <format>, <jthread>, <latch>, <barrier>, <syncstream>,
+#   <chrono> tz/calendar, and others.
+target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_20)
 
 if(WIN32)
     find_package(wintun REQUIRED)

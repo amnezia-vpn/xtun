@@ -56,6 +56,11 @@ import (
 	"github.com/amnezia-vpn/libxtun/goxtun/awg"
 )
 
+//export goxtun_free
+func goxtun_free(ptr unsafe.Pointer) {
+	C.free(ptr)
+}
+
 func toCtx(v any) unsafe.Pointer {
 	h := cgo.NewHandle(v)
 	return unsafe.Pointer(h)
@@ -137,11 +142,11 @@ func goxtun_awg_event(ctx unsafe.Pointer, event C.int) {
 	i.TriggerEvent(tun.Event(event))
 }
 
-//export goxtun_awg_serve_uapi
-func goxtun_awg_serve_uapi(ctx unsafe.Pointer, name *C.char) *C.char {
+//export goxtun_awg_setconf
+func goxtun_awg_setconf(ctx unsafe.Pointer, uapi *C.char) *C.char {
 	i, _ := fromCtx[awg.Instance](ctx)
 
-	if err := i.ServeUAPI(C.GoString(name)); err != nil {
+	if err := i.SetConf(C.GoString(uapi)); err != nil {
 		return C.CString(err.Error())
 	}
 	return nil
