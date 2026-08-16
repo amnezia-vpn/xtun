@@ -901,12 +901,23 @@ void Tunnel::monitorLoop() {
         if (n == 0) {
             break;  // socket shut down => cancelled
         }
-        if (n < static_cast<ssize_t>(sizeof(struct if_msghdr))) {
+        if (n < static_cast<ssize_t>(sizeof(struct rt_msghdr))) {
             continue;
         }
 
+        struct rt_msghdr *rtm = reinterpret_cast<struct rt_msghdr *>(buf);
+        if (rtm->rtm_type == RTM_ADD || rtm->rtm_type == RTM_DELETE ||
+            rtm->rtm_type == RTM_CHANGE) {
+            onRouteChange();
+            continue;
+        }
+
+        if (rtm->rtm_type != RTM_IFINFO ||
+            n < static_cast<ssize_t>(sizeof(struct if_msghdr))) {
+            continue;
+        }
         struct if_msghdr *ifm = reinterpret_cast<struct if_msghdr *>(buf);
-        if (ifm->ifm_type != RTM_IFINFO || ifm->ifm_index != m_ifIndex) {
+        if (ifm->ifm_index != m_ifIndex) {
             continue;
         }
 
@@ -923,7 +934,7 @@ void Tunnel::monitorLoop() {
 #endif
 }
 
-#if defined(_WIN32)
+#if defined(__APPLE__) || defined(_WIN32)
 void Tunnel::onRouteChange() {
     std::lock_guard<std::mutex> lock(m_proxyMtx);
     if (m_router == nullptr || m_proxy == nullptr) {
@@ -937,7 +948,9 @@ void Tunnel::onRouteChange() {
     m_proxy->setBypassToken(token);
     m_proxy->reapplyBypass();
 }
+#endif
 
+#if defined(_WIN32)
 void CALLBACK Tunnel::onRouteChangeCb(void *ctx, MIB_IPFORWARD_ROW2 *row,
                                       MIB_NOTIFICATION_TYPE type) {
     (void)row;

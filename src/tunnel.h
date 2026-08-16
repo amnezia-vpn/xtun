@@ -62,8 +62,10 @@ class Tunnel {
     void startMonitor();
     void stopMonitor();
     void monitorLoop();
-#if defined(_WIN32)
+#if defined(__APPLE__) || defined(_WIN32)
     void onRouteChange();
+#endif
+#if defined(_WIN32)
     static void CALLBACK onRouteChangeCb(void *ctx, MIB_IPFORWARD_ROW2 *row,
                                          MIB_NOTIFICATION_TYPE type);
 #endif

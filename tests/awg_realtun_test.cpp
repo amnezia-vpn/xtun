@@ -39,9 +39,12 @@
 #include <cstdlib>
 #elif defined(__APPLE__)
 #include <net/bpf.h>
+#include <net/route.h>
 #include <sys/ioctl.h>
+#include <sys/sysctl.h>
 
 #include <cerrno>
+#include <cstdlib>
 #endif
 #elif defined(_WIN32)
 
@@ -247,6 +250,34 @@ bool contains(const std::vector<unsigned char> &hay, const std::string &needle) 
     return std::search(hay.begin(), hay.end(), needle.begin(), needle.end()) != hay.end();
 }
 
+class SpyProxy : public libxtun::Proxy {
+  public:
+    const char *name() override { return "spy"; }
+    int start(const libxtun::ProxyIo &) override { return LIBXTUN_OK; }
+    void event(libxtun::ProxyEvent) override {}
+    void stop() override {}
+    std::vector<std::string> routes() override { return {}; }
+
+    void reapplyBypass() override {
+        std::lock_guard<std::mutex> lock(m_mtx);
+        m_token = m_bypassToken;
+        m_seen = true;
+        m_cond.notify_all();
+    }
+
+    uint32_t waitForToken(uint32_t want, std::chrono::milliseconds timeout) {
+        std::unique_lock<std::mutex> lock(m_mtx);
+        m_cond.wait_for(lock, timeout, [&] { return m_seen && m_token == want; });
+        return m_token;
+    }
+
+  private:
+    std::mutex m_mtx;
+    std::condition_variable m_cond;
+    uint32_t m_token = 0;
+    bool m_seen = false;
+};
+
 #if defined(__linux__)
 
 int openCaptureAll() {
@@ -388,6 +419,99 @@ void drainBpf(int fd, size_t blen, const unsigned char app[4], const unsigned ch
         }
     }
 }
+
+bool sh(const std::string &cmd) {
+    return std::system((cmd + " >/dev/null 2>&1").c_str()) == 0;
+}
+
+std::string shOut(const std::string &cmd) {
+    std::string out;
+    FILE *f = ::popen(cmd.c_str(), "r");
+    if (f == nullptr) {
+        return out;
+    }
+    char b[256];
+    size_t n;
+    while ((n = ::fread(b, 1, sizeof(b), f)) > 0) {
+        out.append(b, n);
+    }
+    ::pclose(f);
+    while (!out.empty() && (out.back() == '\n' || out.back() == '\r' || out.back() == ' ')) {
+        out.pop_back();
+    }
+    return out;
+}
+
+int macDefaultIfindex() {
+    int mib[6] = {CTL_NET, PF_ROUTE, 0, AF_INET, NET_RT_FLAGS, RTF_GATEWAY};
+    size_t need = 0;
+    if (::sysctl(mib, 6, nullptr, &need, nullptr, 0) < 0 || need == 0) {
+        return 0;
+    }
+    std::vector<char> buf(need);
+    if (::sysctl(mib, 6, buf.data(), &need, nullptr, 0) < 0) {
+        return 0;
+    }
+    char *lim = buf.data() + need;
+    for (char *p = buf.data(); p + sizeof(struct rt_msghdr) <= lim;) {
+        auto *rtm = reinterpret_cast<struct rt_msghdr *>(p);
+        if (rtm->rtm_msglen == 0) {
+            break;
+        }
+        p += rtm->rtm_msglen;
+        if ((rtm->rtm_flags & (RTF_GATEWAY | RTF_UP)) != (RTF_GATEWAY | RTF_UP)) {
+            continue;
+        }
+        if (rtm->rtm_flags & RTF_IFSCOPE) {
+            continue;
+        }
+        if ((rtm->rtm_addrs & (RTA_DST | RTA_GATEWAY)) != (RTA_DST | RTA_GATEWAY)) {
+            continue;
+        }
+        auto *dst = reinterpret_cast<struct sockaddr *>(rtm + 1);
+        bool isDefault = dst->sa_len == 0 ||
+                         (dst->sa_family == AF_INET &&
+                          reinterpret_cast<struct sockaddr_in *>(dst)->sin_addr.s_addr == 0);
+        if (isDefault) {
+            return rtm->rtm_index;
+        }
+    }
+    return 0;
+}
+
+struct RoamSim {
+    std::string feth;
+    std::string origGw;
+    bool changed = false;
+
+    bool setup() {
+        feth = shOut("ifconfig feth create");
+        if (feth.empty()) {
+            return false;
+        }
+        if (!sh("ifconfig " + feth + " inet 10.77.0.1/24 up")) {
+            return false;
+        }
+        origGw = shOut("route -n get default 2>/dev/null | awk '/gateway:/{print $2}'");
+        if (origGw.empty()) {
+            return false;
+        }
+        if (!sh("route -n change default 10.77.0.254")) {
+            return false;
+        }
+        changed = true;
+        return true;
+    }
+
+    ~RoamSim() {
+        if (changed && !origGw.empty()) {
+            sh("route -n change default " + origGw);
+        }
+        if (!feth.empty()) {
+            sh("ifconfig " + feth + " destroy");
+        }
+    }
+};
 
 #endif
 
@@ -581,6 +705,41 @@ TEST(AwgRealTun, MarkedHandshakeBypassesTunnel) {
         << "the proxy's own handshake was pulled into the tunnel - the fwmark bypass failed";
 }
 
+TEST(AwgRealTun, RoamRemarkFollowsDefaultRouteChange) {
+    ASSERT_TRUE(privileged()) << "feth + default route changes need root";
+    if (macDefaultIfindex() == 0) {
+        GTEST_SKIP() << "no physical default route to roam away from";
+    }
+
+    SpyProxy spy;
+
+    libxtun_tunnel_opts opts = realtunOpts();
+    libxtun::Tunnel tunnel(opts);
+    ASSERT_EQ(tunnel.openTun(), LIBXTUN_OK);
+    ASSERT_EQ(tunnel.attachProxy(&spy), LIBXTUN_OK);
+
+    int before = macDefaultIfindex();
+
+    RoamSim roam;
+    if (!roam.setup()) {
+        GTEST_SKIP() << "could not create feth + point the default route at it on this host";
+    }
+
+    unsigned fethIdx = ::if_nametoindex(roam.feth.c_str());
+    ASSERT_NE(fethIdx, 0u);
+
+    uint32_t seen = spy.waitForToken(fethIdx, std::chrono::seconds(3));
+    int after = macDefaultIfindex();
+
+    if (static_cast<unsigned>(after) != fethIdx) {
+        GTEST_SKIP() << "the feth default did not take (winner=" << after
+                     << "); cannot exercise the roam trigger on this host";
+    }
+    EXPECT_NE(before, static_cast<int>(fethIdx));
+    EXPECT_EQ(seen, fethIdx)
+        << "the default route moved to feth but onRouteChange did not re-mark to it";
+}
+
 #elif defined(_WIN32)
 
 namespace {
@@ -663,34 +822,6 @@ NET_IFINDEX defaultWinner() {
     ::FreeMibTable(table);
     return best;
 }
-
-class SpyProxy : public libxtun::Proxy {
-  public:
-    const char *name() override { return "spy"; }
-    int start(const libxtun::ProxyIo &) override { return LIBXTUN_OK; }
-    void event(libxtun::ProxyEvent) override {}
-    void stop() override {}
-    std::vector<std::string> routes() override { return {}; }
-
-    void reapplyBypass() override {
-        std::lock_guard<std::mutex> lock(m_mtx);
-        m_token = m_bypassToken;
-        m_seen = true;
-        m_cond.notify_all();
-    }
-
-    uint32_t waitForToken(uint32_t want, std::chrono::milliseconds timeout) {
-        std::unique_lock<std::mutex> lock(m_mtx);
-        m_cond.wait_for(lock, timeout, [&] { return m_seen && m_token == want; });
-        return m_token;
-    }
-
-  private:
-    std::mutex m_mtx;
-    std::condition_variable m_cond;
-    uint32_t m_token = 0;
-    bool m_seen = false;
-};
 
 struct PhysAdapter {
     HMODULE wintun = nullptr;
