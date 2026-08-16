@@ -1,10 +1,11 @@
 #include "awg.h"
 
-#include <awgconfig.h>
 #include <libgoxtun.h>
 
 #include <atomic>
 #include <cstdlib>
+#include <memory>
+#include <variant>
 
 namespace {
 
@@ -43,11 +44,18 @@ void forwardLog(char *str, void *priv) {
 namespace libxtun {
 namespace proto {
 
-Awg::Awg(const std::string &conf)
-    : m_conf(conf), m_name("xtun" + std::to_string(g_instance.fetch_add(1))) {}
+Awg::Awg(awg::Config conf)
+    : m_conf(std::move(conf)) {}
 
 Awg::~Awg() {
     stop();
+}
+
+ResultXtun<std::unique_ptr<Awg>> Awg::create(const std::string& str) {
+    auto res = awg::Config::fromConf(str);
+    if (!res)
+        return fail(res.error());
+    return std::make_unique<Awg>(std::move(res).value());
 }
 
 int Awg::start(const ProxyIo &io) {
@@ -65,20 +73,10 @@ int Awg::start(const ProxyIo &io) {
         return LIBXTUN_ERR_SYSTEM;
     }
 
-    char *serveErr = goxtun_awg_serve_uapi(m_ctx, const_cast<char *>(m_name.c_str()));
-    if (serveErr != nullptr) {
-        forwardLog(serveErr, m_cproxy);
-        free(serveErr);
-        stop();
-        return LIBXTUN_ERR_SYSTEM;
-    }
-
-    const char *err = nullptr;
-    if (awg_apply_config(m_conf.c_str(), m_name.c_str(), &err) != 0) {
-        if (err != nullptr) {
-            forwardLog(const_cast<char *>(err), m_cproxy);
-        }
-        stop();
+    auto uapi = m_conf.toUapi();
+    if (char *err = goxtun_awg_setconf(m_ctx, &uapi[0]); err != nullptr) {
+        forwardLog(err, m_cproxy);
+        goxtun_free(err);
         return LIBXTUN_ERR_INVALID_ARGS;
     }
 

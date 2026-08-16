@@ -1,20 +1,18 @@
 #include "proxy.h"
 #include "tunnel.h"
 #include "proto/awg.h"
+#include <memory>
 
-namespace {
+using namespace libxtun;
 
-int createProxy(enum libxtun_proxy_proto proto, const char *conf, libxtun::Proxy **out) {
+ResultXtun<std::unique_ptr<Proxy>> createProxy(enum libxtun_proxy_proto proto, const char *conf) {
     switch (proto) {
         case LIBXTUN_PROXY_PROTO_AWG:
-            *out = new libxtun::proto::Awg(conf);
-            return LIBXTUN_OK;
-        case LIBXTUN_PROXY_PROTO_VLESS:
+            return libxtun::proto::Awg::create(conf);
+        // case LIBXTUN_PROXY_PROTO_VLESS:
         default:
-            return LIBXTUN_ERR_INVALID_ARGS;
+            return libxtun::fail(LIBXTUN_ERR_INVALID_ARGS);
     }
-}
-
 }
 
 libxtun::Proxy::~Proxy() {
@@ -36,15 +34,14 @@ int libxtun_proxy_new(struct libxtun_proxy *proxy, enum libxtun_proxy_proto prot
 
     proxy->handle = nullptr;
 
-    libxtun::Proxy *obj = nullptr;
-    int rc = createProxy(proto, conf, &obj);
-    if (rc != LIBXTUN_OK) {
-        return rc;
-    }
+    auto res = createProxy(proto, conf);
+    if (!res)
+        return res.error();
 
+    auto obj = std::move(res.value());
     obj->bind(proxy);
-
-    proxy->handle = obj;
+    
+    proxy->handle = obj.release();
     return LIBXTUN_OK;
 }
 

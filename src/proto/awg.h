@@ -1,5 +1,9 @@
 #include "../proxy.h"
 
+#include "awg_conf.h"
+#include "util/noncopyable.h"
+#include "util/result.h"
+
 #include <string>
 
 #ifndef AWG_H
@@ -8,9 +12,10 @@
 namespace libxtun {
 namespace proto {
 
-class Awg : public Proxy {
+class Awg : public Proxy, private NonCopyable {
   public:
-    Awg(const std::string &conf);
+    static ResultXtun<std::unique_ptr<Awg>> create(const std::string& str);
+    Awg(awg::Config conf);
     ~Awg();
 
     const char * name() override {
@@ -22,12 +27,10 @@ class Awg : public Proxy {
     void stop() override;
 
   private:
-    std::string m_conf;
-    std::string m_name;
+    awg::Config m_conf;
     ProxyIo m_io;
     void *m_ctx = nullptr;
 };
-
 
 }
 }

@@ -8,7 +8,7 @@ add_executable(xtun_tests
     tunnel_contract_test.cpp
     tunnel_lifecycle_test.cpp
 )
-target_link_libraries(xtun_tests PRIVATE xtun amnezia::awgconfig GTest::gtest GTest::gtest_main)
+target_link_libraries(xtun_tests PRIVATE xtun GTest::gtest GTest::gtest_main)
 target_include_directories(xtun_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
 if(WIN32)

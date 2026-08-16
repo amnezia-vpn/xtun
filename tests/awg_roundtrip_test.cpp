@@ -116,25 +116,31 @@ class MemTun {
     bool m_cancelled = false;
 };
 
-std::string confA() {
-    return std::string("[Interface]\n") + "PrivateKey = " + kPrivA + "\n" +
-           "ListenPort = " + std::to_string(kPortA) + "\n" + kAwgParams +
-           "\n"
-           "[Peer]\n" +
-           "PublicKey = " + kPubB + "\n" + "Endpoint = 127.0.0.1:" + std::to_string(kPortB) +
-           "\n"
-           "AllowedIPs = 10.9.9.2/32\n"
-           "PersistentKeepalive = 5\n";
+libxtun::proto::awg::Config confA() {;
+    const std::string str = std::string("[Interface]\n") + "PrivateKey = " + kPrivA + "\n" +
+        "ListenPort = " + std::to_string(kPortA) + "\n" + kAwgParams +
+        "\n"
+        "[Peer]\n" +
+        "PublicKey = " + kPubB + "\n" + "Endpoint = 127.0.0.1:" + std::to_string(kPortB) +
+        "\n"
+        "AllowedIPs = 10.9.9.2/32\n"
+        "PersistentKeepalive = 5\n";
+
+    auto res = libxtun::proto::awg::Config::fromConf(str);
+    return res.value();
 }
 
-std::string confB() {
-    return std::string("[Interface]\n") + "PrivateKey = " + kPrivB + "\n" +
-           "ListenPort = " + std::to_string(kPortB) + "\n" + kAwgParams +
-           "\n"
-           "[Peer]\n" +
-           "PublicKey = " + kPubA + "\n" + "Endpoint = 127.0.0.1:" + std::to_string(kPortA) +
-           "\n"
-           "AllowedIPs = 10.9.9.1/32\n";
+libxtun::proto::awg::Config confB() {
+    const std::string str = std::string("[Interface]\n") + "PrivateKey = " + kPrivB + "\n" +
+        "ListenPort = " + std::to_string(kPortB) + "\n" + kAwgParams +
+        "\n"
+        "[Peer]\n" +
+        "PublicKey = " + kPubA + "\n" + "Endpoint = 127.0.0.1:" + std::to_string(kPortA) +
+        "\n"
+        "AllowedIPs = 10.9.9.1/32\n";
+
+    auto res = libxtun::proto::awg::Config::fromConf(str);
+    return res.value();
 }
 
 std::vector<unsigned char> ipv4Packet(const char *payload) {
@@ -161,8 +167,6 @@ std::vector<unsigned char> ipv4Packet(const char *payload) {
 }  // namespace
 
 TEST(AwgRoundtrip, DeliversDataBetweenTwoInstances) {
-    ASSERT_TRUE(privileged()) << "AWG UAPI socket needs root (/var/run/amneziawg)";
-
     libxtun_proxy cproxyA{};
     libxtun_proxy cproxyB{};
     cproxyA.loghandler = logA;
