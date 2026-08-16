@@ -11,6 +11,7 @@
 
 #if defined(_WIN32)
 #include <wintun.h>
+#include <iphlpapi.h>
 #endif
 
 #ifndef TUNNEL_H
@@ -61,6 +62,11 @@ class Tunnel {
     void startMonitor();
     void stopMonitor();
     void monitorLoop();
+#if defined(_WIN32)
+    void onRouteChange();
+    static void CALLBACK onRouteChangeCb(void *ctx, MIB_IPFORWARD_ROW2 *row,
+                                         MIB_NOTIFICATION_TYPE type);
+#endif
 
     std::vector<std::string> m_dns;
     std::vector<std::string> m_dnsExceptions;
@@ -69,6 +75,7 @@ class Tunnel {
     int m_confMtu;
     std::unique_ptr<Router> m_router;
     bool m_started = false;
+    uint32_t m_bypassToken = 0;
 
     int m_tunFd;
     std::string m_name;
@@ -101,6 +108,7 @@ class Tunnel {
     WINTUN_ALLOCATE_SEND_PACKET_FUNC *m_allocateSendPacket = nullptr;
     WINTUN_SEND_PACKET_FUNC *m_sendPacket = nullptr;
     WINTUN_GET_ADAPTER_LUID_FUNC *m_getAdapterLuid = nullptr;
+    HANDLE m_routeNotify = nullptr;
 #endif
 };
 

@@ -33,6 +33,8 @@ class Proxy {
 
     virtual std::vector<std::string> routes() = 0;
 
+    virtual void reapplyBypass() {}
+
     void bind(struct libxtun_proxy *cproxy) { m_cproxy = cproxy; }
     void setInterface(const std::string &ifname) { m_ifname = ifname; }
     void setBypassToken(uint32_t token) { m_bypassToken = token; }

@@ -223,6 +223,7 @@ int Tunnel::openTun() {
         m_router->configureInterface(m_name, m_ifIndex, m_ifAddrs, m_confMtu) != 0) {
         return LIBXTUN_ERR_SYSTEM;
     }
+    startMonitor();
     return LIBXTUN_OK;
 #else
     return LIBXTUN_ERR_DRIVER_UNAVAILABLE;
@@ -664,7 +665,8 @@ int Tunnel::attachProxy(Proxy *proxy) {
 #endif
 
     proxy->setInterface(m_name);
-    proxy->setBypassToken(m_router != nullptr ? m_router->bypassToken() : 0);
+    m_bypassToken = m_router != nullptr ? m_router->bypassToken() : 0;
+    proxy->setBypassToken(m_bypassToken);
     proxy->m_tunnel = this;
 
     int rc = proxy->start(io);
@@ -783,6 +785,8 @@ void Tunnel::startMonitor() {
     ::fcntl(m_monitorFd, F_SETFD, FD_CLOEXEC);
 
     m_monitor = std::thread(&Tunnel::monitorLoop, this);
+#elif defined(_WIN32)
+    NotifyRouteChange2(AF_UNSPEC, &Tunnel::onRouteChangeCb, this, FALSE, &m_routeNotify);
 #endif
 }
 
@@ -811,6 +815,11 @@ void Tunnel::stopMonitor() {
     if (m_monitorFd >= 0) {
         ::close(m_monitorFd);
         m_monitorFd = -1;
+    }
+#elif defined(_WIN32)
+    if (m_routeNotify != nullptr) {
+        CancelMibChangeNotify2(m_routeNotify);
+        m_routeNotify = nullptr;
     }
 #endif
 }
@@ -913,6 +922,29 @@ void Tunnel::monitorLoop() {
     }
 #endif
 }
+
+#if defined(_WIN32)
+void Tunnel::onRouteChange() {
+    std::lock_guard<std::mutex> lock(m_proxyMtx);
+    if (m_router == nullptr || m_proxy == nullptr) {
+        return;
+    }
+    uint32_t token = m_router->bypassToken();
+    if (token == m_bypassToken) {
+        return;
+    }
+    m_bypassToken = token;
+    m_proxy->setBypassToken(token);
+    m_proxy->reapplyBypass();
+}
+
+void CALLBACK Tunnel::onRouteChangeCb(void *ctx, MIB_IPFORWARD_ROW2 *row,
+                                      MIB_NOTIFICATION_TYPE type) {
+    (void)row;
+    (void)type;
+    static_cast<Tunnel *>(ctx)->onRouteChange();
+}
+#endif
 
 }
 
