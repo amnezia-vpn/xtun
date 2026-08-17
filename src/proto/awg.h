@@ -5,6 +5,7 @@
 #include "util/result.h"
 
 #include <memory>
+#include <mutex>
 #include <string>
 
 #ifndef AWG_H
@@ -30,9 +31,15 @@ class Awg : public Proxy, private NonCopyable {
     void reapplyBypass() override;
 
   private:
+    static void sockCb(int fd, void *priv);
+    void applyBypass(int fd, int family);
+
     awg::Config m_conf;
     ProxyIo m_io;
     void *m_ctx = nullptr;
+    std::mutex m_sockMtx;
+    int m_sock4 = -1;
+    int m_sock6 = -1;
 };
 
 }

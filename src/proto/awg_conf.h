@@ -136,10 +136,6 @@ class Config {
         return m_iface;
     }
 
-    void setFwmark(uint32_t mark) {
-        m_iface.fwmark = Uint32Field{mark};
-    }
-
     Config(Interface iface) : m_iface(iface) {};
     static ResultXtun<Config> fromConf(const std::string& str);
     std::string toUapi() const;
