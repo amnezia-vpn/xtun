@@ -201,8 +201,9 @@ constexpr const char *kAwgParams =
     "H3 = 1234567893\n"
     "H4 = 1234567894\n";
 
-std::string confA(const std::string &allowed = "0.0.0.0/0", const std::string &host = "127.0.0.1") {
-    return std::string("[Interface]\n") + "PrivateKey = " + kPrivA + "\n" +
+libxtun::proto::awg::Config confA(const std::string &allowed = "0.0.0.0/0",
+                                  const std::string &host = "127.0.0.1") {
+    const std::string str = std::string("[Interface]\n") + "PrivateKey = " + kPrivA + "\n" +
            "ListenPort = " + std::to_string(kPortA) + "\n" + kAwgParams +
            "\n"
            "[Peer]\n" +
@@ -212,20 +213,22 @@ std::string confA(const std::string &allowed = "0.0.0.0/0", const std::string &h
            allowed +
            "\n"
            "PersistentKeepalive = 5\n";
+    return libxtun::proto::awg::Config::fromConf(str).value();
 }
 
-std::string confB(const std::string &host = "127.0.0.1") {
-    return std::string("[Interface]\n") + "PrivateKey = " + kPrivB + "\n" +
+libxtun::proto::awg::Config confB(const std::string &host = "127.0.0.1") {
+    const std::string str = std::string("[Interface]\n") + "PrivateKey = " + kPrivB + "\n" +
            "ListenPort = " + std::to_string(kPortB) + "\n" + kAwgParams +
            "\n"
            "[Peer]\n" +
            "PublicKey = " + kPubA + "\n" + "Endpoint = " + host + ":" + std::to_string(kPortA) +
            "\n"
            "AllowedIPs = 10.9.9.1/32\n";
+    return libxtun::proto::awg::Config::fromConf(str).value();
 }
 
-std::string confRemote() {
-    return std::string("[Interface]\n") + "PrivateKey = " + kPrivA + "\n" +
+libxtun::proto::awg::Config confRemote() {
+    const std::string str = std::string("[Interface]\n") + "PrivateKey = " + kPrivA + "\n" +
            "ListenPort = " + std::to_string(kPortA) +
            "\n"
            "Jc = 2\n"
@@ -244,6 +247,7 @@ std::string confRemote() {
            "Endpoint = 203.0.113.2:51820\n"
            "AllowedIPs = 0.0.0.0/0\n"
            "PersistentKeepalive = 5\n";
+    return libxtun::proto::awg::Config::fromConf(str).value();
 }
 
 bool contains(const std::vector<unsigned char> &hay, const std::string &needle) {
