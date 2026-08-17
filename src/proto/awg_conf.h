@@ -1,5 +1,7 @@
 #include "util/result.h"
 
+#include <array>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <system_error>
