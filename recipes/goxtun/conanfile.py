@@ -1,25 +1,9 @@
 from conan import ConanFile
-from conan.errors import ConanInvalidConfiguration, ConanException
 from conan.tools.layout import basic_layout
 from conan.tools.files import copy, chdir, collect_libs
 from conan.tools.gnu import Autotools, AutotoolsToolchain
 
 import os
-import shutil
-import stat
-from io import StringIO
-
-
-def _make_writable(path):
-    # Module-cache copies are read-only; add the owner-write bit so the tree can be
-    # patched and later removed.
-    if not os.path.isdir(path):
-        return
-    for root, dirs, files in os.walk(path):
-        for name in dirs + files:
-            p = os.path.join(root, name)
-            os.chmod(p, os.stat(p).st_mode | stat.S_IWUSR)
-    os.chmod(path, os.stat(path).st_mode | stat.S_IWUSR)
 
 class Goxtun(ConanFile):
     name = "goxtun"
@@ -67,64 +51,8 @@ class Goxtun(ConanFile):
         env.define("BUILD_DIR", self.build_folder.replace("\\", "/"))
         tc.generate(env)
 
-    # --- amneziawg-go SetMark bypass patches (TEMPORARY) ---------------------
-    # Published amneziawg-go v0.2.18 has no per-socket bypass on darwin (its
-    # StdNetBind.SetMark is a no-op there), so libxtun's IP_BOUND_IF bypass never
-    # reaches the proxy's own socket. src/_awgpatch/conn/ holds the fixed
-    # conn/mark_*.go. Go refuses to -overlay files under GOMODCACHE, so we copy the
-    # fetched module to a writable dir, swap those two files in, and `replace` the
-    # module with the patched copy — no full vendored fork committed.
-    #
-    # TO REMOVE, once the SetMark changes are merged upstream into amneziawg-go:
-    #   1. bump `require github.com/amnezia-vpn/amneziawg-go` in src/go.mod to the
-    #      released version that contains them;
-    #   2. delete the src/_awgpatch/ directory;
-    #   3. delete _patch_awg_module() below and its call in build().
-    _awg_module = "github.com/amnezia-vpn/amneziawg-go"
-
-    def _patch_awg_module(self):
-        self.run(f"go mod download {self._awg_module}")
-        out = StringIO()
-        self.run(f"go list -m -f {{{{.Dir}}}} {self._awg_module}", stdout=out)
-        cache_dir = out.getvalue().strip()
-
-        # Copy the module out of the read-only cache (GOMODCACHE can't be replaced
-        # in place) and make the copy writable.
-        dest = os.path.join(self.build_folder, "awgpatched")
-        _make_writable(dest)
-        shutil.rmtree(dest, ignore_errors=True)
-        shutil.copytree(cache_dir, dest)
-        _make_writable(dest)
-
-        if self.settings.os == "Macos":
-            patch_conn = os.path.join(self.source_folder, "_awgpatch", "conn")
-            for name in ("mark_default.go", "mark_darwin.go"):
-                shutil.copyfile(os.path.join(patch_conn, name), os.path.join(dest, "conn", name))
-        elif self.settings.os == "Windows":
-            bind = os.path.join(dest, "conn", "bind_windows.go")
-            with open(bind) as f:
-                src = f.read()
-            old = 'func (bind *WinRingBind) SetMark(mark uint32) error {\n\treturn nil\n}'
-            new = ('func (bind *WinRingBind) SetMark(mark uint32) error {\n'
-                   '\tif err := bind.BindSocketToInterface4(mark, false); err != nil && err != net.ErrClosed {\n'
-                   '\t\treturn err\n'
-                   '\t}\n'
-                   '\tif err := bind.BindSocketToInterface6(mark, false); err != nil && err != net.ErrClosed {\n'
-                   '\t\treturn err\n'
-                   '\t}\n'
-                   '\treturn nil\n'
-                   '}')
-            if old not in src:
-                raise ConanException("bind_windows.go: SetMark stub not found")
-            with open(bind, "w") as f:
-                f.write(src.replace(old, new, 1))
-
-        self.run(f"go mod edit -replace {self._awg_module}={dest}")
-
     def build(self):
         with chdir(self, self.source_folder):
-            if self.settings.os in ("Macos", "Windows"):
-                self._patch_awg_module()
             at = Autotools(self)
             shared = self.options.get_safe("shared", True)
             at.make(target=("shared" if shared else "archive"))

@@ -6,6 +6,14 @@
 #include <memory>
 #include <variant>
 
+#if defined(_WIN32)
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <netinet/in.h>
+#include <sys/socket.h>
+#endif
+
 namespace {
 
 enum TunEvent {
@@ -65,12 +73,12 @@ int Awg::start(const ProxyIo &io) {
 
     m_io = io;
 
-    m_ctx = goxtun_awg_new(tunRead, tunWrite, tunMtu, &m_io, forwardLog, forwardLog, m_cproxy);
+    m_ctx = goxtun_awg_new(tunRead, tunWrite, tunMtu, &m_io, forwardLog, forwardLog, m_cproxy,
+                           &Awg::sockCb, this);
     if (m_ctx == nullptr) {
         return LIBXTUN_ERR_SYSTEM;
     }
 
-    m_conf.setFwmark(m_bypassToken);
     auto uapi = m_conf.toUapi();
     if (char *err = goxtun_awg_setconf(m_ctx, &uapi[0]); err != nullptr) {
         forwardLog(err, m_cproxy);
@@ -109,11 +117,68 @@ void Awg::stop() {
     m_ctx = nullptr;
 }
 
-void Awg::reapplyBypass() {
-    if (m_ctx == nullptr) {
+void Awg::sockCb(int fd, void *priv) {
+    auto *self = static_cast<Awg *>(priv);
+    std::lock_guard<std::mutex> lock(self->m_sockMtx);
+
+    sockaddr_storage ss{};
+#if defined(_WIN32)
+    int len = sizeof(ss);
+    if (::getsockname(static_cast<SOCKET>(fd), reinterpret_cast<sockaddr *>(&ss), &len) != 0) {
         return;
     }
-    goxtun_awg_set_fwmark(m_ctx, m_bypassToken);
+#else
+    socklen_t len = sizeof(ss);
+    if (::getsockname(fd, reinterpret_cast<sockaddr *>(&ss), &len) != 0) {
+        return;
+    }
+#endif
+
+    if (ss.ss_family == AF_INET6) {
+        self->m_sock6 = fd;
+    } else {
+        self->m_sock4 = fd;
+    }
+    self->applyBypass(fd, ss.ss_family);
+}
+
+void Awg::applyBypass(int fd, int family) {
+    if (m_bypassToken == 0) {
+        return;
+    }
+#if defined(__linux__)
+    (void)family;
+    unsigned mark = m_bypassToken;
+    ::setsockopt(fd, SOL_SOCKET, SO_MARK, &mark, sizeof(mark));
+#elif defined(__APPLE__)
+    unsigned idx = m_bypassToken;
+    if (family == AF_INET6) {
+        ::setsockopt(fd, IPPROTO_IPV6, IPV6_BOUND_IF, &idx, sizeof(idx));
+    } else {
+        ::setsockopt(fd, IPPROTO_IP, IP_BOUND_IF, &idx, sizeof(idx));
+    }
+#elif defined(_WIN32)
+    SOCKET s = static_cast<SOCKET>(fd);
+    if (family == AF_INET6) {
+        DWORD idx = m_bypassToken;
+        ::setsockopt(s, IPPROTO_IPV6, IPV6_UNICAST_IF, reinterpret_cast<const char *>(&idx),
+                     sizeof(idx));
+    } else {
+        DWORD idx = ::htonl(m_bypassToken);
+        ::setsockopt(s, IPPROTO_IP, IP_UNICAST_IF, reinterpret_cast<const char *>(&idx),
+                     sizeof(idx));
+    }
+#endif
+}
+
+void Awg::reapplyBypass() {
+    std::lock_guard<std::mutex> lock(m_sockMtx);
+    if (m_sock4 >= 0) {
+        applyBypass(m_sock4, AF_INET);
+    }
+    if (m_sock6 >= 0) {
+        applyBypass(m_sock6, AF_INET6);
+    }
 }
 
 std::vector<std::string> Awg::routes() {

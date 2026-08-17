@@ -154,13 +154,6 @@ func goxtun_awg_event(ctx unsafe.Pointer, event C.int) {
 	i.TriggerEvent(tun.Event(event))
 }
 
-//export goxtun_awg_set_fwmark
-func goxtun_awg_set_fwmark(ctx unsafe.Pointer, mark C.uint32_t) {
-	i, _ := fromCtx[awg.Instance](ctx)
-
-	i.Device.BindSetMark(uint32(mark))
-}
-
 //export goxtun_awg_setconf
 func goxtun_awg_setconf(ctx unsafe.Pointer, uapi *C.char) *C.char {
 	i, _ := fromCtx[awg.Instance](ctx)
