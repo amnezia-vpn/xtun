@@ -4,6 +4,7 @@
 #include "util/noncopyable.h"
 #include "util/result.h"
 
+#include <memory>
 #include <string>
 
 #ifndef AWG_H

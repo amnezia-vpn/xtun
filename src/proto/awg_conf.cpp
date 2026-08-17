@@ -2,13 +2,12 @@
 
 #include "util/reflect.h"
 
-#include <arpa/inet.h>
+#include <algorithm>
 #include <iomanip>
 #include <ranges>
 #include <charconv>
 #include <sstream>
 #include <string>
-#include <sys/socket.h>
 
 namespace libxtun {
 namespace proto {
