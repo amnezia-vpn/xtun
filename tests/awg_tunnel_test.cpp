@@ -48,7 +48,9 @@ libxtun_tunnel_opts default_opts() {
 }  // namespace
 
 TEST(AwgTunnel, AttachAndTeardownTunnelFirst) {
-    ASSERT_TRUE(privileged()) << "creating a tun device requires root";
+    if (!privileged()) {
+        GTEST_SKIP() << "skipped: creating a tun device requires root/Administrator";
+    }
 
     libxtun_proxy proxy{};
     ASSERT_EQ(libxtun_proxy_new(&proxy, LIBXTUN_PROXY_PROTO_AWG, kConf), LIBXTUN_OK);
@@ -64,7 +66,9 @@ TEST(AwgTunnel, AttachAndTeardownTunnelFirst) {
 }
 
 TEST(AwgTunnel, AttachAndTeardownProxyFirst) {
-    ASSERT_TRUE(privileged()) << "creating a tun device requires root";
+    if (!privileged()) {
+        GTEST_SKIP() << "skipped: creating a tun device requires root/Administrator";
+    }
 
     libxtun_proxy proxy{};
     ASSERT_EQ(libxtun_proxy_new(&proxy, LIBXTUN_PROXY_PROTO_AWG, kConf), LIBXTUN_OK);

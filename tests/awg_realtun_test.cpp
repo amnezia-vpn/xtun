@@ -524,7 +524,9 @@ struct RoamSim {
 #if defined(__linux__)
 
 TEST(AwgRealTun, FullTunnelDeliversThroughKernelTun) {
-    ASSERT_TRUE(privileged()) << "real tun + netns + AWG UAPI need root";
+    if (!privileged()) {
+        GTEST_SKIP() << "skipped: real kernel tun + netns require root";
+    }
 
     NetnsGuard netns;
     ASSERT_TRUE(netns.ok) << "could not create a private network namespace";
@@ -588,7 +590,9 @@ TEST(AwgRealTun, FullTunnelDeliversThroughKernelTun) {
 }
 
 TEST(AwgRealTun, MarkedHandshakeBypassesTunnel) {
-    ASSERT_TRUE(privileged()) << "real tun + netns + AWG UAPI need root";
+    if (!privileged()) {
+        GTEST_SKIP() << "skipped: real kernel tun + netns require root";
+    }
 
     NetnsGuard netns;
     ASSERT_TRUE(netns.ok) << "could not create a private network namespace";
@@ -653,7 +657,9 @@ TEST(AwgRealTun, MarkedHandshakeBypassesTunnel) {
 #elif defined(__APPLE__)
 
 TEST(AwgRealTun, MarkedHandshakeBypassesTunnel) {
-    ASSERT_TRUE(privileged()) << "real utun + AWG UAPI + BPF need root";
+    if (!privileged()) {
+        GTEST_SKIP() << "skipped: real utun + BPF require root";
+    }
     if (!hasDefaultRoute()) {
         GTEST_SKIP() << "no physical uplink for the handshake to bypass to";
     }
@@ -710,7 +716,9 @@ TEST(AwgRealTun, MarkedHandshakeBypassesTunnel) {
 }
 
 TEST(AwgRealTun, RoamRemarkFollowsDefaultRouteChange) {
-    ASSERT_TRUE(privileged()) << "feth + default route changes need root";
+    if (!privileged()) {
+        GTEST_SKIP() << "skipped: feth + default route changes require root";
+    }
     if (macDefaultIfindex() == 0) {
         GTEST_SKIP() << "no physical default route to roam away from";
     }
@@ -931,7 +939,9 @@ struct PhysAdapter {
 }  // namespace
 
 TEST(AwgRealTun, DeliversThroughWintunAdapter) {
-    ASSERT_TRUE(privileged()) << "wintun adapter + AWG UAPI need Administrator/SYSTEM";
+    if (!privileged()) {
+        GTEST_SKIP() << "skipped: wintun adapter requires Administrator/SYSTEM";
+    }
 
     WSADATA wsa;
     ASSERT_EQ(::WSAStartup(MAKEWORD(2, 2), &wsa), 0);
@@ -1001,7 +1011,9 @@ TEST(AwgRealTun, DeliversThroughWintunAdapter) {
 }
 
 TEST(AwgRealTun, RoamRemarkFollowsDefaultRouteChange) {
-    ASSERT_TRUE(privileged()) << "second wintun adapter + route table need Administrator/SYSTEM";
+    if (!privileged()) {
+        GTEST_SKIP() << "skipped: second wintun adapter + route table require Administrator/SYSTEM";
+    }
 
     WSADATA wsa;
     ASSERT_EQ(::WSAStartup(MAKEWORD(2, 2), &wsa), 0);
