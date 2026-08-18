@@ -28,7 +28,15 @@ namespace {
 
 bool privileged() {
 #if defined(_WIN32)
-    return true;
+    BOOL isAdmin = FALSE;
+    PSID adminGroup = nullptr;
+    SID_IDENTIFIER_AUTHORITY ntAuthority = SECURITY_NT_AUTHORITY;
+    if (::AllocateAndInitializeSid(&ntAuthority, 2, SECURITY_BUILTIN_DOMAIN_RID,
+                                   DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0, 0, &adminGroup)) {
+        ::CheckTokenMembership(nullptr, adminGroup, &isAdmin);
+        ::FreeSid(adminGroup);
+    }
+    return isAdmin != FALSE;
 #else
     return ::geteuid() == 0;
 #endif
@@ -143,7 +151,9 @@ int create_tun(char *name, size_t len) {
 }  // namespace
 
 TEST(TunnelLifecycle, BringUpAndDown) {
-    ASSERT_TRUE(privileged()) << "creating a tun device requires root/Administrator";
+    if (!privileged()) {
+        GTEST_SKIP() << "skipped: creating a tun device requires root/Administrator";
+    }
     libxtun_tunnel_opts opts = default_opts();
     libxtun_tunnel tun;
     int rc = libxtun_tunnel_new(&tun, &opts);
@@ -160,7 +170,9 @@ TEST(TunnelLifecycle, BringUpAndDown) {
 #if defined(__linux__) || defined(__APPLE__)
 
 TEST(TunnelLifecycle, AdoptByFd) {
-    ASSERT_TRUE(privileged()) << "creating a tun device requires root";
+    if (!privileged()) {
+        GTEST_SKIP() << "skipped: creating a tun device requires root";
+    }
     char name[IFNAMSIZ] = {0};
     int fd = create_tun(name, sizeof(name));
     ASSERT_GE(fd, 0) << "could not create a tun device";
@@ -183,7 +195,9 @@ TEST(TunnelLifecycle, AdoptByFd) {
 #if defined(__linux__)
 
 TEST(TunnelLifecycle, AdoptByName) {
-    ASSERT_TRUE(privileged()) << "creating a persistent tun device requires root";
+    if (!privileged()) {
+        GTEST_SKIP() << "skipped: creating a persistent tun device requires root";
+    }
     char name[IFNAMSIZ];
     ASSERT_EQ(create_persistent_tun(name, sizeof(name)), 0)
         << "could not create a persistent tun device";
@@ -205,6 +219,9 @@ TEST(TunnelLifecycle, AdoptByName) {
 #elif defined(_WIN32)
 
 TEST(TunnelLifecycle, AdoptByName) {
+    if (!privileged()) {
+        GTEST_SKIP() << "skipped: creating a wintun adapter requires Administrator";
+    }
     typedef void *(WINAPI * create_fn)(const WCHAR *, const WCHAR *, const GUID *);
     typedef void(WINAPI * close_fn)(void *);
 

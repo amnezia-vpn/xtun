@@ -232,7 +232,9 @@ std::string routeGetIface(const std::string &dst) {
 #if defined(__linux__)
 
 TEST(Routing, AppliesAddressMtuUpAndRoutes) {
-    ASSERT_TRUE(privileged()) << "configuring an interface requires root";
+    if (!privileged()) {
+        GTEST_SKIP() << "skipped: configuring an interface requires root";
+    }
 
     libxtun_tunnel_opts opts = routingOpts();
     libxtun::Tunnel tunnel(opts);
@@ -251,7 +253,9 @@ TEST(Routing, AppliesAddressMtuUpAndRoutes) {
 }
 
 TEST(Routing, FullTunnelMarksBypassPhysical) {
-    ASSERT_TRUE(privileged()) << "network namespaces require root";
+    if (!privileged()) {
+        GTEST_SKIP() << "skipped: network namespaces require root";
+    }
 
     NetnsGuard netns;
     ASSERT_TRUE(netns.ok) << "could not create a private network namespace";
@@ -278,7 +282,9 @@ TEST(Routing, FullTunnelMarksBypassPhysical) {
 }
 
 TEST(Routing, SwapProxyReplacesRoutes) {
-    ASSERT_TRUE(privileged()) << "configuring an interface requires root";
+    if (!privileged()) {
+        GTEST_SKIP() << "skipped: configuring an interface requires root";
+    }
 
     libxtun_tunnel_opts opts = routingOpts();
     libxtun::Tunnel tunnel(opts);
@@ -299,7 +305,9 @@ TEST(Routing, SwapProxyReplacesRoutes) {
 }
 
 TEST(Routing, InstallsIPv6Route) {
-    ASSERT_TRUE(privileged()) << "configuring an interface requires root";
+    if (!privileged()) {
+        GTEST_SKIP() << "skipped: configuring an interface requires root";
+    }
 
     libxtun_tunnel_opts opts = dualStackOpts();
     libxtun::Tunnel tunnel(opts);
@@ -316,7 +324,9 @@ TEST(Routing, InstallsIPv6Route) {
 #elif defined(__APPLE__)
 
 TEST(Routing, AppliesAddressMtuUpAndSplitRoute) {
-    ASSERT_TRUE(privileged()) << "configuring a utun requires root";
+    if (!privileged()) {
+        GTEST_SKIP() << "skipped: configuring a utun requires root";
+    }
 
     libxtun_tunnel_opts opts = routingOpts();
     libxtun::Tunnel tunnel(opts);
@@ -335,7 +345,9 @@ TEST(Routing, AppliesAddressMtuUpAndSplitRoute) {
 }
 
 TEST(Routing, BypassTokenIsPhysicalDefault) {
-    ASSERT_TRUE(privileged()) << "configuring a utun requires root";
+    if (!privileged()) {
+        GTEST_SKIP() << "skipped: configuring a utun requires root";
+    }
 
     const std::string physical = routeGetIface("default");
     if (physical.empty() || physical == "lo0") {
@@ -355,7 +367,9 @@ TEST(Routing, BypassTokenIsPhysicalDefault) {
 }
 
 TEST(Routing, FullTunnelCatchAllAndBoundSocketBypass) {
-    ASSERT_TRUE(privileged()) << "configuring a utun requires root";
+    if (!privileged()) {
+        GTEST_SKIP() << "skipped: configuring a utun requires root";
+    }
 
     const std::string physical = routeGetIface("default");
     if (physical.empty() || physical == "lo0") {
@@ -398,7 +412,9 @@ TEST(Routing, FullTunnelCatchAllAndBoundSocketBypass) {
 }
 
 TEST(Routing, SwapProxyReplacesRoutes) {
-    ASSERT_TRUE(privileged()) << "configuring a utun requires root";
+    if (!privileged()) {
+        GTEST_SKIP() << "skipped: configuring a utun requires root";
+    }
 
     libxtun_tunnel_opts opts = routingOpts();
     libxtun::Tunnel tunnel(opts);
@@ -419,7 +435,9 @@ TEST(Routing, SwapProxyReplacesRoutes) {
 }
 
 TEST(Routing, InstallsIPv6Route) {
-    ASSERT_TRUE(privileged()) << "configuring a utun requires root";
+    if (!privileged()) {
+        GTEST_SKIP() << "skipped: configuring a utun requires root";
+    }
 
     libxtun_tunnel_opts opts = dualStackOpts();
     libxtun::Tunnel tunnel(opts);
