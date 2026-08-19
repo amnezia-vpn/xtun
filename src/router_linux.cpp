@@ -18,9 +18,7 @@
 #include <linux/rtnetlink.h>
 #include <linux/sockios.h>
 
-#ifdef XTUN_HAVE_SYSTEMD
 #include <systemd/sd-bus.h>
-#endif
 
 namespace {
 
@@ -306,10 +304,6 @@ int LinuxRouter::setDns(const std::vector<std::string> &servers) {
         return 0;
     }
 
-#ifndef XTUN_HAVE_SYSTEMD
-    (void)servers;
-    return 0;
-#else
     sd_bus *bus = nullptr;
     int r = sd_bus_open_system(&bus);
     if (r < 0) {
@@ -369,14 +363,12 @@ int LinuxRouter::setDns(const std::vector<std::string> &servers) {
     sd_bus_message_unref(msg);
     sd_bus_unref(bus);
     return r < 0 ? r : 0;
-#endif
 }
 
 void LinuxRouter::revertDns() {
     if (!m_dnsApplied) {
         return;
     }
-#ifdef XTUN_HAVE_SYSTEMD
     sd_bus *bus = nullptr;
     if (sd_bus_open_system(&bus) < 0) {
         return;
@@ -387,7 +379,7 @@ void LinuxRouter::revertDns() {
                        m_ifindex);
     sd_bus_error_free(&err);
     sd_bus_unref(bus);
-#endif
+
     m_dnsApplied = false;
 }
 
