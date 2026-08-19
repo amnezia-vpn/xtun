@@ -7,6 +7,11 @@
 extern "C" {
 #endif
 
+enum libxtun_status {
+    LIBXTUN_STATUS_DISCONNECTED = 1,
+    LIBXTUN_STATUS_CONNECTED = 2,
+};
+
 enum libxtun_error {
     LIBXTUN_OK = 0,
     LIBXTUN_ERR_INVALID_ARGS = -1,
@@ -27,7 +32,17 @@ enum libxtun_proxy_proto {
 struct libxtun_proxy {
     void *handle;
     void(*onsockspawn)(int fd, void *priv);
+    void *onsockspawn_priv;
     void(*loghandler)(const char *str, void *priv);
+    void *loghandler_priv;
+
+    /* 
+    * status handler could return:
+    * - libxtun_status, in case of normal behavior
+    * - libxtun_error,  in case of runtime error
+    */
+    void(*statushandler)(int status, void *priv);
+    void *statushandler_priv;
 };
 
 int libxtun_proxy_new(struct libxtun_proxy *proxy, enum libxtun_proxy_proto proto, const char *conf);
