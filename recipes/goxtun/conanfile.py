@@ -44,6 +44,7 @@ class Goxtun(ConanFile):
         tc.apple_arch_flag = None
         env = tc.environment()
         env.define("OS", str(self.settings.os).lower())
+        env.define("ARCH", str(self.settings.arch).lower())
         env.define("GOPATH", os.path.join(self.build_folder, "go"))
         env.define("GOMODCACHE", os.path.join(self.build_folder, "go", "pkg", "mod"))
         env.define("GOCACHE", os.path.join(self.build_folder, ".cache", "go-build"))

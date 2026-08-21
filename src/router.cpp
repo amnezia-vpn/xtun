@@ -1,6 +1,6 @@
 #include "router.h"
 
-#if defined(__linux__)
+#if defined(__linux__) && !defined(__ANDROID__)
 #include "router_linux.h"
 #include "router_linux.cpp"
 #elif defined(__APPLE__)
@@ -14,7 +14,7 @@
 namespace libxtun {
 
 std::unique_ptr<Router> Router::create() {
-#if defined(__linux__)
+#if defined(__linux__) && !defined(__ANDROID__)
     return std::make_unique<LinuxRouter>();
 #elif defined(__APPLE__)
     return std::make_unique<MacosRouter>();

@@ -40,7 +40,7 @@ int tunMtu(void *priv) {
 void forwardLog(char *str, void *priv) {
     auto *cproxy = static_cast<struct libxtun_proxy *>(priv);
     if (cproxy != nullptr && cproxy->loghandler != nullptr) {
-        cproxy->loghandler(str, priv);
+        cproxy->loghandler(str, cproxy->loghandler_priv);
     }
 }
 
