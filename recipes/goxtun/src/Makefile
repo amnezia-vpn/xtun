@@ -13,6 +13,7 @@ GOARCH_amd64 = amd64
 GOARCH_arm64 = arm64
 GOARCH_aarch64 = arm64
 GOARCH_armv8 = arm64
+GOARCH_armv7 = arm
 
 ifneq ($(shell which cmd 2>/dev/null),)
 	OS ?= windows

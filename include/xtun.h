@@ -16,6 +16,17 @@ enum libxtun_error {
     LIBXTUN_ERR_DEVICE_CREATE = -3,
     /* An ancillary system call failed. */
     LIBXTUN_ERR_SYSTEM = -4,
+
+    LIBXTUN_ERR_RESERVED_0 = -10000,
+    LIBXTUN_ERR_RESERVED_1 = -10001,
+    LIBXTUN_ERR_RESERVED_2 = -10002,
+    LIBXTUN_ERR_RESERVED_3 = -10003,
+    LIBXTUN_ERR_RESERVED_4 = -10004,
+    LIBXTUN_ERR_RESERVED_5 = -10005,
+    LIBXTUN_ERR_RESERVED_6 = -10006,
+    LIBXTUN_ERR_RESERVED_7 = -10007,
+    LIBXTUN_ERR_RESERVED_8 = -10008,
+    LIBXTUN_ERR_RESERVED_9 = -10009,
 };
 
 enum libxtun_proxy_proto {
@@ -26,8 +37,12 @@ enum libxtun_proxy_proto {
 
 struct libxtun_proxy {
     void *handle;
+
     void(*onsockspawn)(int fd, void *priv);
+    void *onsockspawn_priv;
+
     void(*loghandler)(const char *str, void *priv);
+    void *loghandler_priv;
 };
 
 int libxtun_proxy_new(struct libxtun_proxy *proxy, enum libxtun_proxy_proto proto, const char *conf);
@@ -64,9 +79,6 @@ int libxtun_tunnel_new_from_tunfile(struct libxtun_tunnel *tun, int fd);
 int libxtun_tunnel_new_from_name(struct libxtun_tunnel *tun, const char *name);
 int libxtun_tunnel_start(struct libxtun_tunnel *tun);
 void libxtun_tunnel_free(struct libxtun_tunnel *tun);
-
-/* Returns LIBXTUN_OK once the proxy is running against the tunnel, or a
- * negative libxtun_error if it could not be started. */
 int libxtun_tunnel_attach_proxy(struct libxtun_tunnel *tun, struct libxtun_proxy *proxy);
 
 #ifdef __cplusplus
