@@ -7,6 +7,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #if defined(_WIN32)
@@ -47,8 +48,21 @@ class Tunnel {
   private:
     friend class Proxy;
 
+    class BypassSocketRegistry {
+      public:
+        void add(Router &router, int fd, int family);
+        void rebind(Router &router);
+        void clear();
+
+      private:
+        mutable std::mutex m_mtx;
+        std::unordered_map<int, int> m_sockets;
+    };
+
     void detachProxy(Proxy *proxy);
     void cancelRead();
+    void registerBypassSocket(int fd, int family);
+    void bypassSocket(int fd, int family);
     int finishOpen();
     void emit(Event ev);
 #if defined(_WIN32)
@@ -77,7 +91,7 @@ class Tunnel {
     int m_confMtu;
     std::unique_ptr<Router> m_router;
     bool m_started = false;
-    uint32_t m_bypassToken = 0;
+    BypassSocketRegistry m_bypass_sockets;
 
     int m_tunFd;
     std::string m_name;

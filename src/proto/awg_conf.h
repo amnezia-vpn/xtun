@@ -132,7 +132,7 @@ class Config {
         std::vector<Peer> peers;
     };
 
-    const Interface& iface() {
+    const Interface& iface() const {
         return m_iface;
     }
 

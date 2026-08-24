@@ -1,6 +1,5 @@
 #include "router.h"
 
-#include <cstdint>
 #include <mutex>
 
 #ifndef ROUTER_MACOS_H
@@ -16,7 +15,8 @@ class MacosRouter : public Router {
     int setProxyRoutes(const std::vector<std::string> &routes) override;
     void clearProxyRoutes() override;
     void revert() override;
-    uint32_t bypassToken() override;
+    int bypassSocket(int fd, int family) override;
+    bool bypassChanged() override;
 
   private:
     // The physical uplink a full tunnel's scoped bypass routes point at, kept so
@@ -38,6 +38,7 @@ class MacosRouter : public Router {
     int updateRouteFor(const std::string &cidr, bool add);
     int updateFullTunnelRoutes(int family, bool add);
     bool getGatewayAndIface(int family, int &ifindex, unsigned char *gw);
+    unsigned physicalIfindex();
 
     std::recursive_mutex m_mtx;
     int m_ifindex = -1;
@@ -48,6 +49,7 @@ class MacosRouter : public Router {
     bool m_fullV6 = false;
     ScopedBypass m_bypassV4;
     ScopedBypass m_bypassV6;
+    unsigned m_bypassIfindex = 0;
     int m_rtseq = 1;
 };
 

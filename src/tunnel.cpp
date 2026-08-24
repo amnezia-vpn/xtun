@@ -646,6 +646,7 @@ int Tunnel::attachProxy(Proxy *proxy) {
             m_proxy = nullptr;
         }
     }
+    m_bypass_sockets.clear();
 
     ProxyIo io;
     io.read = [this](void *buf, int len) { return this->read(buf, static_cast<size_t>(len)); };
@@ -663,8 +664,6 @@ int Tunnel::attachProxy(Proxy *proxy) {
 #endif
 
     proxy->setInterface(m_name);
-    m_bypassToken = m_router != nullptr ? m_router->bypassToken() : 0;
-    proxy->setBypassToken(m_bypassToken);
     proxy->m_tunnel = this;
 
     int rc = proxy->start(io);
@@ -679,7 +678,7 @@ int Tunnel::attachProxy(Proxy *proxy) {
     }
 
     if (m_started && m_router != nullptr) {
-        if (m_router->setProxyRoutes(proxy->routes()) != 0) {
+        if (m_router->setProxyRoutes(proxy->profile().routes) != 0) {
             m_router->clearProxyRoutes();
             proxy->stop();
             std::lock_guard<std::mutex> lock(m_proxyMtx);
@@ -694,7 +693,7 @@ int Tunnel::attachProxy(Proxy *proxy) {
 int Tunnel::start() {
     m_started = true;
     if (m_proxy != nullptr && m_router != nullptr) {
-        if (m_router->setProxyRoutes(m_proxy->routes()) != 0) {
+        if (m_router->setProxyRoutes(m_proxy->profile().routes) != 0) {
             m_router->revert();
             m_started = false;
             return LIBXTUN_ERR_SYSTEM;
@@ -710,6 +709,37 @@ void Tunnel::detachProxy(Proxy *proxy) {
             m_router->clearProxyRoutes();
         }
         m_proxy = nullptr;
+        m_bypass_sockets.clear();
+    }
+}
+
+void Tunnel::BypassSocketRegistry::add(Router &router, int fd, int family) {
+    std::lock_guard<std::mutex> lock(m_mtx);
+    m_sockets[fd] = family;
+    router.bypassSocket(fd, family);
+}
+
+void Tunnel::BypassSocketRegistry::rebind(Router &router) {
+    std::lock_guard<std::mutex> lock(m_mtx);
+    for (const auto &[fd, family] : m_sockets) {
+        router.bypassSocket(fd, family);
+    }
+}
+
+void Tunnel::BypassSocketRegistry::clear() {
+    std::lock_guard<std::mutex> lock(m_mtx);
+    m_sockets.clear();
+}
+
+void Tunnel::registerBypassSocket(int fd, int family) {
+    if (m_router != nullptr) {
+        m_bypass_sockets.add(*m_router, fd, family);
+    }
+}
+
+void Tunnel::bypassSocket(int fd, int family) {
+    if (m_router != nullptr) {
+        m_router->bypassSocket(fd, family);
     }
 }
 
@@ -934,17 +964,9 @@ void Tunnel::monitorLoop() {
 
 #if defined(__APPLE__) || defined(_WIN32)
 void Tunnel::onRouteChange() {
-    std::lock_guard<std::mutex> lock(m_proxyMtx);
-    if (m_router == nullptr || m_proxy == nullptr) {
-        return;
+    if (m_router != nullptr && m_router->bypassChanged()) {
+        m_bypass_sockets.rebind(*m_router);
     }
-    uint32_t token = m_router->bypassToken();
-    if (token == m_bypassToken) {
-        return;
-    }
-    m_bypassToken = token;
-    m_proxy->setBypassToken(token);
-    m_proxy->reapplyBypass();
 }
 #endif
 

@@ -16,7 +16,8 @@ class LinuxRouter : public Router {
     int setProxyRoutes(const std::vector<std::string> &routes) override;
     void clearProxyRoutes() override;
     void revert() override;
-    uint32_t bypassToken() override;
+    int bypassSocket(int fd, int family) override;
+    bool bypassChanged() override;
 
   private:
     int setMtu(int mtu);

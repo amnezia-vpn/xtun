@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -31,8 +32,28 @@ struct RecordingProxy : libxtun::Proxy {
     void stop() override { ++stopCalls; }
 
     std::vector<std::string> proxyRoutes;
-    std::vector<std::string> routes() override { return proxyRoutes; }
+    libxtun::ProxyProfile profile() const override { return {proxyRoutes, {}, {}}; }
+
+    void log(const char *message) { emitLog(message); }
 };
+
+struct LogSpy {
+    static std::vector<std::string> lines;
+    static void *priv;
+
+    static void handler(const char *message, void *p) {
+        lines.emplace_back(message);
+        priv = p;
+    }
+
+    static void reset() {
+        lines.clear();
+        priv = nullptr;
+    }
+};
+
+std::vector<std::string> LogSpy::lines;
+void *LogSpy::priv = nullptr;
 
 constexpr const char *kAwgConf =
     "[Interface]\n"
@@ -187,6 +208,44 @@ TEST(ProxyNew, RejectsBadArgs) {
               LIBXTUN_ERR_INVALID_ARGS);
     EXPECT_EQ(libxtun_proxy_new(&proxy, static_cast<libxtun_proxy_proto>(0), ""),
               LIBXTUN_ERR_INVALID_ARGS);
+}
+
+TEST(ProxyCallbacks, LogReachesTheClientPriv) {
+    LogSpy::reset();
+
+    int cookie = 0;
+    libxtun_proxy cproxy{};
+    cproxy.loghandler = &LogSpy::handler;
+    cproxy.loghandler_priv = &cookie;
+
+    RecordingProxy proxy;
+    proxy.bind(libxtun::ClientCallbacks{cproxy.onsockspawn, cproxy.onsockspawn_priv,
+                                        cproxy.loghandler, cproxy.loghandler_priv});
+    proxy.log("hello");
+
+    ASSERT_EQ(LogSpy::lines.size(), 1u);
+    EXPECT_EQ(LogSpy::lines[0], "hello");
+    EXPECT_EQ(LogSpy::priv, static_cast<void *>(&cookie));
+    EXPECT_NE(LogSpy::priv, static_cast<void *>(&cproxy));
+}
+
+TEST(ProxyCallbacks, LogSurvivesTheCallerStructBeingOverwritten) {
+    LogSpy::reset();
+
+    int cookie = 0;
+    libxtun_proxy cproxy{};
+    cproxy.loghandler = &LogSpy::handler;
+    cproxy.loghandler_priv = &cookie;
+
+    RecordingProxy proxy;
+    proxy.bind(libxtun::ClientCallbacks{cproxy.onsockspawn, cproxy.onsockspawn_priv,
+                                        cproxy.loghandler, cproxy.loghandler_priv});
+    std::memset(&cproxy, 0, sizeof(cproxy));
+    proxy.log("after");
+
+    ASSERT_EQ(LogSpy::lines.size(), 1u);
+    EXPECT_EQ(LogSpy::lines[0], "after");
+    EXPECT_EQ(LogSpy::priv, static_cast<void *>(&cookie));
 }
 
 TEST(ProxyNew, CreatesAwgFromValidConfig) {

@@ -4,7 +4,6 @@
 #include <ws2tcpip.h>
 #include <iphlpapi.h>
 
-#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
@@ -260,9 +259,33 @@ unsigned WindowsRouter::physicalDefaultIfindex() {
     return best;
 }
 
-uint32_t WindowsRouter::bypassToken() {
+int WindowsRouter::bypassSocket(int fd, int family) {
     std::lock_guard<std::recursive_mutex> lock(m_mtx);
-    return static_cast<uint32_t>(physicalDefaultIfindex());
+    const unsigned idx = physicalDefaultIfindex();
+    if (idx == 0) {
+        return -1;
+    }
+    m_bypassIfindex = idx;
+
+    SOCKET s = static_cast<SOCKET>(fd);
+    if (family == AF_INET6) {
+        DWORD scope = idx;
+        return ::setsockopt(s, IPPROTO_IPV6, IPV6_UNICAST_IF,
+                            reinterpret_cast<const char *>(&scope), sizeof(scope)) == 0 ? 0 : -1;
+    }
+    DWORD scope = ::htonl(idx);
+    return ::setsockopt(s, IPPROTO_IP, IP_UNICAST_IF,
+                        reinterpret_cast<const char *>(&scope), sizeof(scope)) == 0 ? 0 : -1;
+}
+
+bool WindowsRouter::bypassChanged() {
+    std::lock_guard<std::recursive_mutex> lock(m_mtx);
+    const unsigned idx = physicalDefaultIfindex();
+    if (idx == 0 || idx == m_bypassIfindex) {
+        return false;
+    }
+    m_bypassIfindex = idx;
+    return true;
 }
 
 }

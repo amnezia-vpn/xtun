@@ -27,6 +27,30 @@ void libxtun::Proxy::cancelIo() {
     }
 }
 
+void libxtun::Proxy::emitLog(const char *message) noexcept {
+    if (m_callbacks.on_log != nullptr) {
+        m_callbacks.on_log(message, m_callbacks.on_log_priv);
+    }
+}
+
+void libxtun::Proxy::registerBypassSocket(int fd, int family) {
+    if (m_tunnel != nullptr) {
+        m_tunnel->registerBypassSocket(fd, family);
+    }
+    if (m_callbacks.on_socket != nullptr) {
+        m_callbacks.on_socket(fd, m_callbacks.on_socket_priv);
+    }
+}
+
+void libxtun::Proxy::bypassSocket(int fd, int family) {
+    if (m_tunnel != nullptr) {
+        m_tunnel->bypassSocket(fd, family);
+    }
+    if (m_callbacks.on_socket != nullptr) {
+        m_callbacks.on_socket(fd, m_callbacks.on_socket_priv);
+    }
+}
+
 int libxtun_proxy_new(struct libxtun_proxy *proxy, enum libxtun_proxy_proto proto, const char *conf) {
     if (proxy == nullptr || conf == nullptr) {
         return LIBXTUN_ERR_INVALID_ARGS;
@@ -39,8 +63,10 @@ int libxtun_proxy_new(struct libxtun_proxy *proxy, enum libxtun_proxy_proto prot
         return res.error();
 
     auto obj = std::move(res.value());
-    obj->bind(proxy);
-    
+    obj->bind(ClientCallbacks{proxy->onsockspawn, proxy->onsockspawn_priv,
+                              proxy->loghandler, proxy->loghandler_priv});
+
+
     proxy->handle = obj.release();
     return LIBXTUN_OK;
 }

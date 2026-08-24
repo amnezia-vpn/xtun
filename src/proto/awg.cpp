@@ -37,13 +37,6 @@ int tunMtu(void *priv) {
     return io->mtu();
 }
 
-void forwardLog(char *str, void *priv) {
-    auto *cproxy = static_cast<struct libxtun_proxy *>(priv);
-    if (cproxy != nullptr && cproxy->loghandler != nullptr) {
-        cproxy->loghandler(str, cproxy->loghandler_priv);
-    }
-}
-
 }
 
 namespace libxtun {
@@ -73,15 +66,15 @@ int Awg::start(const ProxyIo &io) {
 
     m_io = io;
 
-    m_ctx = goxtun_awg_new(tunRead, tunWrite, tunMtu, &m_io, forwardLog, forwardLog, m_cproxy,
-                           &Awg::sockCb, this);
+    m_ctx = goxtun_awg_new(tunRead, tunWrite, tunMtu, &m_io, &Awg::forwardLog, &Awg::forwardLog,
+                           this, &Awg::sockCb, this);
     if (m_ctx == nullptr) {
         return LIBXTUN_ERR_SYSTEM;
     }
 
     auto uapi = m_conf.toUapi();
     if (char *err = goxtun_awg_setconf(m_ctx, &uapi[0]); err != nullptr) {
-        forwardLog(err, m_cproxy);
+        emitLog(err);
         goxtun_free(err);
         return LIBXTUN_ERR_INVALID_ARGS;
     }
@@ -117,9 +110,12 @@ void Awg::stop() {
     m_ctx = nullptr;
 }
 
+void Awg::forwardLog(char *str, void *priv) {
+    static_cast<Awg *>(priv)->emitLog(str);
+}
+
 void Awg::sockCb(int fd, void *priv) {
     auto *self = static_cast<Awg *>(priv);
-    std::lock_guard<std::mutex> lock(self->m_sockMtx);
 
     sockaddr_storage ss{};
 #if defined(_WIN32)
@@ -134,59 +130,23 @@ void Awg::sockCb(int fd, void *priv) {
     }
 #endif
 
-    if (ss.ss_family == AF_INET6) {
-        self->m_sock6 = fd;
-    } else {
-        self->m_sock4 = fd;
-    }
-    self->applyBypass(fd, ss.ss_family);
+    self->registerBypassSocket(fd, ss.ss_family);
 }
 
-void Awg::applyBypass(int fd, int family) {
-    if (m_bypassToken == 0) {
-        return;
-    }
-#if defined(__linux__)
-    (void)family;
-    unsigned mark = m_bypassToken;
-    ::setsockopt(fd, SOL_SOCKET, SO_MARK, &mark, sizeof(mark));
-#elif defined(__APPLE__)
-    unsigned idx = m_bypassToken;
-    if (family == AF_INET6) {
-        ::setsockopt(fd, IPPROTO_IPV6, IPV6_BOUND_IF, &idx, sizeof(idx));
-    } else {
-        ::setsockopt(fd, IPPROTO_IP, IP_BOUND_IF, &idx, sizeof(idx));
-    }
-#elif defined(_WIN32)
-    SOCKET s = static_cast<SOCKET>(fd);
-    if (family == AF_INET6) {
-        DWORD idx = m_bypassToken;
-        ::setsockopt(s, IPPROTO_IPV6, IPV6_UNICAST_IF, reinterpret_cast<const char *>(&idx),
-                     sizeof(idx));
-    } else {
-        DWORD idx = ::htonl(m_bypassToken);
-        ::setsockopt(s, IPPROTO_IP, IP_UNICAST_IF, reinterpret_cast<const char *>(&idx),
-                     sizeof(idx));
-    }
-#endif
-}
+ProxyProfile Awg::profile() const {
+    const awg::Config::Interface &iface = m_conf.iface();
 
-void Awg::reapplyBypass() {
-    std::lock_guard<std::mutex> lock(m_sockMtx);
-    if (m_sock4 >= 0) {
-        applyBypass(m_sock4, AF_INET);
-    }
-    if (m_sock6 >= 0) {
-        applyBypass(m_sock6, AF_INET6);
-    }
-}
-
-std::vector<std::string> Awg::routes() {
-    std::vector<std::string> out;
-    for (const auto &peer : m_conf.iface().peers) {
+    ProxyProfile out;
+    for (const auto &peer : iface.peers) {
         for (const auto &ip : peer.allowed_ips) {
-            out.push_back(ip.toUapi());
+            out.routes.push_back(ip.toUapi());
         }
+    }
+    for (const auto &server : iface.dns) {
+        out.dns_servers.push_back(server.toUapi());
+    }
+    if (iface.address.has_value()) {
+        out.addresses.push_back(iface.address->toUapi());
     }
     return out;
 }

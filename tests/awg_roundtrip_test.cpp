@@ -13,6 +13,12 @@
 #include <string>
 #include <vector>
 
+#if defined(_WIN32)
+#include <winsock2.h>
+#else
+#include <sys/socket.h>
+#endif
+
 namespace {
 
 constexpr bool kVerbose = false;
@@ -47,6 +53,40 @@ void logB(const char *str, void *) {
         std::fprintf(stderr, "[B] %s\n", str);
     }
 }
+
+bool liveSocket(int fd) {
+    sockaddr_storage ss{};
+#if defined(_WIN32)
+    int len = sizeof(ss);
+    return ::getsockname(static_cast<SOCKET>(fd), reinterpret_cast<sockaddr *>(&ss), &len) == 0;
+#else
+    socklen_t len = sizeof(ss);
+    return ::getsockname(fd, reinterpret_cast<sockaddr *>(&ss), &len) == 0;
+#endif
+}
+
+class SocketRecorder {
+  public:
+    struct Offer {
+        int fd = -1;
+        bool live = false;
+    };
+
+    static void handler(int fd, void *priv) {
+        auto *self = static_cast<SocketRecorder *>(priv);
+        std::lock_guard<std::mutex> lock(self->m_mutex);
+        self->m_offers.push_back({fd, liveSocket(fd)});
+    }
+
+    std::vector<Offer> offers() const {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_offers;
+    }
+
+  private:
+    mutable std::mutex m_mutex;
+    std::vector<Offer> m_offers;
+};
 
 class MemTun {
   public:
@@ -166,10 +206,10 @@ std::vector<unsigned char> ipv4Packet(const char *payload) {
 }  // namespace
 
 TEST(AwgRoundtrip, DeliversDataBetweenTwoInstances) {
-    libxtun_proxy cproxyA{};
-    libxtun_proxy cproxyB{};
-    cproxyA.loghandler = logA;
-    cproxyB.loghandler = logB;
+    libxtun::ClientCallbacks callbacksA{};
+    libxtun::ClientCallbacks callbacksB{};
+    callbacksA.on_log = logA;
+    callbacksB.on_log = logB;
 
     MemTun tunA;
     MemTun tunB;
@@ -177,8 +217,8 @@ TEST(AwgRoundtrip, DeliversDataBetweenTwoInstances) {
     libxtun::proto::Awg a(confA());
     libxtun::proto::Awg b(confB());
 
-    a.bind(&cproxyA);
-    b.bind(&cproxyB);
+    a.bind(callbacksA);
+    b.bind(callbacksB);
 
     a.setInterface("xtuna");
     b.setInterface("xtunb");
@@ -208,11 +248,15 @@ TEST(AwgRoundtrip, DeliversDataBetweenTwoInstances) {
     EXPECT_EQ(got, sent);
 }
 
-TEST(AwgRoundtrip, ReapplyBypassPreservesLiveSession) {
-    libxtun_proxy cproxyA{};
-    libxtun_proxy cproxyB{};
-    cproxyA.loghandler = logA;
-    cproxyB.loghandler = logB;
+TEST(AwgRoundtrip, OffersSpawnedSocketsForProtection) {
+    SocketRecorder recorder;
+
+    libxtun::ClientCallbacks callbacksA{};
+    libxtun::ClientCallbacks callbacksB{};
+    callbacksA.on_log = logA;
+    callbacksB.on_log = logB;
+    callbacksA.on_socket = &SocketRecorder::handler;
+    callbacksA.on_socket_priv = &recorder;
 
     MemTun tunA;
     MemTun tunB;
@@ -220,8 +264,8 @@ TEST(AwgRoundtrip, ReapplyBypassPreservesLiveSession) {
     libxtun::proto::Awg a(confA());
     libxtun::proto::Awg b(confB());
 
-    a.bind(&cproxyA);
-    b.bind(&cproxyB);
+    a.bind(callbacksA);
+    b.bind(callbacksB);
 
     a.setInterface("xtuna");
     b.setInterface("xtunb");
@@ -232,35 +276,29 @@ TEST(AwgRoundtrip, ReapplyBypassPreservesLiveSession) {
     a.event(libxtun::ProxyEvent::Up);
     b.event(libxtun::ProxyEvent::Up);
 
-    std::vector<unsigned char> first = ipv4Packet("before-remark");
+    std::vector<unsigned char> sent = ipv4Packet("xtun-sockspawn");
     std::vector<unsigned char> got;
     bool delivered = false;
 
     auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
     while (!delivered && std::chrono::steady_clock::now() < deadline) {
-        tunA.inject(first);
+        tunA.inject(sent);
         delivered = tunB.awaitDelivery(got, std::chrono::milliseconds(250));
     }
-    ASSERT_TRUE(delivered) << "handshake never completed before the re-mark";
 
-    a.reapplyBypass();
-    b.reapplyBypass();
-
-    std::vector<unsigned char> second = ipv4Packet("after-remark");
-    bool redelivered = false;
-    deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
-    while (!redelivered && std::chrono::steady_clock::now() < deadline) {
-        tunA.inject(second);
-        redelivered = tunB.awaitDelivery(got, std::chrono::milliseconds(250));
-    }
+    const std::vector<SocketRecorder::Offer> offered = recorder.offers();
 
     tunA.cancel();
     tunB.cancel();
     a.stop();
     b.stop();
 
-    ASSERT_TRUE(redelivered) << "re-mark tore down the live session";
-    EXPECT_EQ(got, second);
+    ASSERT_TRUE(delivered) << "no packet arrived at peer B within the timeout";
+    ASSERT_FALSE(offered.empty()) << "onsockspawn never fired for the proxy's own sockets";
+    for (const SocketRecorder::Offer &offer : offered) {
+        EXPECT_TRUE(offer.live)
+            << "descriptor " << offer.fd << " was not a live socket when it was offered";
+    }
 }
 
 TEST(AwgRoundtrip, StopUnblocksParkedReader) {
