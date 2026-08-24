@@ -1,6 +1,5 @@
 #include "router.h"
 
-#include <cstdint>
 #include <mutex>
 
 #ifndef ROUTER_WINDOWS_H
@@ -16,7 +15,8 @@ class WindowsRouter : public Router {
     int setProxyRoutes(const std::vector<std::string> &routes) override;
     void clearProxyRoutes() override;
     void revert() override;
-    uint32_t bypassToken() override;
+    int bypassSocket(int fd, int family) override;
+    bool bypassChanged() override;
 
   private:
     int addAddress(const std::string &cidr);
@@ -29,6 +29,7 @@ class WindowsRouter : public Router {
     unsigned long m_ifindex = 0;  // NET_IFINDEX
     std::vector<std::string> m_addresses;
     std::vector<std::string> m_routes;
+    unsigned m_bypassIfindex = 0;
 };
 
 

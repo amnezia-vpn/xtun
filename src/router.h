@@ -1,4 +1,3 @@
-#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -21,10 +20,8 @@ class Router {
 
     virtual void revert() = 0;
 
-    // The value a proxy applies to its own socket so its traffic bypasses the
-    // tun: an fwmark on Linux, the physical interface index (IP_BOUND_IF) on
-    // macOS. The tunnel hands it to the proxy at attach.
-    virtual uint32_t bypassToken() = 0;
+    virtual int bypassSocket(int fd, int family) = 0;
+    virtual bool bypassChanged() = 0;
 
     static std::unique_ptr<Router> create();
 };

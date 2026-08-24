@@ -87,8 +87,8 @@ struct FixedRoutesProxy : libxtun::Proxy {
     int start(const libxtun::ProxyIo &) override { return LIBXTUN_OK; }
     void event(libxtun::ProxyEvent) override {}
     void stop() override {}
-    std::vector<std::string> routes() override { return r; }
-    uint32_t token() const { return m_bypassToken; }
+    libxtun::ProxyProfile profile() const override { return {r, {}, {}}; }
+    void bypass(int fd, int family) { bypassSocket(fd, family); }
 };
 
 libxtun_tunnel_opts routingOpts() {
@@ -278,6 +278,15 @@ TEST(Routing, FullTunnelMarksBypassPhysical) {
     // Unmarked traffic is captured by the tunnel; the proxy's marked traffic bypasses it.
     EXPECT_EQ(routeGetDev("8.8.8.8", 0), name);
     EXPECT_EQ(routeGetDev("8.8.8.8", 0x7874), "dummy0");
+
+    int s = ::socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    ASSERT_GE(s, 0);
+    proxy.bypass(s, AF_INET);
+    unsigned mark = 0;
+    socklen_t len = sizeof(mark);
+    EXPECT_EQ(::getsockopt(s, SOL_SOCKET, SO_MARK, &mark, &len), 0);
+    ::close(s);
+    EXPECT_EQ(mark, 0x7874u) << "the router did not mark the socket handed to it";
 }
 
 TEST(Routing, SwapProxyReplacesRoutes) {
@@ -343,28 +352,6 @@ TEST(Routing, AppliesAddressMtuUpAndSplitRoute) {
     EXPECT_EQ(routeGetIface("203.0.113.1"), name);
 }
 
-TEST(Routing, BypassTokenIsPhysicalDefault) {
-    if (!privileged()) {
-        GTEST_SKIP() << "skipped: configuring a utun requires root";
-    }
-
-    const std::string physical = routeGetIface("default");
-    if (physical.empty() || physical == "lo0") {
-        GTEST_SKIP() << "no physical default route to compare against";
-    }
-
-    libxtun_tunnel_opts opts = routingOpts();
-    libxtun::Tunnel tunnel(opts);
-    ASSERT_EQ(tunnel.openTun(), LIBXTUN_OK);
-
-    FixedRoutesProxy proxy;
-    proxy.r = {"203.0.113.0/24"};
-    // attach (no start) hands the proxy the bypass token: the physical ifindex.
-    ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
-
-    EXPECT_EQ(proxy.token(), ::if_nametoindex(physical.c_str()));
-}
-
 TEST(Routing, FullTunnelCatchAllAndBoundSocketBypass) {
     if (!privileged()) {
         GTEST_SKIP() << "skipped: configuring a utun requires root";
@@ -374,7 +361,6 @@ TEST(Routing, FullTunnelCatchAllAndBoundSocketBypass) {
     if (physical.empty() || physical == "lo0") {
         GTEST_SKIP() << "no physical uplink to bypass to";
     }
-    unsigned physIdx = ::if_nametoindex(physical.c_str());
     const std::string physIp = ifAddr(physical);
     ASSERT_FALSE(physIp.empty());
 
@@ -392,7 +378,7 @@ TEST(Routing, FullTunnelCatchAllAndBoundSocketBypass) {
 
     int s = ::socket(AF_INET, SOCK_DGRAM, 0);
     ASSERT_GE(s, 0);
-    ASSERT_EQ(::setsockopt(s, IPPROTO_IP, IP_BOUND_IF, &physIdx, sizeof(physIdx)), 0);
+    proxy.bypass(s, AF_INET);
     sockaddr_in dst{};
     dst.sin_family = AF_INET;
     dst.sin_port = htons(53);

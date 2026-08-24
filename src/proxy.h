@@ -1,6 +1,5 @@
 #include <xtun.h>
 
-#include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
@@ -21,6 +20,19 @@ struct ProxyIo {
     std::function<int()> mtu;
 };
 
+struct ProxyProfile {
+    std::vector<std::string> routes;
+    std::vector<std::string> dns_servers;
+    std::vector<std::string> addresses;
+};
+
+struct ClientCallbacks {
+    void (*on_socket)(int fd, void *priv) = nullptr;
+    void *on_socket_priv = nullptr;
+    void (*on_log)(const char *message, void *priv) = nullptr;
+    void *on_log_priv = nullptr;
+};
+
 class Proxy {
   public:
     virtual ~Proxy() = 0;
@@ -31,24 +43,23 @@ class Proxy {
     virtual void event(ProxyEvent ev) = 0;
     virtual void stop() = 0;
 
-    virtual std::vector<std::string> routes() = 0;
+    virtual ProxyProfile profile() const = 0;
 
-    virtual void reapplyBypass() {}
-
-    void bind(struct libxtun_proxy *cproxy) { m_cproxy = cproxy; }
+    void bind(const ClientCallbacks &callbacks) { m_callbacks = callbacks; }
     void setInterface(const std::string &ifname) { m_ifname = ifname; }
-    void setBypassToken(uint32_t token) { m_bypassToken = token; }
 
   protected:
     void cancelIo();
+    void emitLog(const char *message) noexcept;
+    void registerBypassSocket(int fd, int family);
+    void bypassSocket(int fd, int family);
 
-    struct libxtun_proxy *m_cproxy = nullptr;
     std::string m_ifname;
-    uint32_t m_bypassToken = 0;
 
   private:
     friend class Tunnel;
 
+    ClientCallbacks m_callbacks;
     Tunnel *m_tunnel = nullptr;
 };
 

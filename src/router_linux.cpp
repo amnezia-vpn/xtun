@@ -471,8 +471,17 @@ void LinuxRouter::revert() {
     m_addresses.clear();
 }
 
-uint32_t LinuxRouter::bypassToken() {
-    return kProxyFwmark;
+int LinuxRouter::bypassSocket(int fd, int family) {
+    (void)family;
+    unsigned mark = kProxyFwmark;
+    if (::setsockopt(fd, SOL_SOCKET, SO_MARK, &mark, sizeof(mark)) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+bool LinuxRouter::bypassChanged() {
+    return false;
 }
 
 }

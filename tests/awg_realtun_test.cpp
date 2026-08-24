@@ -260,26 +260,9 @@ class SpyProxy : public libxtun::Proxy {
     int start(const libxtun::ProxyIo &) override { return LIBXTUN_OK; }
     void event(libxtun::ProxyEvent) override {}
     void stop() override {}
-    std::vector<std::string> routes() override { return {}; }
+    libxtun::ProxyProfile profile() const override { return {}; }
 
-    void reapplyBypass() override {
-        std::lock_guard<std::mutex> lock(m_mtx);
-        m_token = m_bypassToken;
-        m_seen = true;
-        m_cond.notify_all();
-    }
-
-    uint32_t waitForToken(uint32_t want, std::chrono::milliseconds timeout) {
-        std::unique_lock<std::mutex> lock(m_mtx);
-        m_cond.wait_for(lock, timeout, [&] { return m_seen && m_token == want; });
-        return m_token;
-    }
-
-  private:
-    std::mutex m_mtx;
-    std::condition_variable m_cond;
-    uint32_t m_token = 0;
-    bool m_seen = false;
+    void registerBypass(int fd, int family) { registerBypassSocket(fd, family); }
 };
 
 #if defined(__linux__)
@@ -483,6 +466,25 @@ int macDefaultIfindex() {
     return 0;
 }
 
+unsigned boundIfindex(int fd) {
+    unsigned idx = 0;
+    socklen_t len = sizeof(idx);
+    if (::getsockopt(fd, IPPROTO_IP, IP_BOUND_IF, &idx, &len) != 0) {
+        return 0;
+    }
+    return idx;
+}
+
+unsigned waitForBinding(int fd, unsigned want, std::chrono::milliseconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    unsigned seen = boundIfindex(fd);
+    while (seen != want && std::chrono::steady_clock::now() < deadline) {
+        ::usleep(50 * 1000);
+        seen = boundIfindex(fd);
+    }
+    return seen;
+}
+
 struct RoamSim {
     std::string feth;
     std::string origGw;
@@ -534,9 +536,7 @@ TEST(AwgRealTun, FullTunnelDeliversThroughKernelTun) {
 
     // Peer B: a second AWG instance behind an in-memory tun.
     MemTun tunB;
-    libxtun_proxy cproxyB{};
     libxtun::proto::Awg b(confB());
-    b.bind(&cproxyB);
     b.setInterface("xtunrtb");
     ASSERT_EQ(b.start(tunB.io()), LIBXTUN_OK);
 
@@ -545,9 +545,7 @@ TEST(AwgRealTun, FullTunnelDeliversThroughKernelTun) {
     libxtun::Tunnel tunnel(opts);
     ASSERT_EQ(tunnel.openTun(), LIBXTUN_OK);
 
-    libxtun_proxy cproxyA{};
     libxtun::proto::Awg a(confA());
-    a.bind(&cproxyA);
     ASSERT_EQ(tunnel.attachProxy(&a), LIBXTUN_OK);
     ASSERT_EQ(tunnel.start(), LIBXTUN_OK);
 
@@ -616,9 +614,7 @@ TEST(AwgRealTun, MarkedHandshakeBypassesTunnel) {
     ASSERT_EQ(tunnel.openTun(), LIBXTUN_OK);
     unsigned tunidx = ::if_nametoindex(tunnel.name().c_str());
 
-    libxtun_proxy cproxyA{};
     libxtun::proto::Awg a(confRemote());
-    a.bind(&cproxyA);
     ASSERT_EQ(tunnel.attachProxy(&a), LIBXTUN_OK);
     ASSERT_EQ(tunnel.start(), LIBXTUN_OK);
     a.event(libxtun::ProxyEvent::Up);
@@ -678,9 +674,7 @@ TEST(AwgRealTun, MarkedHandshakeBypassesTunnel) {
     int cap = openBpf(name, blen);
     ASSERT_GE(cap, 0) << "could not open a BPF device on the utun";
 
-    libxtun_proxy cproxyA{};
     libxtun::proto::Awg a(confSplit());
-    a.bind(&cproxyA);
     ASSERT_EQ(tunnel.attachProxy(&a), LIBXTUN_OK);
     ASSERT_EQ(tunnel.start(), LIBXTUN_OK);
     a.event(libxtun::ProxyEvent::Up);
@@ -730,18 +724,27 @@ TEST(AwgRealTun, RoamRemarkFollowsDefaultRouteChange) {
     ASSERT_EQ(tunnel.openTun(), LIBXTUN_OK);
     ASSERT_EQ(tunnel.attachProxy(&spy), LIBXTUN_OK);
 
+    int sock = ::socket(AF_INET, SOCK_DGRAM, 0);
+    ASSERT_GE(sock, 0);
+    ::fcntl(sock, F_SETFD, FD_CLOEXEC);
+    spy.registerBypass(sock, AF_INET);
+
     int before = macDefaultIfindex();
+    ASSERT_EQ(boundIfindex(sock), static_cast<unsigned>(before))
+        << "registering the socket did not bind it to the current uplink";
 
     RoamSim roam;
     if (!roam.setup()) {
+        ::close(sock);
         GTEST_SKIP() << "could not create feth + point the default route at it on this host";
     }
 
     unsigned fethIdx = ::if_nametoindex(roam.feth.c_str());
     ASSERT_NE(fethIdx, 0u);
 
-    uint32_t seen = spy.waitForToken(fethIdx, std::chrono::seconds(3));
+    unsigned seen = waitForBinding(sock, fethIdx, std::chrono::seconds(3));
     int after = macDefaultIfindex();
+    ::close(sock);
 
     if (static_cast<unsigned>(after) != fethIdx) {
         GTEST_SKIP() << "the feth default did not take (winner=" << after
@@ -749,7 +752,7 @@ TEST(AwgRealTun, RoamRemarkFollowsDefaultRouteChange) {
     }
     EXPECT_NE(before, static_cast<int>(fethIdx));
     EXPECT_EQ(seen, fethIdx)
-        << "the default route moved to feth but onRouteChange did not re-mark to it";
+        << "the default route moved to feth but the registered socket was not rebound";
 }
 
 #elif defined(_WIN32)
@@ -767,6 +770,25 @@ void logB(const char *str, void *) {
     if (kVerbose) {
         std::fprintf(stderr, "[B] %s\n", str);
     }
+}
+
+unsigned boundIfindex(SOCKET s) {
+    DWORD scope = 0;
+    int len = sizeof(scope);
+    if (::getsockopt(s, IPPROTO_IP, IP_UNICAST_IF, reinterpret_cast<char *>(&scope), &len) != 0) {
+        return 0;
+    }
+    return static_cast<unsigned>(scope);
+}
+
+unsigned waitForBinding(SOCKET s, unsigned want, std::chrono::milliseconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    unsigned seen = boundIfindex(s);
+    while (seen != want && std::chrono::steady_clock::now() < deadline) {
+        ::Sleep(50);
+        seen = boundIfindex(s);
+    }
+    return seen;
 }
 
 std::string localPhysicalIp() {
@@ -953,10 +975,10 @@ TEST(AwgRealTun, DeliversThroughWintunAdapter) {
     }
 
     MemTun tunB;
-    libxtun_proxy cproxyB{};
-    cproxyB.loghandler = logB;
+    libxtun::ClientCallbacks callbacksB{};
+    callbacksB.on_log = logB;
     libxtun::proto::Awg b(confB(host));
-    b.bind(&cproxyB);
+    b.bind(callbacksB);
     b.setInterface("xtunrtb");
     ASSERT_EQ(b.start(tunB.io()), LIBXTUN_OK);
 
@@ -964,10 +986,10 @@ TEST(AwgRealTun, DeliversThroughWintunAdapter) {
     libxtun::Tunnel tunnel(opts);
     ASSERT_EQ(tunnel.openTun(), LIBXTUN_OK);
 
-    libxtun_proxy cproxyA{};
-    cproxyA.loghandler = logA;
+    libxtun::ClientCallbacks callbacksA{};
+    callbacksA.on_log = logA;
     libxtun::proto::Awg a(confA("10.9.9.2/32", host));
-    a.bind(&cproxyA);
+    a.bind(callbacksA);
     a.setInterface("xtunrta");
     ASSERT_EQ(tunnel.attachProxy(&a), LIBXTUN_OK);
     ASSERT_EQ(tunnel.start(), LIBXTUN_OK);
@@ -1025,7 +1047,13 @@ TEST(AwgRealTun, RoamRemarkFollowsDefaultRouteChange) {
     ASSERT_EQ(tunnel.openTun(), LIBXTUN_OK);
     ASSERT_EQ(tunnel.attachProxy(&spy), LIBXTUN_OK);
 
+    SOCKET sock = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    ASSERT_NE(sock, INVALID_SOCKET);
+    spy.registerBypass(static_cast<int>(sock), AF_INET);
+
     NET_IFINDEX before = defaultWinner();
+    ASSERT_EQ(boundIfindex(sock), static_cast<unsigned>(before))
+        << "registering the socket did not bind it to the current uplink";
 
     PhysAdapter phys;
     ASSERT_TRUE(phys.create()) << "could not create the simulated physical wintun adapter";
@@ -1033,10 +1061,11 @@ TEST(AwgRealTun, RoamRemarkFollowsDefaultRouteChange) {
     ASSERT_TRUE(phys.setLowMetric());
     ASSERT_TRUE(phys.addDefaultRoute());
 
-    uint32_t seen = spy.waitForToken(phys.ifindex, std::chrono::seconds(3));
+    unsigned seen = waitForBinding(sock, phys.ifindex, std::chrono::seconds(3));
     NET_IFINDEX after = defaultWinner();
     bool wonRace = after == phys.ifindex;
 
+    ::closesocket(sock);
     ::WSACleanup();
 
     if (!wonRace) {
@@ -1046,7 +1075,7 @@ TEST(AwgRealTun, RoamRemarkFollowsDefaultRouteChange) {
     }
     EXPECT_NE(before, phys.ifindex);
     EXPECT_EQ(seen, phys.ifindex)
-        << "the default route moved to the new interface but onRouteChange did not re-mark to it";
+        << "the default route moved to the new interface but the registered socket was not rebound";
 }
 
 #endif

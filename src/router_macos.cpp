@@ -467,14 +467,37 @@ bool MacosRouter::getGatewayAndIface(int family, int &ifindex, unsigned char *gw
     return false;
 }
 
-uint32_t MacosRouter::bypassToken() {
-    std::lock_guard<std::recursive_mutex> lock(m_mtx);
+unsigned MacosRouter::physicalIfindex() {
     int idx = 0;
     unsigned char gw[16] = {0};
-    if (!getGatewayAndIface(AF_INET, idx, gw)) {
+    if (!getGatewayAndIface(AF_INET, idx, gw) || idx <= 0) {
         return 0;
     }
-    return static_cast<uint32_t>(idx);
+    return static_cast<unsigned>(idx);
+}
+
+int MacosRouter::bypassSocket(int fd, int family) {
+    std::lock_guard<std::recursive_mutex> lock(m_mtx);
+    unsigned idx = physicalIfindex();
+    if (idx == 0) {
+        return -1;
+    }
+    m_bypassIfindex = idx;
+
+    if (family == AF_INET6) {
+        return ::setsockopt(fd, IPPROTO_IPV6, IPV6_BOUND_IF, &idx, sizeof(idx)) == 0 ? 0 : -1;
+    }
+    return ::setsockopt(fd, IPPROTO_IP, IP_BOUND_IF, &idx, sizeof(idx)) == 0 ? 0 : -1;
+}
+
+bool MacosRouter::bypassChanged() {
+    std::lock_guard<std::recursive_mutex> lock(m_mtx);
+    const unsigned idx = physicalIfindex();
+    if (idx == 0 || idx == m_bypassIfindex) {
+        return false;
+    }
+    m_bypassIfindex = idx;
+    return true;
 }
 
 }
