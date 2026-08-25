@@ -32,6 +32,8 @@ struct HealthSettings {
     int fail_streak = kFailStreak;
     int no_network_backoff = kNoNetworkBackoff;
     int jitter_percent = kJitterPercent;
+
+    [[nodiscard]] static HealthSettings fromSeconds(int seconds) noexcept;
 };
 
 struct HealthSnapshot {

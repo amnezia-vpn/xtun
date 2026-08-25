@@ -1,6 +1,9 @@
 #include "tunnel.h"
 
+#include "health/subsystem.h"
+
 #include <cstring>
+#include <utility>
 
 #if defined(__linux__) || defined(__APPLE__)
 #include <cerrno>
@@ -75,6 +78,7 @@ Tunnel::Tunnel(const libxtun_tunnel_opts &opts)
       m_ifAddrs(parseStrList(opts.if_addrs)),
       m_confMtu(opts.mtu),
       m_router(Router::create()),
+      m_health_settings(health::HealthSettings::fromSeconds(opts.health_seconds)),
       m_tunFd(-1),
       m_ifIndex(-1),
       m_monitorFd(-1),
@@ -87,11 +91,7 @@ Tunnel::Tunnel(const libxtun_tunnel_opts &opts)
 Tunnel::~Tunnel() {
     stopMonitor();
     cancelRead();
-    if (m_proxy != nullptr) {
-        m_proxy->stop();
-        m_proxy->m_tunnel = nullptr;
-        m_proxy = nullptr;
-    }
+    shutdownProxy(nullptr);
     if (m_router != nullptr) {
         m_router->revert();
     }
@@ -646,22 +646,11 @@ int Tunnel::mtu() const {
 }
 
 int Tunnel::attachProxy(Proxy *proxy) {
-    if (proxy == nullptr || proxy->m_tunnel != nullptr) {
+    if (proxy == nullptr || proxy->m_tunnel.load(std::memory_order_acquire) != nullptr) {
         return LIBXTUN_ERR_INVALID_ARGS;
     }
 
-    {
-        std::lock_guard<std::mutex> lock(m_proxyMtx);
-        if (m_proxy != nullptr) {
-            m_proxy->stop();
-            if (m_router != nullptr) {
-                m_router->clearProxyRoutes();
-            }
-            m_proxy->m_tunnel = nullptr;
-            m_proxy = nullptr;
-        }
-    }
-    m_bypass_sockets.clear();
+    shutdownProxy(nullptr);
 
     m_read_cancelled.store(false, std::memory_order_release);
     m_inject_pending.store(false, std::memory_order_release);
@@ -675,12 +664,12 @@ int Tunnel::attachProxy(Proxy *proxy) {
     m_closing.store(false);
 #endif
 
+    const ProxyProfile profile = proxy->profile();
     proxy->setInterface(m_name);
-    proxy->m_tunnel = this;
+    TunnelIo &io = proxy->attach(*this, healthConfigFor(profile), m_device_io);
 
-    int rc = proxy->start(m_device_io);
-    if (rc != LIBXTUN_OK) {
-        proxy->m_tunnel = nullptr;
+    if (const int rc = proxy->start(io); rc != LIBXTUN_OK) {
+        proxy->detach();
         return rc;
     }
 
@@ -689,16 +678,12 @@ int Tunnel::attachProxy(Proxy *proxy) {
         m_proxy = proxy;
     }
 
-    if (m_started && m_router != nullptr) {
-        if (m_router->setProxyRoutes(proxy->profile().routes) != 0) {
-            m_router->clearProxyRoutes();
-            proxy->stop();
-            std::lock_guard<std::mutex> lock(m_proxyMtx);
-            proxy->m_tunnel = nullptr;
-            m_proxy = nullptr;
-            return LIBXTUN_ERR_SYSTEM;
-        }
+    if (m_started && m_router != nullptr && m_router->setProxyRoutes(profile.routes) != 0) {
+        shutdownProxy(proxy);
+        return LIBXTUN_ERR_SYSTEM;
     }
+
+    proxy->health()->start();
     return LIBXTUN_OK;
 }
 
@@ -714,15 +699,42 @@ int Tunnel::start() {
     return LIBXTUN_OK;
 }
 
-void Tunnel::detachProxy(Proxy *proxy) {
-    std::lock_guard<std::mutex> lock(m_proxyMtx);
-    if (m_proxy == proxy) {
-        if (m_router != nullptr) {
-            m_router->clearProxyRoutes();
-        }
-        m_proxy = nullptr;
-        m_bypass_sockets.clear();
+void Tunnel::shutdownProxy(Proxy *expected) noexcept {
+    Proxy *taken = takeProxy(expected);
+    if (taken == nullptr) {
+        return;
     }
+    if (m_router != nullptr) {
+        m_router->clearProxyRoutes();
+    }
+    taken->stop();
+    taken->detach();
+}
+
+void Tunnel::detachProxy(Proxy *proxy) noexcept {
+    if (takeProxy(proxy) != nullptr && m_router != nullptr) {
+        m_router->clearProxyRoutes();
+    }
+}
+
+Proxy *Tunnel::takeProxy(Proxy *expected) noexcept {
+    std::lock_guard<std::mutex> lock(m_proxyMtx);
+    if (m_proxy == nullptr || (expected != nullptr && m_proxy != expected)) {
+        return nullptr;
+    }
+    m_bypass_sockets.clear();
+    return std::exchange(m_proxy, nullptr);
+}
+
+health::HealthConfig Tunnel::healthConfigFor(const ProxyProfile &profile) {
+    health::HealthConfig config;
+    config.dns_servers = m_dns.empty() ? profile.dns_servers : m_dns;
+    config.tunnel_addresses = m_ifAddrs.empty() ? profile.addresses : m_ifAddrs;
+    config.tunnel_routes = profile.routes;
+    config.probe_style = profile.probe_style;
+    config.settings = m_health_settings;
+    config.wake_read = [this] { wakeRead(); };
+    return config;
 }
 
 void Tunnel::BypassSocketRegistry::add(Router &router, int fd, int family) {
@@ -994,6 +1006,11 @@ void Tunnel::monitorLoop() {
 void Tunnel::onRouteChange() {
     if (m_router != nullptr && m_router->bypassChanged()) {
         m_bypass_sockets.rebind(*m_router);
+    }
+
+    std::lock_guard<std::mutex> lock(m_proxyMtx);
+    if (m_proxy != nullptr) {
+        m_proxy->health()->onNetworkChanged();
     }
 }
 #endif

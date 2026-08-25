@@ -2,6 +2,7 @@
 
 #include "health/datagram_probe.h"
 
+#include <memory>
 #include <utility>
 
 namespace libxtun::health {
@@ -59,10 +60,6 @@ void HealthSubsystem::halt() noexcept {
 void HealthSubsystem::onNetworkChanged() noexcept {
     m_monitor.requestReset();
     m_scheduler.wake();
-}
-
-HealthSnapshot HealthSubsystem::snapshot() const {
-    return m_monitor.snapshot();
 }
 
 }

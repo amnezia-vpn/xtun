@@ -35,6 +35,13 @@ enum libxtun_proxy_proto {
     LIBXTUN_PROXY_PROTO_LAST = LIBXTUN_PROXY_PROTO_VLESS,
 };
 
+enum libxtun_status {
+    LIBXTUN_STATUS_DISCONNECTED = 1,
+    LIBXTUN_STATUS_CONNECTED = 2,
+    /* The host itself is offline; the tunnel is not at fault. */
+    LIBXTUN_STATUS_NO_NETWORK = 3,
+};
+
 struct libxtun_proxy {
     void *handle;
 
@@ -43,6 +50,9 @@ struct libxtun_proxy {
 
     void (*loghandler)(const char *str, void *priv);
     void *loghandler_priv;
+
+    void (*statushandler)(int status, void *priv);
+    void *statushandler_priv;
 };
 
 int libxtun_proxy_new(struct libxtun_proxy *proxy, enum libxtun_proxy_proto proto, const char *conf);
@@ -66,6 +76,7 @@ struct libxtun_tunnel_opts {
     enum libxtun_killswitch_mode killswitch_mode;
     const char *const *if_addrs;
     int mtu;
+    int health_seconds;
 };
 
 int libxtun_tunnel_new(struct libxtun_tunnel *tun, struct libxtun_tunnel_opts *opts);

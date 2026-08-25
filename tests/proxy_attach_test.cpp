@@ -35,6 +35,7 @@ struct RecordingProxy : libxtun::Proxy {
     libxtun::ProxyProfile profile() const override { return {proxyRoutes, {}, {}}; }
 
     void log(const char *message) { emitLog(message); }
+    void status(int value) { emitStatus(value); }
 };
 
 struct LogSpy {
@@ -54,6 +55,24 @@ struct LogSpy {
 
 std::vector<std::string> LogSpy::lines;
 void *LogSpy::priv = nullptr;
+
+struct StatusSpy {
+    static std::vector<int> values;
+    static void *priv;
+
+    static void handler(int status, void *p) {
+        values.push_back(status);
+        priv = p;
+    }
+
+    static void reset() {
+        values.clear();
+        priv = nullptr;
+    }
+};
+
+std::vector<int> StatusSpy::values;
+void *StatusSpy::priv = nullptr;
 
 constexpr const char *kAwgConf =
     "[Interface]\n"
@@ -196,6 +215,39 @@ TEST(AttachProxyC, AttachesThroughHandles) {
     EXPECT_EQ(obj.startCalls, 1);
 }
 
+TEST(ProxyAttach, EachProxyGetsItsOwnMeteredIo) {
+    RecordingProxy first;
+    RecordingProxy second;
+    libxtun_tunnel_opts opts = default_opts();
+    libxtun::Tunnel one(opts);
+    libxtun::Tunnel two(opts);
+
+    ASSERT_EQ(one.attachProxy(&first), LIBXTUN_OK);
+    ASSERT_EQ(two.attachProxy(&second), LIBXTUN_OK);
+
+    ASSERT_NE(first.io, nullptr);
+    ASSERT_NE(second.io, nullptr);
+    EXPECT_NE(first.io, second.io) << "the two proxies share one monitored io";
+}
+
+TEST(ProxyAttach, DetachedProxyCanBeAttachedAgain) {
+    RecordingProxy proxy;
+    libxtun_tunnel_opts opts = default_opts();
+    libxtun::Tunnel next(opts);
+
+    {
+        libxtun::Tunnel gone(opts);
+        ASSERT_EQ(gone.attachProxy(&proxy), LIBXTUN_OK);
+    }
+
+    ASSERT_EQ(proxy.stopCalls, 1) << "the tunnel went away without closing the attachment";
+    ASSERT_EQ(next.attachProxy(&proxy), LIBXTUN_OK) << "the detached proxy still looks attached";
+
+    EXPECT_EQ(proxy.startCalls, 2);
+    EXPECT_NE(proxy.io, nullptr);
+    EXPECT_EQ(proxy.io->mtu(), next.currentMtu());
+}
+
 TEST(ProxyNew, RejectsBadArgs) {
     libxtun_proxy proxy{};
 
@@ -217,8 +269,10 @@ TEST(ProxyCallbacks, LogReachesTheClientPriv) {
     cproxy.loghandler_priv = &cookie;
 
     RecordingProxy proxy;
-    proxy.bind(libxtun::ClientCallbacks{cproxy.onsockspawn, cproxy.onsockspawn_priv,
-                                        cproxy.loghandler, cproxy.loghandler_priv});
+    proxy.bind(libxtun::ClientCallbacks{.on_socket = cproxy.onsockspawn,
+                                        .on_socket_priv = cproxy.onsockspawn_priv,
+                                        .on_log = cproxy.loghandler,
+                                        .on_log_priv = cproxy.loghandler_priv});
     proxy.log("hello");
 
     ASSERT_EQ(LogSpy::lines.size(), 1u);
@@ -236,14 +290,50 @@ TEST(ProxyCallbacks, LogSurvivesTheCallerStructBeingOverwritten) {
     cproxy.loghandler_priv = &cookie;
 
     RecordingProxy proxy;
-    proxy.bind(libxtun::ClientCallbacks{cproxy.onsockspawn, cproxy.onsockspawn_priv,
-                                        cproxy.loghandler, cproxy.loghandler_priv});
+    proxy.bind(libxtun::ClientCallbacks{.on_socket = cproxy.onsockspawn,
+                                        .on_socket_priv = cproxy.onsockspawn_priv,
+                                        .on_log = cproxy.loghandler,
+                                        .on_log_priv = cproxy.loghandler_priv});
     std::memset(&cproxy, 0, sizeof(cproxy));
     proxy.log("after");
 
     ASSERT_EQ(LogSpy::lines.size(), 1u);
     EXPECT_EQ(LogSpy::lines[0], "after");
     EXPECT_EQ(LogSpy::priv, static_cast<void *>(&cookie));
+}
+
+TEST(ProxyCallbacks, StatusReachesTheClientPriv) {
+    StatusSpy::reset();
+
+    int cookie = 0;
+    libxtun_proxy cproxy{};
+    cproxy.statushandler = &StatusSpy::handler;
+    cproxy.statushandler_priv = &cookie;
+
+    RecordingProxy proxy;
+    proxy.bind(libxtun::ClientCallbacks{.on_socket = cproxy.onsockspawn,
+                                        .on_socket_priv = cproxy.onsockspawn_priv,
+                                        .on_log = cproxy.loghandler,
+                                        .on_log_priv = cproxy.loghandler_priv,
+                                        .on_status = cproxy.statushandler,
+                                        .on_status_priv = cproxy.statushandler_priv});
+    proxy.status(LIBXTUN_STATUS_CONNECTED);
+
+    ASSERT_EQ(StatusSpy::values.size(), 1u);
+    EXPECT_EQ(StatusSpy::values[0], LIBXTUN_STATUS_CONNECTED);
+    EXPECT_EQ(StatusSpy::priv, static_cast<void *>(&cookie));
+}
+
+TEST(ProxyCallbacks, UnboundProxyEmitsNothing) {
+    StatusSpy::reset();
+    LogSpy::reset();
+
+    RecordingProxy proxy;
+    proxy.status(LIBXTUN_STATUS_DISCONNECTED);
+    proxy.log("ignored");
+
+    EXPECT_TRUE(StatusSpy::values.empty());
+    EXPECT_TRUE(LogSpy::lines.empty());
 }
 
 TEST(ProxyNew, CreatesAwgFromValidConfig) {
