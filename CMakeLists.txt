@@ -28,6 +28,9 @@ project(xtun)
 
 add_library(${PROJECT_NAME}
     ${CMAKE_CURRENT_LIST_DIR}/src/health/monitored_io.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/net/ip.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/net/socket.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/net/udp.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/proto/awg.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/proto/awg_conf.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/proxy.cpp
