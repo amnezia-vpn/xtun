@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #endif
 
+#include "memtun.h"
 #include "proto/awg.h"
 #include "proxy.h"
 #include "tunnel.h"
@@ -11,10 +12,8 @@
 
 #include <algorithm>
 #include <chrono>
-#include <condition_variable>
 #include <cstdio>
 #include <cstring>
-#include <deque>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -121,67 +120,6 @@ struct NetnsGuard {
 
 #endif  // defined(__linux__)
 
-class MemTun {
-  public:
-    libxtun::ProxyIo io() {
-        libxtun::ProxyIo io;
-        io.read = [this](void *buf, int len) { return read(buf, len); };
-        io.write = [this](const void *buf, int len) { return write(buf, len); };
-        io.mtu = []() { return 1420; };
-        return io;
-    }
-
-    bool awaitDelivery(std::vector<unsigned char> &pkt, std::chrono::milliseconds timeout) {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        if (!m_cond.wait_for(lock, timeout, [this] { return !m_out.empty(); })) {
-            return false;
-        }
-        pkt = std::move(m_out.front());
-        m_out.pop_front();
-        return true;
-    }
-
-    void cancel() {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        m_cancelled = true;
-        m_cond.notify_all();
-    }
-
-  private:
-    int read(void *buf, int len) {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        m_cond.wait(lock, [this] { return m_cancelled || !m_in.empty(); });
-        if (m_cancelled) {
-            return -1;
-        }
-        std::vector<unsigned char> pkt = std::move(m_in.front());
-        m_in.pop_front();
-        int n = static_cast<int>(pkt.size());
-        if (n > len) {
-            n = len;
-        }
-        std::memcpy(buf, pkt.data(), n);
-        return n;
-    }
-
-    int write(const void *buf, int len) {
-        if (len < 0) {
-            return -1;
-        }
-        std::lock_guard<std::mutex> lock(m_mutex);
-        const unsigned char *p = static_cast<const unsigned char *>(buf);
-        m_out.emplace_back(p, p + len);
-        m_cond.notify_all();
-        return len;
-    }
-
-    std::mutex m_mutex;
-    std::condition_variable m_cond;
-    std::deque<std::vector<unsigned char>> m_in;
-    std::deque<std::vector<unsigned char>> m_out;
-    bool m_cancelled = false;
-};
-
 constexpr const char *kPrivA = "YHJIKcg6kMlHqmHvpdetXH9300wKO4NxqX1L+v9h20A=";
 constexpr const char *kPubA = "dpY/lgMy5OZPe6EVFl25AYL8hCsNEPxzO2uZZdzLnlo=";
 constexpr const char *kPrivB = "CPbRqDXAuXNShMCXDVQ6d7mKeVAk2isLmqSNOnVWGWs=";
@@ -257,7 +195,7 @@ bool contains(const std::vector<unsigned char> &hay, const std::string &needle) 
 class SpyProxy : public libxtun::Proxy {
   public:
     const char *name() override { return "spy"; }
-    int start(const libxtun::ProxyIo &) override { return LIBXTUN_OK; }
+    int start(libxtun::TunnelIo &) override { return LIBXTUN_OK; }
     void event(libxtun::ProxyEvent) override {}
     void stop() override {}
     libxtun::ProxyProfile profile() const override { return {}; }
@@ -538,7 +476,7 @@ TEST(AwgRealTun, FullTunnelDeliversThroughKernelTun) {
     MemTun tunB;
     libxtun::proto::Awg b(confB());
     b.setInterface("xtunrtb");
-    ASSERT_EQ(b.start(tunB.io()), LIBXTUN_OK);
+    ASSERT_EQ(b.start(tunB), LIBXTUN_OK);
 
     // Side A: a real kernel tun carrying a real AWG proxy, full-tunnel routed.
     libxtun_tunnel_opts opts = realtunOpts();
@@ -980,7 +918,7 @@ TEST(AwgRealTun, DeliversThroughWintunAdapter) {
     libxtun::proto::Awg b(confB(host));
     b.bind(callbacksB);
     b.setInterface("xtunrtb");
-    ASSERT_EQ(b.start(tunB.io()), LIBXTUN_OK);
+    ASSERT_EQ(b.start(tunB), LIBXTUN_OK);
 
     libxtun_tunnel_opts opts = realtunOpts();
     libxtun::Tunnel tunnel(opts);

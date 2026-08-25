@@ -23,7 +23,7 @@ class Awg : public Proxy, private NonCopyable {
         return "awg";
     }
 
-    int start(const ProxyIo &io) override;
+    int start(TunnelIo &io) override;
     void event(ProxyEvent ev) override;
     void stop() override;
     ProxyProfile profile() const override;
@@ -33,7 +33,7 @@ class Awg : public Proxy, private NonCopyable {
     static void forwardLog(char *str, void *priv);
 
     awg::Config m_conf;
-    ProxyIo m_io;
+    TunnelIo *m_io = nullptr;
     void *m_ctx = nullptr;
 };
 

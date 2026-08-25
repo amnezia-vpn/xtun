@@ -5,6 +5,7 @@ set(XTUN_TEST_SOURCES
     awg_realtun_test.cpp
     awg_roundtrip_test.cpp
     awg_tunnel_test.cpp
+    health_monitored_io_test.cpp
     proxy_attach_test.cpp
     tunnel_contract_test.cpp
     tunnel_lifecycle_test.cpp
