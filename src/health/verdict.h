@@ -2,6 +2,7 @@
 #define HEALTH_VERDICT_H
 
 #include "health/probe.h"
+#include "health/state.h"
 #include "util/clock.h"
 
 #include <algorithm>
@@ -11,8 +12,6 @@
 #include <ranges>
 
 namespace libxtun::health {
-
-enum class ConnectionState { Unknown, Connected, NoNetwork, Disconnected };
 
 struct Observation {
     bool inbound_fresh = false;

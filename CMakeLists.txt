@@ -31,7 +31,10 @@ add_library(${PROJECT_NAME}
     ${CMAKE_CURRENT_LIST_DIR}/src/health/datagram_probe.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/health/dns_query.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/health/monitored_io.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/health/monitor.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/health/resolver_pool.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/health/scheduler.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/health/subsystem.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/health/verdict.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/net/ip.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/net/socket.cpp
@@ -45,9 +48,16 @@ add_library(${PROJECT_NAME}
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/src
 )
+
 target_include_directories(${PROJECT_NAME} PUBLIC
     ${CMAKE_CURRENT_LIST_DIR}/include
 )
+
+if(MSVC)
+    target_compile_options(${PROJECT_NAME} PRIVATE /we4062)
+else()
+    target_compile_options(${PROJECT_NAME} PRIVATE -Werror=switch)
+endif()
 
 find_package(goxtun REQUIRED)
 target_include_directories(${PROJECT_NAME} PRIVATE $<TARGET_PROPERTY:amnezia::goxtun,INTERFACE_INCLUDE_DIRECTORIES>)
