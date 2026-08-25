@@ -9,6 +9,8 @@ namespace libxtun::health {
 
 class DnsQuery;
 
+enum class ProbeStyle { Datagram };
+
 enum class ProbeOutcome { NotRun, Answered, Failed };
 
 class ConnectivityProbe {

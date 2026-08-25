@@ -1,3 +1,4 @@
+#include "health/monitor.h"
 #include "proxy.h"
 #include "router.h"
 #include "tunnel_io.h"
@@ -46,9 +47,12 @@ class Tunnel {
     int attachProxy(Proxy *proxy);
     int start();
 
-  private:
-    friend class Proxy;
+    void cancelRead() { signalRead(true); }
+    void registerBypassSocket(int fd, int family);
+    void bypassSocket(int fd, int family);
+    void detachProxy(Proxy *proxy) noexcept;
 
+  private:
     class DeviceIo final : public TunnelIo {
       public:
         explicit DeviceIo(Tunnel &tunnel) noexcept : m_tunnel(tunnel) {}
@@ -72,12 +76,11 @@ class Tunnel {
         std::unordered_map<int, int> m_sockets;
     };
 
-    void detachProxy(Proxy *proxy);
+    void shutdownProxy(Proxy *expected) noexcept;
+    [[nodiscard]] Proxy *takeProxy(Proxy *expected = nullptr) noexcept;
+    health::HealthConfig healthConfigFor(const ProxyProfile &profile);
     void signalRead(bool terminal);
-    void cancelRead() { signalRead(true); }
     void wakeRead() { signalRead(false); }
-    void registerBypassSocket(int fd, int family);
-    void bypassSocket(int fd, int family);
     int finishOpen();
     void emit(Event ev);
 #if defined(_WIN32)
@@ -110,6 +113,7 @@ class Tunnel {
     BypassSocketRegistry m_bypass_sockets;
     std::atomic<bool> m_read_cancelled{false};
     std::atomic<bool> m_inject_pending{false};
+    health::HealthSettings m_health_settings;
 
     int m_tunFd;
     std::string m_name;

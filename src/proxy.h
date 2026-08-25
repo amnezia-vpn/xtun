@@ -1,7 +1,11 @@
 #include <xtun.h>
 
+#include "health/probe.h"
+#include "health/state.h"
 #include "tunnel_io.h"
 
+#include <atomic>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -13,14 +17,17 @@ namespace libxtun {
 
 class Tunnel;
 
-enum class ProxyEvent { Up, Down, MtuUpdate };
+namespace health {
+struct HealthConfig;
+}
 
-enum class ProbeStyle { Datagram };
+enum class ProxyEvent { Up, Down, MtuUpdate };
 
 struct ProxyProfile {
     std::vector<std::string> routes;
     std::vector<std::string> dns_servers;
     std::vector<std::string> addresses;
+    health::ProbeStyle probe_style = health::ProbeStyle::Datagram;
 };
 
 struct ClientCallbacks {
@@ -28,11 +35,14 @@ struct ClientCallbacks {
     void *on_socket_priv = nullptr;
     void (*on_log)(const char *message, void *priv) = nullptr;
     void *on_log_priv = nullptr;
+    void (*on_status)(int status, void *priv) = nullptr;
+    void *on_status_priv = nullptr;
 };
 
-class Proxy {
+class Proxy : private health::HealthListener {
   public:
-    virtual ~Proxy() = 0;
+    Proxy();
+    ~Proxy() override = 0;
 
     virtual const char *name() = 0;
 
@@ -42,14 +52,13 @@ class Proxy {
 
     virtual ProxyProfile profile() const = 0;
 
-    virtual ProbeStyle probeStyle() const noexcept { return ProbeStyle::Datagram; }
-
     void bind(const ClientCallbacks &callbacks) { m_callbacks = callbacks; }
     void setInterface(const std::string &ifname) { m_ifname = ifname; }
 
   protected:
     void cancelIo();
     void emitLog(const char *message) noexcept;
+    void emitStatus(int status) noexcept;
     void registerBypassSocket(int fd, int family);
     void bypassSocket(int fd, int family);
 
@@ -58,8 +67,16 @@ class Proxy {
   private:
     friend class Tunnel;
 
+    void onConnectionState(health::ConnectionState state) noexcept override;
+
+    [[nodiscard]] TunnelIo &attach(Tunnel &tunnel, health::HealthConfig config, TunnelIo &device);
+    void detach() noexcept;
+
+    health::HealthSubsystem *health() noexcept { return m_health.get(); }
+
     ClientCallbacks m_callbacks;
-    Tunnel *m_tunnel = nullptr;
+    std::atomic<Tunnel *> m_tunnel{nullptr};
+    std::unique_ptr<health::HealthSubsystem> m_health;
 };
 
 

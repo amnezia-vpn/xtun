@@ -23,6 +23,16 @@ const char *describe(ConnectionState state) noexcept {
 
 }
 
+HealthSettings HealthSettings::fromSeconds(int seconds) noexcept {
+    HealthSettings settings;
+    if (seconds <= 0) {
+        return settings;
+    }
+    const std::chrono::seconds requested{seconds};
+    settings.period = requested < kPeriodFloor ? kPeriodFloor : requested;
+    return settings;
+}
+
 HealthMonitor::HealthMonitor(HealthSettings settings, HealthListener &listener, TrafficMeter &meter,
                              ConnectivityProbe &tunnel_probe, ConnectivityProbe &control_probe,
                              DnsQueryFactory &queries, Scheduler &scheduler, const Clock &clock,

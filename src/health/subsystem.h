@@ -10,7 +10,6 @@
 #include "health/scheduler.h"
 #include "health/state.h"
 #include "health/traffic_meter.h"
-#include "proxy.h"
 #include "tunnel_io.h"
 #include "util/clock.h"
 #include "util/noncopyable.h"
@@ -47,8 +46,6 @@ class HealthSubsystem final : private NonCopyable {
     void stop() noexcept;
     void halt() noexcept;
     void onNetworkChanged() noexcept;
-
-    HealthSnapshot snapshot() const;
 
   private:
     RandomSource m_random;

@@ -70,6 +70,33 @@ constexpr auto kPeriod = std::chrono::milliseconds(10000);
 
 }  // namespace
 
+TEST(HealthPeriod, ZeroAndNegativeSelectTheDefault) {
+    EXPECT_EQ(HealthSettings::fromSeconds(0).period, libxtun::health::kDefaultPeriod);
+    EXPECT_EQ(HealthSettings::fromSeconds(-1).period, libxtun::health::kDefaultPeriod);
+    EXPECT_EQ(HealthSettings::fromSeconds(-3600).period, libxtun::health::kDefaultPeriod);
+}
+
+TEST(HealthPeriod, SubFloorValuesAreRaisedRatherThanHonoured) {
+    EXPECT_EQ(HealthSettings::fromSeconds(1).period, libxtun::health::kPeriodFloor);
+    EXPECT_EQ(HealthSettings::fromSeconds(4).period, libxtun::health::kPeriodFloor);
+    EXPECT_EQ(HealthSettings::fromSeconds(5).period, libxtun::health::kPeriodFloor);
+}
+
+TEST(HealthPeriod, ConfiguredCadenceAboveTheFloorIsUsedAsGiven) {
+    EXPECT_EQ(HealthSettings::fromSeconds(6).period, std::chrono::seconds(6));
+    EXPECT_EQ(HealthSettings::fromSeconds(30).period, std::chrono::seconds(30));
+    EXPECT_EQ(HealthSettings::fromSeconds(3600).period, std::chrono::seconds(3600));
+}
+
+TEST(HealthPeriod, TheRestOfTheSettingsKeepTheirDefaults) {
+    const HealthSettings settings = HealthSettings::fromSeconds(30);
+
+    EXPECT_EQ(settings.probe_timeout, libxtun::health::kProbeTimeout);
+    EXPECT_EQ(settings.fail_streak, libxtun::health::kFailStreak);
+    EXPECT_EQ(settings.no_network_backoff, libxtun::health::kNoNetworkBackoff);
+    EXPECT_EQ(settings.jitter_percent, libxtun::health::kJitterPercent);
+}
+
 TEST(HealthMonitor, StartArmsTheSchedulerWithThePeriod) {
     TestSetup s;
 

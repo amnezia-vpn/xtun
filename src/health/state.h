@@ -16,6 +16,8 @@ class HealthListener {
 
 using LogSink = std::function<void(const char *)>;
 
+class HealthSubsystem;
+
 }
 
 #endif // HEALTH_STATE_H
