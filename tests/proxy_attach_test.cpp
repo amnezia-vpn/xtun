@@ -4,6 +4,8 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
+#include <cstddef>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -14,16 +16,14 @@ struct RecordingProxy : libxtun::Proxy {
     int startCalls = 0;
     int stopCalls = 0;
     int startResult = LIBXTUN_OK;
-    bool haveIo = false;
-    libxtun::ProxyIo io;
+    libxtun::TunnelIo *io = nullptr;
     std::vector<libxtun::ProxyEvent> events;
 
     const char *name() override { return "recording"; }
 
-    int start(const libxtun::ProxyIo &i) override {
+    int start(libxtun::TunnelIo &i) override {
         ++startCalls;
-        io = i;
-        haveIo = true;
+        io = &i;
         return startResult;
     }
 
@@ -84,10 +84,7 @@ TEST(ProxyAttach, StartsProxyWithTunnelIo) {
     ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
 
     EXPECT_EQ(proxy.startCalls, 1);
-    ASSERT_TRUE(proxy.haveIo);
-    EXPECT_TRUE(static_cast<bool>(proxy.io.read));
-    EXPECT_TRUE(static_cast<bool>(proxy.io.write));
-    EXPECT_TRUE(static_cast<bool>(proxy.io.mtu));
+    EXPECT_NE(proxy.io, nullptr);
 }
 
 TEST(ProxyAttach, IoIsBoundToTheTunnel) {
@@ -95,12 +92,13 @@ TEST(ProxyAttach, IoIsBoundToTheTunnel) {
     libxtun_tunnel_opts opts = default_opts();
     libxtun::Tunnel tunnel(opts);
     ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
+    ASSERT_NE(proxy.io, nullptr);
 
-    EXPECT_EQ(proxy.io.mtu(), tunnel.currentMtu());
+    EXPECT_EQ(proxy.io->mtu(), tunnel.currentMtu());
 
-    unsigned char buf[4] = {0};
-    EXPECT_EQ(proxy.io.read(buf, sizeof(buf)), -1);
-    EXPECT_EQ(proxy.io.write(buf, sizeof(buf)), -1);
+    std::array<std::byte, 4> buf{};
+    EXPECT_EQ(proxy.io->read(buf), libxtun::kIoFatal);
+    EXPECT_EQ(proxy.io->write(buf), libxtun::kIoFatal);
 }
 
 TEST(ProxyAttach, FailedStartLeavesProxyDetached) {

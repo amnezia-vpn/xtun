@@ -480,7 +480,7 @@ int Tunnel::finishOpen() {
 int Tunnel::read(void *buf, size_t len) {
 #if defined(__linux__) || defined(__APPLE__)
     if (m_tunFd < 0) {
-        return -1;
+        return kIoFatal;
     }
 
     struct pollfd fds[2];
@@ -490,14 +490,26 @@ int Tunnel::read(void *buf, size_t len) {
     fds[1].events = POLLIN;
 
     for (;;) {
+        if (m_read_cancelled.load(std::memory_order_acquire)) {
+            return kIoFatal;
+        }
         if (::poll(fds, 2, -1) < 0) {
             if (errno == EINTR) {
                 continue;
             }
-            return -1;
+            return kIoFatal;
         }
         if (fds[1].revents & POLLIN) {
-            return -1;
+            uint64_t drained;
+            while (::read(m_readCancelRd, &drained, sizeof(drained)) > 0) {
+            }
+            if (m_read_cancelled.load(std::memory_order_acquire)) {
+                return kIoFatal;
+            }
+            if (m_inject_pending.exchange(false, std::memory_order_acq_rel)) {
+                return kReadWake;
+            }
+            continue;
         }
         if (fds[0].revents & (POLLIN | POLLERR | POLLHUP)) {
             break;
@@ -518,19 +530,22 @@ int Tunnel::read(void *buf, size_t len) {
 
     ssize_t n = ::readv(m_tunFd, iov, 2);
     if (n < static_cast<ssize_t>(sizeof(hdr))) {
-        return -1;
+        return kIoFatal;
     }
     return static_cast<int>(n - sizeof(hdr));
 #elif defined(_WIN32)
     RunGuard guard(m_running);
 
     if (m_session == nullptr) {
-        return -1;
+        return kIoFatal;
     }
 
     for (;;) {
         if (m_closing.load()) {
-            return -1;
+            return kIoFatal;
+        }
+        if (m_inject_pending.exchange(false)) {
+            return kReadWake;
         }
         DWORD packetSize = 0;
         BYTE *packet = m_receivePacket(m_session, &packetSize);
@@ -544,12 +559,12 @@ int Tunnel::read(void *buf, size_t len) {
             WaitForSingleObject(m_readWait, INFINITE);
             continue;
         }
-        return -1;
+        return kIoFatal;
     }
 #else
     (void)buf;
     (void)len;
-    return -1;
+    return kIoFatal;
 #endif
 }
 
@@ -648,11 +663,8 @@ int Tunnel::attachProxy(Proxy *proxy) {
     }
     m_bypass_sockets.clear();
 
-    ProxyIo io;
-    io.read = [this](void *buf, int len) { return this->read(buf, static_cast<size_t>(len)); };
-    io.write = [this](const void *buf, int len) { return this->write(buf, static_cast<size_t>(len)); };
-    io.mtu = [this]() { return this->currentMtu(); };
-
+    m_read_cancelled.store(false, std::memory_order_release);
+    m_inject_pending.store(false, std::memory_order_release);
 #if defined(__linux__) || defined(__APPLE__)
     if (m_readCancelRd >= 0) {
         uint64_t drained;
@@ -666,7 +678,7 @@ int Tunnel::attachProxy(Proxy *proxy) {
     proxy->setInterface(m_name);
     proxy->m_tunnel = this;
 
-    int rc = proxy->start(io);
+    int rc = proxy->start(m_device_io);
     if (rc != LIBXTUN_OK) {
         proxy->m_tunnel = nullptr;
         return rc;
@@ -743,18 +755,34 @@ void Tunnel::bypassSocket(int fd, int family) {
     }
 }
 
-void Tunnel::cancelRead() {
+void Tunnel::signalRead(bool terminal) {
+    if (terminal) {
+        m_read_cancelled.store(true, std::memory_order_release);
+    } else {
+        m_inject_pending.store(true, std::memory_order_release);
+    }
+
 #if defined(__linux__) || defined(__APPLE__)
     if (m_readCancelWr >= 0) {
         uint64_t one = 1;
         (void)::write(m_readCancelWr, &one, sizeof(one));
     }
 #elif defined(_WIN32)
-    m_closing.store(true);
+    if (terminal) {
+        m_closing.store(true);
+    }
     if (m_readWait != nullptr) {
         SetEvent(m_readWait);
     }
 #endif
+}
+
+int Tunnel::DeviceIo::read(std::span<std::byte> buf) noexcept {
+    return m_tunnel.read(buf.data(), buf.size());
+}
+
+int Tunnel::DeviceIo::write(std::span<const std::byte> packet) noexcept {
+    return m_tunnel.write(packet.data(), packet.size());
 }
 
 void Tunnel::emit(Event ev) {

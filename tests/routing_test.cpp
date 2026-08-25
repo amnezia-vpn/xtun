@@ -84,7 +84,7 @@ bool ifUp(const std::string &name) {
 struct FixedRoutesProxy : libxtun::Proxy {
     std::vector<std::string> r;
     const char *name() override { return "fixed"; }
-    int start(const libxtun::ProxyIo &) override { return LIBXTUN_OK; }
+    int start(libxtun::TunnelIo &) override { return LIBXTUN_OK; }
     void event(libxtun::ProxyEvent) override {}
     void stop() override {}
     libxtun::ProxyProfile profile() const override { return {r, {}, {}}; }

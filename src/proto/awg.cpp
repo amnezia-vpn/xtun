@@ -23,17 +23,23 @@ enum TunEvent {
 };
 
 int tunRead(void *b, int len, void *priv) {
-    auto *io = static_cast<libxtun::ProxyIo *>(priv);
-    return io->read(b, len);
+    if (b == nullptr || len <= 0) {
+        return libxtun::kIoFatal;
+    }
+    auto *io = static_cast<libxtun::TunnelIo *>(priv);
+    return io->read({static_cast<std::byte *>(b), static_cast<std::size_t>(len)});
 }
 
 int tunWrite(void *b, int len, void *priv) {
-    auto *io = static_cast<libxtun::ProxyIo *>(priv);
-    return io->write(b, len);
+    if (b == nullptr || len <= 0) {
+        return libxtun::kIoFatal;
+    }
+    auto *io = static_cast<libxtun::TunnelIo *>(priv);
+    return io->write({static_cast<const std::byte *>(b), static_cast<std::size_t>(len)});
 }
 
 int tunMtu(void *priv) {
-    auto *io = static_cast<libxtun::ProxyIo *>(priv);
+    auto *io = static_cast<libxtun::TunnelIo *>(priv);
     return io->mtu();
 }
 
@@ -56,17 +62,14 @@ ResultXtun<std::unique_ptr<Awg>> Awg::create(const std::string& str) {
     return std::make_unique<Awg>(std::move(res).value());
 }
 
-int Awg::start(const ProxyIo &io) {
+int Awg::start(TunnelIo &io) {
     if (m_ctx != nullptr) {
         return LIBXTUN_ERR_INVALID_ARGS;
     }
-    if (!io.read || !io.write || !io.mtu) {
-        return LIBXTUN_ERR_INVALID_ARGS;
-    }
 
-    m_io = io;
+    m_io = &io;
 
-    m_ctx = goxtun_awg_new(tunRead, tunWrite, tunMtu, &m_io, &Awg::forwardLog, &Awg::forwardLog,
+    m_ctx = goxtun_awg_new(tunRead, tunWrite, tunMtu, m_io, &Awg::forwardLog, &Awg::forwardLog,
                            this, &Awg::sockCb, this);
     if (m_ctx == nullptr) {
         return LIBXTUN_ERR_SYSTEM;

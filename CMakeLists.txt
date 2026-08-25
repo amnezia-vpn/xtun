@@ -27,6 +27,7 @@ set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES
 project(xtun)
 
 add_library(${PROJECT_NAME}
+    ${CMAKE_CURRENT_LIST_DIR}/src/health/monitored_io.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/proto/awg.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/proto/awg_conf.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/proxy.cpp

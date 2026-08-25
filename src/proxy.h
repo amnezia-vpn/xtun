@@ -1,6 +1,7 @@
 #include <xtun.h>
 
-#include <functional>
+#include "tunnel_io.h"
+
 #include <string>
 #include <vector>
 
@@ -13,12 +14,6 @@ namespace libxtun {
 class Tunnel;
 
 enum class ProxyEvent { Up, Down, MtuUpdate };
-
-struct ProxyIo {
-    std::function<int(void *buf, int len)> read;
-    std::function<int(const void *buf, int len)> write;
-    std::function<int()> mtu;
-};
 
 struct ProxyProfile {
     std::vector<std::string> routes;
@@ -39,7 +34,7 @@ class Proxy {
 
     virtual const char *name() = 0;
 
-    virtual int start(const ProxyIo &io) = 0;
+    virtual int start(TunnelIo &io) = 0;
     virtual void event(ProxyEvent ev) = 0;
     virtual void stop() = 0;
 

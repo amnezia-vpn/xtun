@@ -1,5 +1,6 @@
 #include "proxy.h"
 #include "router.h"
+#include "tunnel_io.h"
 #include "xtun.h"
 
 #include <atomic>
@@ -48,6 +49,18 @@ class Tunnel {
   private:
     friend class Proxy;
 
+    class DeviceIo final : public TunnelIo {
+      public:
+        explicit DeviceIo(Tunnel &tunnel) noexcept : m_tunnel(tunnel) {}
+
+        int read(std::span<std::byte> buf) noexcept override;
+        int write(std::span<const std::byte> packet) noexcept override;
+        int mtu() const noexcept override { return m_tunnel.currentMtu(); }
+
+      private:
+        Tunnel &m_tunnel;
+    };
+
     class BypassSocketRegistry {
       public:
         void add(Router &router, int fd, int family);
@@ -60,7 +73,9 @@ class Tunnel {
     };
 
     void detachProxy(Proxy *proxy);
-    void cancelRead();
+    void signalRead(bool terminal);
+    void cancelRead() { signalRead(true); }
+    void wakeRead() { signalRead(false); }
     void registerBypassSocket(int fd, int family);
     void bypassSocket(int fd, int family);
     int finishOpen();
@@ -91,7 +106,10 @@ class Tunnel {
     int m_confMtu;
     std::unique_ptr<Router> m_router;
     bool m_started = false;
+    DeviceIo m_device_io{*this};
     BypassSocketRegistry m_bypass_sockets;
+    std::atomic<bool> m_read_cancelled{false};
+    std::atomic<bool> m_inject_pending{false};
 
     int m_tunFd;
     std::string m_name;
