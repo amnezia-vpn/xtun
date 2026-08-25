@@ -6,6 +6,8 @@ set(XTUN_TEST_SOURCES
     awg_roundtrip_test.cpp
     awg_tunnel_test.cpp
     health_monitored_io_test.cpp
+    health_probe_test.cpp
+    health_resolver_test.cpp
     net_ip_test.cpp
     net_socket_test.cpp
     net_udp_test.cpp

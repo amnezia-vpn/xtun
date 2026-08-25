@@ -15,6 +15,8 @@ class Tunnel;
 
 enum class ProxyEvent { Up, Down, MtuUpdate };
 
+enum class ProbeStyle { Datagram };
+
 struct ProxyProfile {
     std::vector<std::string> routes;
     std::vector<std::string> dns_servers;
@@ -39,6 +41,8 @@ class Proxy {
     virtual void stop() = 0;
 
     virtual ProxyProfile profile() const = 0;
+
+    virtual ProbeStyle probeStyle() const noexcept { return ProbeStyle::Datagram; }
 
     void bind(const ClientCallbacks &callbacks) { m_callbacks = callbacks; }
     void setInterface(const std::string &ifname) { m_ifname = ifname; }
