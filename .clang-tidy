@@ -1,0 +1,48 @@
+Checks: 'readability-identifier-naming'
+CheckOptions:
+  # int fooBar = 123;
+  - key: readability-identifier-naming.VariableCase
+    value: 'camelBack'
+  # const int MAX_THREADS = 123;
+  - key: readability-identifier-naming.GlobalConstantCase
+    value: 'UPPER_CASE'
+  # class Foo {
+  #   int m_memberVariable = 123;
+  # };
+  - key: readability-identifier-naming.MemberCase
+    value: 'camelBack'
+  - key: readability-identifier-naming.MemberPrefix
+    value: 'm_'
+  # int g_globalVariable = 123;
+  - key: readability-identifier-naming.GlobalVariableCase
+    value: 'camelBack'
+  - key: readability-identifier-naming.GlobalVariablePrefix
+    value: 'g_'
+  # class FooBar {};
+  - key: readability-identifier-naming.ClassCase
+    value: 'CamelCase'
+  # struct FooBar {};
+  - key: readability-identifier-naming.StructCase
+    value: 'CamelCase'
+  # union FooBar {};
+  - key: readability-identifier-naming.UnionCase
+    value: 'CamelCase'
+  # enum FooBar { Foo, Bar };
+  - key: readability-identifier-naming.EnumCase
+    value: 'CamelCase'
+  # void fooBarFunction(int fooBar, const std::string barFoo);
+  - key: readability-identifier-naming.FunctionCase
+    value: 'camelBack'
+  - key: readability-identifier-naming.MethodCase
+    value: 'camelBack'
+  - key: readability-identifier-naming.ParameterCase
+    value: 'camelBack'
+  # namespace libxtun_foo_bar {}
+  - key: readability-identifier-naming.NamespaceCase
+    value: 'lower_case'
+  # #define LIBXTUN_VER 1.0.0
+  - key: readability-identifier-naming.MacroDefinitionCase
+    value: 'UPPER_CASE'
+  # template<typename T>
+  - key: readability-identifier-naming.TemplateParameterCase
+    value: 'UPPER_CASE'
