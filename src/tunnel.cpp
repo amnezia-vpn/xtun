@@ -39,16 +39,14 @@
 
 namespace {
 
-std::vector<std::string> parseStrList(const libxtun_str_list &l) {
+std::vector<std::string> parseStrList(const char *const *l) {
     std::vector<std::string> out;
-    if (l.list == nullptr) {
+    if (l == nullptr) {
         return out;
     }
-    out.reserve(l.size);
-    const char *p = l.list;
-    for (size_t i = 0; i < l.size; ++i) {
-        out.emplace_back(p);
-        p += out.back().size() + 1;
+    while (*l != nullptr) {
+        out.push_back(*l);
+        l++;
     }
     return out;
 }
