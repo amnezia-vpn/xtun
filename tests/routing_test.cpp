@@ -92,22 +92,21 @@ struct FixedRoutesProxy : libxtun::Proxy {
 };
 
 libxtun_tunnel_opts routingOpts() {
+    static const char *ifAddrs[] = { "10.99.0.2/24", nullptr };
     libxtun_tunnel_opts opts{};
     opts.size = sizeof(opts);
     opts.killswitch_mode = LIBXTUN_KILLSWITCH_MODE_DISABLED;
-    opts.if_addrs.list = "10.99.0.2/24";
-    opts.if_addrs.size = 1;
+    opts.if_addrs = ifAddrs;
     opts.mtu = 1400;
     return opts;
 }
 
 libxtun_tunnel_opts dualStackOpts() {
-    static const char kAddrs[] = "10.99.0.2/24\0fd00::2/64";
+    static const char *ifAddrs[] = { "10.99.0.2/24", "fd00::2/64", nullptr };
     libxtun_tunnel_opts opts{};
     opts.size = sizeof(opts);
     opts.killswitch_mode = LIBXTUN_KILLSWITCH_MODE_DISABLED;
-    opts.if_addrs.list = kAddrs;
-    opts.if_addrs.size = 2;
+    opts.if_addrs = ifAddrs;
     opts.mtu = 1400;
     return opts;
 }

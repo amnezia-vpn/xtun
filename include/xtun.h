@@ -38,21 +38,15 @@ enum libxtun_proxy_proto {
 struct libxtun_proxy {
     void *handle;
 
-    void(*onsockspawn)(int fd, void *priv);
+    void (*onsockspawn)(int fd, void *priv);
     void *onsockspawn_priv;
 
-    void(*loghandler)(const char *str, void *priv);
+    void (*loghandler)(const char *str, void *priv);
     void *loghandler_priv;
 };
 
 int libxtun_proxy_new(struct libxtun_proxy *proxy, enum libxtun_proxy_proto proto, const char *conf);
 void libxtun_proxy_free(struct libxtun_proxy *proxy);
-
-/* `list` points to `size` consecutive NUL-terminated strings. */
-struct libxtun_str_list {
-    const char *list;
-    size_t size;
-};
 
 struct libxtun_tunnel {
     void *handle;
@@ -67,10 +61,10 @@ enum libxtun_killswitch_mode {
 
 struct libxtun_tunnel_opts {
     size_t size;
-    struct libxtun_str_list dns;
-    struct libxtun_str_list dns_exceptions;
+    const char *const *dns;
+    const char *const *dns_exceptions;
     enum libxtun_killswitch_mode killswitch_mode;
-    struct libxtun_str_list if_addrs;
+    const char *const *if_addrs;
     int mtu;
 };
 

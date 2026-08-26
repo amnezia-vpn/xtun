@@ -77,11 +77,11 @@ bool privileged() {
 #endif
 
 libxtun_tunnel_opts realtunOpts() {
+    static const char *ifAddrs[] = { "10.9.9.1/24", nullptr };
     libxtun_tunnel_opts opts{};
     opts.size = sizeof(opts);
     opts.killswitch_mode = LIBXTUN_KILLSWITCH_MODE_DISABLED;
-    opts.if_addrs.list = "10.9.9.1/24";
-    opts.if_addrs.size = 1;
+    opts.if_addrs = ifAddrs;
     opts.mtu = 1420;
     return opts;
 }
