@@ -116,26 +116,30 @@ func goxtun_awg_new(
 		},
 	)
 
+	i := awg.NewInstance()
+
 	bind := awg.NewBind(func(fd int) {
 		C.goxtun_sockcb_invoke(sockCb, C.int(fd), sockPriv)
 	})
 
+	emit := func(cb C.goxtun_logcb, format string, args ...any) {
+		i.Call(func() {
+			cstr := C.CString(fmt.Sprintf(format, args...))
+			defer C.free(unsafe.Pointer(cstr))
+			C.goxtun_logcb_invoke(cb, cstr, logPriv)
+		})
+	}
+
 	log := &device.Logger{
 		Verbosef: func(format string, args ...any) {
-			str := fmt.Sprintf(format, args...)
-			cstr := C.CString(str)
-			C.goxtun_logcb_invoke(verbosefCb, cstr, logPriv)
-			C.free(unsafe.Pointer(cstr))
+			emit(verbosefCb, format, args...)
 		},
 		Errorf: func(format string, args ...any) {
-			str := fmt.Sprintf(format, args...)
-			cstr := C.CString(str)
-			C.goxtun_logcb_invoke(debugfCb, cstr, logPriv)
-			C.free(unsafe.Pointer(cstr))
+			emit(debugfCb, format, args...)
 		},
 	}
 
-	i := awg.NewInstance(tun, bind, log)
+	i.Start(tun, bind, log)
 	return toCtx(i)
 }
 
