@@ -25,6 +25,7 @@
 #include <net/if.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <cstring>
@@ -53,6 +54,10 @@
 #include <windows.h>
 #include <wintun.h>
 
+#endif
+
+#if defined(__linux__)
+extern char **environ;
 #endif
 
 namespace {
@@ -91,32 +96,52 @@ bool sh(const std::string &cmd) {
     return std::system((cmd + " >/dev/null 2>&1").c_str()) == 0;
 }
 
-// Private network namespace, restored on destruction; threads spawned while it
-// is active (the tunnel monitor) inherit it.
-struct NetnsGuard {
-    int fd = -1;
-    bool ok = false;
+constexpr const char *kNetnsMarker = "XTUN_NETNS_CHILD";
 
-    NetnsGuard() {
-        fd = ::open("/proc/self/ns/net", O_RDONLY | O_CLOEXEC);
-        if (fd < 0) {
-            return;
-        }
-        if (::unshare(CLONE_NEWNET) != 0) {
-            ::close(fd);
-            fd = -1;
-            return;
-        }
-        ok = true;
+bool insidePrivateNetns() {
+    return ::getenv(kNetnsMarker) != nullptr;
+}
+
+// unshare(CLONE_NEWNET) moves only the calling thread, and goxtun's Go runtime
+// already holds threads elsewhere: the namespace has to be entered before exec.
+int runTestInPrivateNetns() {
+    const ::testing::TestInfo *info = ::testing::UnitTest::GetInstance()->current_test_info();
+    if (info == nullptr) {
+        return -1;
     }
 
-    ~NetnsGuard() {
-        if (fd >= 0) {
-            ::setns(fd, CLONE_NEWNET);
-            ::close(fd);
-        }
+    std::string exe = "/proc/self/exe";
+    std::string filter =
+        std::string("--gtest_filter=") + info->test_suite_name() + "." + info->name();
+    std::vector<char *> argv{exe.data(), filter.data(), nullptr};
+
+    // execve only reads the environment strings, so the inherited ones are
+    // pointed at rather than copied.
+    std::string marker = std::string(kNetnsMarker) + "=1";
+    std::vector<char *> envp;
+    for (char **e = ::environ; *e != nullptr; ++e) {
+        envp.push_back(*e);
     }
-};
+    envp.push_back(marker.data());
+    envp.push_back(nullptr);
+
+    const pid_t pid = ::fork();
+    if (pid < 0) {
+        return -1;
+    }
+    if (pid == 0) {
+        if (::unshare(CLONE_NEWNET) == 0) {
+            ::execve(exe.c_str(), argv.data(), envp.data());
+        }
+        ::_exit(127);
+    }
+
+    int status = 0;
+    if (::waitpid(pid, &status, 0) < 0) {
+        return -1;
+    }
+    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
 
 #endif  // defined(__linux__)
 
@@ -468,8 +493,11 @@ TEST(AwgRealTun, FullTunnelDeliversThroughKernelTun) {
         GTEST_SKIP() << "skipped: real kernel tun + netns require root";
     }
 
-    NetnsGuard netns;
-    ASSERT_TRUE(netns.ok) << "could not create a private network namespace";
+    if (!insidePrivateNetns()) {
+        ASSERT_EQ(runTestInPrivateNetns(), 0)
+            << "the test failed in its private network namespace; see the child output above";
+        return;
+    }
     ASSERT_TRUE(sh("ip link set lo up")) << "loopback is needed for the AWG handshake";
 
     // Peer B: a second AWG instance behind an in-memory tun.
@@ -530,8 +558,11 @@ TEST(AwgRealTun, MarkedHandshakeBypassesTunnel) {
         GTEST_SKIP() << "skipped: real kernel tun + netns require root";
     }
 
-    NetnsGuard netns;
-    ASSERT_TRUE(netns.ok) << "could not create a private network namespace";
+    if (!insidePrivateNetns()) {
+        ASSERT_EQ(runTestInPrivateNetns(), 0)
+            << "the test failed in its private network namespace; see the child output above";
+        return;
+    }
 
     ASSERT_TRUE(sh("ip link set lo up"));
     ASSERT_TRUE(sh("ip link add phys0 type dummy")) << "needs the 'dummy' module";
