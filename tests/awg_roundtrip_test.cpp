@@ -165,7 +165,9 @@ TEST(AwgRoundtrip, DeliversDataBetweenTwoInstances) {
     std::vector<unsigned char> got;
     bool delivered = false;
 
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    // Long enough for one handshake retransmit: an initiation that reaches a peer
+    // which is not running yet is dropped, and RekeyTimeout is 5s.
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
     while (!delivered && std::chrono::steady_clock::now() < deadline) {
         tunA.inject(sent);
         delivered = tunB.awaitDelivery(got, std::chrono::milliseconds(250));
@@ -212,7 +214,9 @@ TEST(AwgRoundtrip, OffersSpawnedSocketsForProtection) {
     std::vector<unsigned char> got;
     bool delivered = false;
 
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    // Long enough for one handshake retransmit: an initiation that reaches a peer
+    // which is not running yet is dropped, and RekeyTimeout is 5s.
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
     while (!delivered && std::chrono::steady_clock::now() < deadline) {
         tunA.inject(sent);
         delivered = tunB.awaitDelivery(got, std::chrono::milliseconds(250));

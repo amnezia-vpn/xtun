@@ -38,4 +38,4 @@ if(WIN32)
     endif()
 endif()
 
-gtest_discover_tests(xtun_tests PROPERTIES TIMEOUT 5)
+gtest_discover_tests(xtun_tests PROPERTIES TIMEOUT 30)
