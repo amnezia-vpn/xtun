@@ -537,7 +537,9 @@ TEST(AwgRealTun, FullTunnelDeliversThroughKernelTun) {
     std::vector<unsigned char> got;
     bool delivered = false;
 
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    // Long enough for one handshake retransmit: an initiation that reaches a peer
+    // which is not running yet is dropped, and RekeyTimeout is 5s.
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
     while (!delivered && std::chrono::steady_clock::now() < deadline) {
         ::sendto(s, payload.data(), payload.size(), 0, reinterpret_cast<sockaddr *>(&dst),
                  sizeof(dst));
@@ -984,7 +986,9 @@ TEST(AwgRealTun, DeliversThroughWintunAdapter) {
     std::vector<unsigned char> got;
     bool delivered = false;
 
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    // Long enough for one handshake retransmit: an initiation that reaches a peer
+    // which is not running yet is dropped, and RekeyTimeout is 5s.
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
     while (!delivered && std::chrono::steady_clock::now() < deadline) {
         ::sendto(s, payload.data(), static_cast<int>(payload.size()), 0,
                  reinterpret_cast<sockaddr *>(&dst), sizeof(dst));
