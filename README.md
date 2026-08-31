@@ -1,5 +1,52 @@
 # xtun - eXtended tunneling library
 
+```
+                                                          attach_proxy()
+                         bypasses in case of              \- works as one-to-many (TBD)
+                         a single Proxy without           |- could be changed in runtime
+                         split-tunneling is used          v
+                                                \    +------------+--------------+-------------+
+                                                 \   |            |              |             |
+                                                  \  |            v              v             v
+    +---- Device ----+       +-- xtun Tunnel --+  |  |    +-- xtun Proxy --+           +-- xtun Proxy --+
+    |                |       |                 |  v  |    |                |           |                |
+    |      TUN   --------------->  Virt IO ----------+    |  Proto harness |           |                |
+    |                |       |        |        |     |    |  |- config     |    ...    |       *        |
+    |                |       |        v        |     |    |  |- status     |           |                |
+    |                |       |      Split      |     |    |  `- logs       |           |                |
+    |       OS    <----+     |    tunneling ---------+    |       |        |     |     |       |        |
+    |    features    |  \    |      (TBD)      |          +------ | -------+     |     +------ | -------+
+    |                |   \   |                 |                  |              |             |         
+    |                |    \  |                 |                  +--------------+-------------+
+    |                |     +--- Net Harness    |                                / 
+    |   Internet     |       |  |- Routing     |                               /
+    |   interface    |   ^   |  |- Killswitch  |                              /
+    |       ^        |   |   |  `- DNS         |             +---------------+---------------+              
+    +------ | -------+   |   +-----------------+             |                               |
+            |            |                                   v                               v
+            |            |                         +-- native providers --+       +-- goxtun (go glue) --+
+            |       Net Harness                    |   |- OpenVPN     TBD |       |    |- AmneziaWG      |
+            |       is optional                    |   `- IPsec/IKEv2 TBD |       |    `- Xray-core TBD  |
+            |                                      |          |           |       |          |           |
+            |                                      +--------- | ----------+       +--------- | ----------+
+            |                                                 |                              |
+            +-------------------------------------------------+------------------------------+
+                                ^
+                    all connections are bound
+                        to the interface
+```
+
+## Design
+
+xtun is built to be a thin abstraction layer over a network, proxies, and platform features
+The idea is to put 2 basic concepts:
+- Tunnel, which is L3 (TUN and similar) and L5 (SOCKS/5 and others) packet handler, IO driver for Proxies
+- and Proxy, which provides the actual "solution" for the provided packets
+
+The original implementation does only provide IO and harness for the actual solutions, and does not NAT anything (except of the solution providers that require the feature, i.e. Xray-core)
+  
+Any of Proxies could be changed anytime to another one(s) - once the action happened the Tunnel redirects packet flow to a new Proxy
+
 ## Hacking guide
 
 General setup requires 3 things:
