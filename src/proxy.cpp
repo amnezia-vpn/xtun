@@ -89,7 +89,9 @@ void libxtun::Proxy::onConnectionState(health::ConnectionState state) noexcept {
         return;
     }
 
-    m_health->halt();
+    if (m_health) {
+        m_health->halt();
+    }
     cancelIo();
     if (Tunnel *tunnel = m_tunnel.exchange(nullptr, std::memory_order_acq_rel)) {
         tunnel->detachProxy(this);

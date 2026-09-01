@@ -30,10 +30,14 @@ class FakeProbe final : public ConnectivityProbe {
     int runs = 0;
     int aborts = 0;
     std::vector<std::uint16_t> ports;
+    std::function<void()> while_running;
 
     ProbeOutcome run(const DnsQuery &query, std::chrono::milliseconds) override {
         ++runs;
         ports.push_back(query.sourcePort());
+        if (while_running) {
+            while_running();
+        }
         return outcome;
     }
 
@@ -339,6 +343,18 @@ TEST(HealthMonitor, TheSnapshotCarriesTheCountersAndTheStreak) {
     EXPECT_EQ(snapshot.fail_streak, 0);
     EXPECT_FALSE(snapshot.probe_pending);
     EXPECT_EQ(snapshot.last_inbound_seen, s.clock.steadyNow());
+}
+
+TEST(HealthMonitor, SnapshotReportsProbePendingOnlyWhileProbeRuns) {
+    TestSetup s;
+    bool pending_during_probe = false;
+    s.tunnel.while_running = [&] { pending_during_probe = s.monitor.snapshot().probe_pending; };
+    s.monitor.start();
+
+    s.scheduler.fire();
+
+    EXPECT_TRUE(pending_during_probe) << "a caller polling the snapshot never sees a probe in flight";
+    EXPECT_FALSE(s.monitor.snapshot().probe_pending) << "probe_pending stayed set after the probe";
 }
 
 TEST(HealthMonitor, StoppingStopsTheScheduler) {

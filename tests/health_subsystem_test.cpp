@@ -115,7 +115,7 @@ TEST(HealthSubsystem, StartDrivesProbeAndStopEndsCadence) {
     SilentListener listener;
     WakeCounter wakes;
     HealthSubsystem subsystem(listener, routedConfig(wakes, kProbeTimeout));
-    subsystem.decorate(device);
+    static_cast<void>(subsystem.decorate(device));
 
     subsystem.start();
     ASSERT_TRUE(wakes.await(1, kReachTimeout)) << "the monitor never reached the tunnel probe";
@@ -133,7 +133,7 @@ TEST(HealthSubsystem, StopReturnsWhileProbeIsStillWaitingForAnswer) {
     SilentListener listener;
     WakeCounter wakes;
     HealthSubsystem subsystem(listener, routedConfig(wakes, 30s));
-    subsystem.decorate(device);
+    static_cast<void>(subsystem.decorate(device));
 
     subsystem.start();
     ASSERT_TRUE(wakes.await(1, kReachTimeout)) << "the probe never went out";
@@ -152,7 +152,7 @@ TEST(HealthSubsystem, NetworkChangeKeepsMonitorRunning) {
     SilentListener listener;
     WakeCounter wakes;
     HealthSubsystem subsystem(listener, routedConfig(wakes, kProbeTimeout));
-    subsystem.decorate(device);
+    static_cast<void>(subsystem.decorate(device));
 
     subsystem.onNetworkChanged();
     subsystem.start();
@@ -170,7 +170,7 @@ TEST(HealthSubsystem, DestructionStopsRunningMonitor) {
     WakeCounter wakes;
     {
         HealthSubsystem subsystem(listener, routedConfig(wakes, kProbeTimeout));
-        subsystem.decorate(device);
+        static_cast<void>(subsystem.decorate(device));
         subsystem.start();
         ASSERT_TRUE(wakes.await(1, kReachTimeout));
     }

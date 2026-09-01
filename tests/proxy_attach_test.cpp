@@ -1,3 +1,5 @@
+#include "health/state.h"
+#include "injectable_tun.h"
 #include "proxy.h"
 #include "tunnel.h"
 #include "xtun.h"
@@ -36,6 +38,7 @@ struct RecordingProxy : libxtun::Proxy {
 
     void log(const char *message) { emitLog(message); }
     void status(int value) { emitStatus(value); }
+    void report(libxtun::health::ConnectionState state) { onConnectionState(state); }
 };
 
 struct LogSpy {
@@ -334,6 +337,71 @@ TEST(ProxyCallbacks, UnboundProxyEmitsNothing) {
 
     EXPECT_TRUE(StatusSpy::values.empty());
     EXPECT_TRUE(LogSpy::lines.empty());
+}
+
+TEST(ProxyStatus, ReportedStateMapsToAbiStatus) {
+    StatusSpy::reset();
+
+    RecordingProxy proxy;
+    proxy.bind(libxtun::ClientCallbacks{.on_status = &StatusSpy::handler});
+
+    libxtun_tunnel_opts opts = default_opts();
+    libxtun::Tunnel tunnel(opts);
+    ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
+
+    proxy.report(libxtun::health::ConnectionState::NoNetwork);
+
+    ASSERT_EQ(StatusSpy::values.size(), 1u);
+    EXPECT_EQ(StatusSpy::values[0], LIBXTUN_STATUS_NO_NETWORK);
+
+    proxy.report(libxtun::health::ConnectionState::Unknown);
+
+    EXPECT_EQ(StatusSpy::values.size(), 1u)
+        << "Unknown has no libxtun_status to map to and must never reach the client";
+}
+
+TEST(ProxyStatus, DisconnectedHaltsIoAndDetachesFromTunnel) {
+    StatusSpy::reset();
+
+    RecordingProxy proxy;
+    proxy.bind(libxtun::ClientCallbacks{.on_status = &StatusSpy::handler});
+
+    InjectableTun device;
+    libxtun_tunnel_opts opts = default_opts();
+    libxtun::Tunnel tunnel(opts);
+    ASSERT_EQ(tunnel.attachProxy(&proxy, device), LIBXTUN_OK);
+    ASSERT_NE(proxy.io, nullptr);
+
+    std::array<std::byte, 8> packet{};
+    ASSERT_EQ(proxy.io->write(packet), static_cast<int>(packet.size()));
+
+    proxy.report(libxtun::health::ConnectionState::Disconnected);
+
+    ASSERT_EQ(StatusSpy::values.size(), 1u);
+    EXPECT_EQ(StatusSpy::values[0], LIBXTUN_STATUS_DISCONNECTED);
+    EXPECT_EQ(proxy.io->write(packet), libxtun::kIoFatal) << "the dead tunnel still carried traffic";
+    EXPECT_EQ(device.written(), 1u) << "traffic reached the device after the teardown";
+
+    libxtun::Tunnel next(opts);
+    EXPECT_EQ(next.attachProxy(&proxy), LIBXTUN_OK) << "the torn down proxy still looks attached";
+}
+
+TEST(ProxyStatus, StateReportedAfterDetachIsHarmless) {
+    StatusSpy::reset();
+
+    RecordingProxy proxy;
+    proxy.bind(libxtun::ClientCallbacks{.on_status = &StatusSpy::handler});
+
+    {
+        libxtun_tunnel_opts opts = default_opts();
+        libxtun::Tunnel tunnel(opts);
+        ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
+    }
+
+    proxy.report(libxtun::health::ConnectionState::Disconnected);
+
+    ASSERT_EQ(StatusSpy::values.size(), 1u);
+    EXPECT_EQ(StatusSpy::values[0], LIBXTUN_STATUS_DISCONNECTED);
 }
 
 TEST(ProxyNew, CreatesAwgFromValidConfig) {

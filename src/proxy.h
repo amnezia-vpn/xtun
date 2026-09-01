@@ -62,12 +62,12 @@ class Proxy : private health::HealthListener {
     void registerBypassSocket(int fd, int family);
     void bypassSocket(int fd, int family);
 
+    void onConnectionState(health::ConnectionState state) noexcept override;
+
     std::string m_ifname;
 
   private:
     friend class Tunnel;
-
-    void onConnectionState(health::ConnectionState state) noexcept override;
 
     [[nodiscard]] TunnelIo &attach(Tunnel &tunnel, health::HealthConfig config, TunnelIo &device);
     void detach() noexcept;

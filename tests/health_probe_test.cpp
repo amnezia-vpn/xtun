@@ -275,6 +275,28 @@ TEST(HealthDatagramProbe, ThePreviousProbesReplyIsNotStolenAfterThePortRotates) 
     EXPECT_FALSE(stole_stale) << "a reply carrying the previous probe's port was stolen";
 }
 
+TEST(HealthDatagramProbe, DatagramLargerThanTheBufferIsNotStaged) {
+    const auto resolvers = fullTunnelPool();
+    const DnsQuery query(0x1111, 0x22223333, 51000);
+
+    std::function<void()> wake;
+    DatagramProbe probe(resolvers, [&wake] { wake(); });
+
+    int into_small = -1;
+    int into_large = -1;
+    wake = [&] {
+        std::array<std::byte, 8> small{};
+        into_small = probe.stage(small);
+        std::array<std::byte, 2048> large{};
+        into_large = probe.stage(large);
+        probe.abort();
+    };
+
+    EXPECT_EQ(probe.run(query, std::chrono::milliseconds(500)), ProbeOutcome::NotRun);
+    EXPECT_EQ(into_small, 0) << "the probe was truncated into a buffer too small to hold it";
+    EXPECT_GT(into_large, 0) << "a rejected small buffer consumed the staged datagram";
+}
+
 TEST(HealthDatagramProbe, SilentTunnelIsAFailure) {
     const auto resolvers = fullTunnelPool();
     DatagramProbe probe(resolvers, [] {});
