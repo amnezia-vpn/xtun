@@ -45,6 +45,7 @@ class Tunnel {
     void onEvent(std::function<void(Event)> cb) { m_onEvent = std::move(cb); }
 
     int attachProxy(Proxy *proxy);
+    int attachProxy(Proxy *proxy, TunnelIo &device);
     int start();
 
     void cancelRead() { signalRead(true); }

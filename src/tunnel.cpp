@@ -646,6 +646,10 @@ int Tunnel::mtu() const {
 }
 
 int Tunnel::attachProxy(Proxy *proxy) {
+    return attachProxy(proxy, m_device_io);
+}
+
+int Tunnel::attachProxy(Proxy *proxy, TunnelIo &device) {
     if (proxy == nullptr || proxy->m_tunnel.load(std::memory_order_acquire) != nullptr) {
         return LIBXTUN_ERR_INVALID_ARGS;
     }
@@ -666,7 +670,7 @@ int Tunnel::attachProxy(Proxy *proxy) {
 
     const ProxyProfile profile = proxy->profile();
     proxy->setInterface(m_name);
-    TunnelIo &io = proxy->attach(*this, healthConfigFor(profile), m_device_io);
+    TunnelIo &io = proxy->attach(*this, healthConfigFor(profile), device);
 
     if (const int rc = proxy->start(io); rc != LIBXTUN_OK) {
         proxy->detach();

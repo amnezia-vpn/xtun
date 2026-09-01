@@ -5,11 +5,13 @@ set(XTUN_TEST_SOURCES
     awg_realtun_test.cpp
     awg_roundtrip_test.cpp
     awg_tunnel_test.cpp
+    health_e2e_test.cpp
     health_monitor_test.cpp
     health_monitored_io_test.cpp
     health_probe_test.cpp
     health_resolver_test.cpp
     health_scheduler_test.cpp
+    health_subsystem_test.cpp
     health_verdict_test.cpp
     net_ip_test.cpp
     net_socket_test.cpp
