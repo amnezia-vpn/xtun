@@ -45,7 +45,8 @@ public final class XtunTest {
     public static void awgConfig() {
         try (XtunProxy proxy = new XtunProxy(XtunProxy.Proto.AWG, CONF_A,
             sock -> { System.out.println("[AWG]: new socket(" + sock + ") created"); },
-            log -> { System.out.println("[AWG]: " + log); }
+            log -> { System.out.println("[AWG]: " + log); },
+            status -> { System.out.println("[AWG]: status " + status); }
         )) {};
     }
 }
