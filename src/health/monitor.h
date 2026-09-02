@@ -63,7 +63,7 @@ class HealthMonitor final : private NonCopyable {
     std::optional<std::chrono::milliseconds> tick();
     ConnectionState evaluate();
     ProbeOutcome probeWith(ConnectivityProbe &probe);
-    ConnectionState settle(ConnectionState next) noexcept;
+    ConnectionState transitionTo(ConnectionState next) noexcept;
     ConnectionState resetState(ConnectionState next) noexcept;
     void publish(bool probe_pending);
 

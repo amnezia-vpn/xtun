@@ -102,7 +102,7 @@ ConnectionState HealthMonitor::evaluate() {
     Observation obs{.inbound_fresh = inbound_fresh};
     if (const auto verdict = resolveVerdict(obs)) {
         m_streak.reset();
-        return settle(*verdict);
+        return transitionTo(*verdict);
     }
 
     if (m_state == ConnectionState::NoNetwork) {
@@ -115,7 +115,7 @@ ConnectionState HealthMonitor::evaluate() {
     obs.tunnel = probeWith(m_tunnel_probe);
     if (const auto verdict = resolveVerdict(obs)) {
         m_streak.reset();
-        return settle(*verdict);
+        return transitionTo(*verdict);
     }
     if (obs.tunnel != ProbeOutcome::Failed) {
         return m_state;
@@ -131,7 +131,7 @@ ConnectionState HealthMonitor::evaluate() {
     }
 
     const auto verdict = resolveVerdict(obs);
-    return verdict ? settle(*verdict) : m_state;
+    return verdict ? transitionTo(*verdict) : m_state;
 }
 
 ProbeOutcome HealthMonitor::probeWith(ConnectivityProbe &probe) {
@@ -141,7 +141,7 @@ ProbeOutcome HealthMonitor::probeWith(ConnectivityProbe &probe) {
     return outcome;
 }
 
-ConnectionState HealthMonitor::settle(ConnectionState next) noexcept {
+ConnectionState HealthMonitor::transitionTo(ConnectionState next) noexcept {
     if (next == m_state) {
         return m_state;
     }
