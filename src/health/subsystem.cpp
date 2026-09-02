@@ -9,6 +9,14 @@ namespace libxtun::health {
 
 namespace {
 
+std::optional<net::SockAddr> uplinkPeer(const ResolverPool &resolvers) {
+    const auto target = resolvers.select(Reachability::PhysicalInterface);
+    if (!target) {
+        return std::nullopt;
+    }
+    return net::SockAddr(*target, kDnsPort);
+}
+
 std::unique_ptr<TunnelProbe> makeTunnelProbe(ProbeStyle style, const ResolverPool &resolvers,
                                              DatagramProbe::WakeReader wake) {
     std::unique_ptr<TunnelProbe> probe;
@@ -27,7 +35,7 @@ HealthSubsystem::HealthSubsystem(HealthListener &listener, HealthConfig config, 
       m_resolvers(config.dns_servers, config.tunnel_addresses, config.tunnel_routes),
       m_tunnel_probe(
           makeTunnelProbe(config.probe_style, m_resolvers, std::move(config.wake_read))),
-      m_control_probe(std::move(config.bind_socket), m_resolvers),
+      m_control_probe(std::move(config.bind_socket), uplinkPeer(m_resolvers)),
       m_scheduler(m_random, config.settings.jitter_percent, config.log),
       m_monitor(config.settings, listener, m_meter, *m_tunnel_probe, m_control_probe, m_queries,
                 m_scheduler, clock, std::move(config.log)) {}

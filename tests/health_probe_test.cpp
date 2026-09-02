@@ -3,6 +3,7 @@
 #include "health/dns_query.h"
 #include "health/resolver_pool.h"
 #include "net/ip.h"
+#include "net/socket.h"
 #include "net/udp.h"
 #include "net/network_order.h"
 #include "util/random.h"
@@ -14,7 +15,9 @@
 #include <chrono>
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -68,6 +71,69 @@ ResolverPool unroutedPool() {
     const std::vector<std::string> routes = {"10.8.0.0/24"};
     return ResolverPool(dns, addresses, routes);
 }
+
+class LoopbackResolver {
+  public:
+    LoopbackResolver() : m_socket(libxtun::net::Socket::udp(AF_INET)) {
+        if (!m_socket) {
+            return;
+        }
+        sockaddr_in wanted{};
+        wanted.sin_family = AF_INET;
+        ::inet_pton(AF_INET, "127.0.0.1", &wanted.sin_addr);
+        socklen_t len = sizeof(m_bound);
+        if (::bind(fd(), reinterpret_cast<sockaddr *>(&wanted), sizeof(wanted)) != 0 ||
+            ::getsockname(fd(), reinterpret_cast<sockaddr *>(&m_bound), &len) != 0) {
+            m_socket.reset();
+        }
+    }
+
+    ~LoopbackResolver() {
+        if (m_thread.joinable()) {
+            m_thread.join();
+        }
+    }
+
+    bool ready() const { return m_socket.has_value(); }
+
+    libxtun::net::SockAddr peer() const {
+        return {addr("127.0.0.1"), ntohs(m_bound.sin_port)};
+    }
+
+    void answer(bool junk_first) {
+        m_thread = std::thread([this, junk_first] { serve(junk_first); });
+    }
+
+  private:
+    int fd() const { return libxtun::net::fromAbiDescriptor(m_socket->native()); }
+
+    void serve(bool junk_first) {
+        std::array<std::byte, libxtun::health::kMaxDnsResponse> buf{};
+        sockaddr_in from{};
+        socklen_t len = sizeof(from);
+        const auto received =
+            ::recvfrom(fd(), reinterpret_cast<char *>(buf.data()), static_cast<int>(buf.size()), 0,
+                       reinterpret_cast<sockaddr *>(&from), &len);
+        if (received <= 0) {
+            return;
+        }
+
+        if (junk_first) {
+            constexpr char noise[] = "not-an-answer";
+            ::sendto(fd(), noise, static_cast<int>(sizeof(noise)), 0,
+                     reinterpret_cast<sockaddr *>(&from), len);
+        }
+
+        std::vector<std::byte> answer(buf.begin(), buf.begin() + received);
+        libxtun::net::writeBigEndian16(answer, 2, kRecursiveResponseFlags | kRcodeNoError);
+        ::sendto(fd(), reinterpret_cast<const char *>(answer.data()),
+                 static_cast<int>(answer.size()), 0, reinterpret_cast<sockaddr *>(&from), len);
+    }
+
+    std::optional<libxtun::net::Socket> m_socket;
+    sockaddr_in m_bound{};
+    std::thread m_thread;
+};
 
 }  // namespace
 
@@ -306,8 +372,9 @@ TEST(HealthDatagramProbe, SilentTunnelIsAFailure) {
 }
 
 TEST(HealthControlProbe, NoBindSocketIsNoEvidence) {
-    const auto resolvers = fullTunnelPool();
-    ControlProbe probe(ControlProbe::BindSocket{}, resolvers);
+    LoopbackResolver resolver;
+    ASSERT_TRUE(resolver.ready());
+    ControlProbe probe(ControlProbe::BindSocket{}, resolver.peer());
 
     EXPECT_EQ(probe.run(DnsQuery(1, 2, 51000), std::chrono::milliseconds(10)),
               ProbeOutcome::NotRun)
@@ -315,7 +382,8 @@ TEST(HealthControlProbe, NoBindSocketIsNoEvidence) {
 }
 
 TEST(HealthControlProbe, TheDescriptorIsOfferedBeforeAnyTrafficLeavesIt) {
-    const auto resolvers = fullTunnelPool();
+    LoopbackResolver resolver;
+    ASSERT_TRUE(resolver.ready());
 
     int offered_fd = -1;
     int offered_family = 0;
@@ -324,11 +392,71 @@ TEST(HealthControlProbe, TheDescriptorIsOfferedBeforeAnyTrafficLeavesIt) {
             offered_fd = fd;
             offered_family = family;
         },
-        resolvers);
+        resolver.peer());
 
     const auto outcome = probe.run(DnsQuery(0x1234, 0x5678, 51000), std::chrono::milliseconds(10));
 
     EXPECT_NE(outcome, ProbeOutcome::NotRun);
     EXPECT_GE(offered_fd, 0) << "the socket was never offered for protection";
     EXPECT_EQ(offered_family, AF_INET);
+}
+
+TEST(HealthControlProbe, NoUplinkResolverIsNoEvidence) {
+    ControlProbe probe([](int, int) {}, std::nullopt);
+
+    EXPECT_EQ(probe.run(DnsQuery(1, 2, 51000), std::chrono::milliseconds(10)),
+              ProbeOutcome::NotRun)
+        << "with no resolver reachable off the tunnel the probe must not fabricate a verdict";
+}
+
+TEST(HealthControlProbe, AnsweredWhenUplinkResolverReplies) {
+    LoopbackResolver resolver;
+    ASSERT_TRUE(resolver.ready());
+    resolver.answer(false);
+
+    ControlProbe probe([](int, int) {}, resolver.peer());
+
+    EXPECT_EQ(probe.run(DnsQuery(0x1234, 0x5678, 51000), std::chrono::seconds(2)),
+              ProbeOutcome::Answered);
+}
+
+TEST(HealthControlProbe, ForeignDatagramIsIgnoredUntilAnswerArrives) {
+    LoopbackResolver resolver;
+    ASSERT_TRUE(resolver.ready());
+    resolver.answer(true);
+
+    ControlProbe probe([](int, int) {}, resolver.peer());
+
+    EXPECT_EQ(probe.run(DnsQuery(0x1234, 0x5678, 51000), std::chrono::seconds(2)),
+              ProbeOutcome::Answered)
+        << "a datagram that was not the answer ended the exchange";
+}
+
+TEST(HealthControlProbe, SilentResolverIsAFailure) {
+    LoopbackResolver resolver;
+    ASSERT_TRUE(resolver.ready());
+
+    ControlProbe probe([](int, int) {}, resolver.peer());
+
+    EXPECT_EQ(probe.run(DnsQuery(0x1234, 0x5678, 51000), std::chrono::milliseconds(300)),
+              ProbeOutcome::Failed);
+}
+
+TEST(HealthControlProbe, AbortMidWaitIsNoEvidence) {
+    LoopbackResolver resolver;
+    ASSERT_TRUE(resolver.ready());
+
+    ControlProbe probe([](int, int) {}, resolver.peer());
+    std::thread aborter([&probe] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        probe.abort();
+    });
+
+    const auto started = std::chrono::steady_clock::now();
+    const auto outcome = probe.run(DnsQuery(0x1234, 0x5678, 51000), std::chrono::seconds(30));
+    const auto took = std::chrono::steady_clock::now() - started;
+    aborter.join();
+
+    EXPECT_EQ(outcome, ProbeOutcome::NotRun) << "an aborted probe must not fabricate a verdict";
+    EXPECT_LT(took, std::chrono::seconds(5)) << "abort waited out the probe timeout";
 }

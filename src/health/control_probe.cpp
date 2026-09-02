@@ -15,26 +15,23 @@ constexpr std::chrono::milliseconds kAbortPollSlice{250};
 
 }
 
-ControlProbe::ControlProbe(BindSocket bind, const ResolverPool &resolvers)
-    : m_bind(std::move(bind)), m_resolvers(resolvers) {}
+ControlProbe::ControlProbe(BindSocket bind, std::optional<net::SockAddr> peer)
+    : m_bind(std::move(bind)), m_peer(std::move(peer)) {}
 
 ProbeOutcome ControlProbe::run(const DnsQuery &query, std::chrono::milliseconds timeout) {
-    if (!m_bind) {
+    if (!m_bind || !m_peer) {
         return ProbeOutcome::NotRun;
     }
-    const auto target = m_resolvers.select(Reachability::PhysicalInterface);
-    if (!target) {
-        return ProbeOutcome::NotRun;
-    }
-    auto socket = net::Socket::udp(target->family());
+    const int family = m_peer->data()->sa_family;
+    auto socket = net::Socket::udp(family);
     if (!socket) {
         return ProbeOutcome::NotRun;
     }
 
     m_aborted.store(false, std::memory_order_release);
-    m_bind(socket->native(), target->family());
+    m_bind(socket->native(), family);
 
-    if (!socket->connect(net::SockAddr(*target, kDnsPort)) || !socket->send(query.bytes())) {
+    if (!socket->connect(*m_peer) || !socket->send(query.bytes())) {
         return ProbeOutcome::Failed;
     }
 
