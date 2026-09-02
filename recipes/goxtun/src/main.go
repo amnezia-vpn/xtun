@@ -52,12 +52,10 @@ static inline void goxtun_sockcb_invoke(goxtun_sockcb cb, int fd, void *priv)
 import "C"
 
 import (
-	"errors"
 	"fmt"
 	"runtime/cgo"
 	"unsafe"
 
-	"github.com/amnezia-vpn/amneziawg-go/v3/device"
 	"github.com/amnezia-vpn/amneziawg-go/v3/tun"
 	"github.com/amnezia-vpn/libxtun/goxtun/awg"
 )
@@ -85,7 +83,7 @@ func goxtun_awg_new(
 	mtuCb C.goxtun_mtucb,
 	tunPriv unsafe.Pointer,
 	verbosefCb C.goxtun_logcb,
-	debugfCb C.goxtun_logcb,
+	errorfCb C.goxtun_logcb,
 	logPriv unsafe.Pointer,
 	sockCb C.goxtun_sockcb,
 	sockPriv unsafe.Pointer,
@@ -95,22 +93,23 @@ func goxtun_awg_new(
 			buf := bufs[0][offset:]
 			ret := int(C.goxtun_readcb_invoke(readCb, unsafe.Pointer(&buf[0]), C.int(len(buf)), tunPriv))
 			if ret < 0 {
-				return 0, errors.New("failed")
+				return 0, fmt.Errorf("failed to read from xtun: %d", ret)
 			}
 			sizes[0] = ret
 			return 1, nil
-		}, func(bufs [][]byte, offset int) (int, error) {
+		},
+		func(bufs [][]byte, offset int) (int, error) {
 			buf := bufs[0][offset:]
 			ret := int(C.goxtun_writecb_invoke(writeCb, unsafe.Pointer(&buf[0]), C.int(len(buf)), tunPriv))
 			if ret < 0 {
-				return 0, errors.New("failed")
+				return 0, fmt.Errorf("failed to write to xtun: %d", ret)
 			}
 			return 1, nil
 		},
 		func() (int, error) {
 			ret := int(C.goxtun_mtucb_invoke(mtuCb, tunPriv))
 			if ret < 0 {
-				return 0, errors.New("failed")
+				return 0, fmt.Errorf("failed to get mtu from xtun: %d", ret)
 			}
 			return ret, nil
 		},
@@ -120,20 +119,20 @@ func goxtun_awg_new(
 		C.goxtun_sockcb_invoke(sockCb, C.int(fd), sockPriv)
 	})
 
-	log := &device.Logger{
-		Verbosef: func(format string, args ...any) {
+	log := awg.NewLogger(
+		func(format string, args ...any) {
 			str := fmt.Sprintf(format, args...)
 			cstr := C.CString(str)
 			C.goxtun_logcb_invoke(verbosefCb, cstr, logPriv)
 			C.free(unsafe.Pointer(cstr))
 		},
-		Errorf: func(format string, args ...any) {
+		func(format string, args ...any) {
 			str := fmt.Sprintf(format, args...)
 			cstr := C.CString(str)
-			C.goxtun_logcb_invoke(debugfCb, cstr, logPriv)
+			C.goxtun_logcb_invoke(errorfCb, cstr, logPriv)
 			C.free(unsafe.Pointer(cstr))
 		},
-	}
+	)
 
 	i := awg.NewInstance(tun, bind, log)
 	return toCtx(i)
