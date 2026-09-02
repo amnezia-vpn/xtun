@@ -5,17 +5,19 @@ import (
 	"github.com/amnezia-vpn/amneziawg-go/v3/tun"
 )
 
-func NewInstance(tun *Tun, bind *Bind, logger *device.Logger) *Instance {
-	dev := device.NewDevice(tun, bind, logger)
+func NewInstance(tun *Tun, bind *Bind, log *Logger) *Instance {
+	dev := device.NewDevice(tun, bind, &log.Logger)
 	return &Instance{
 		Device: dev,
 		tun:    tun,
+		log:    log,
 	}
 }
 
 type Instance struct {
 	*device.Device
 	tun *Tun
+	log *Logger
 }
 
 func (i *Instance) SetConf(uapi string) error {
@@ -24,6 +26,7 @@ func (i *Instance) SetConf(uapi string) error {
 
 func (i *Instance) Close() {
 	i.Device.Close()
+	i.log.Close()
 }
 
 func (i *Instance) TriggerEvent(event tun.Event) {
