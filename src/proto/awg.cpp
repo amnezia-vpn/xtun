@@ -80,6 +80,9 @@ int Awg::start(TunnelIo &io) {
     if (char *err = goxtun_awg_setconf(m_ctx, &uapi[0]); err != nullptr) {
         emitLog(err);
         goxtun_free(err);
+        cancelIo();
+        goxtun_awg_free(m_ctx);
+        m_ctx = nullptr;
         return LIBXTUN_ERR_INVALID_ARGS;
     }
 

@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <vector>
 

@@ -555,6 +555,29 @@ TEST(AwgRealTun, FullTunnelDeliversThroughKernelTun) {
     ASSERT_TRUE(delivered) << "packet did not traverse the real tun to peer B";
 }
 
+TEST(AwgRealTun, RejectedDeviceConfigReleasesTheTunReader) {
+    if (!privileged()) {
+        GTEST_SKIP() << "skipped: real kernel tun + netns require root";
+    }
+
+    if (!insidePrivateNetns()) {
+        ASSERT_EQ(runTestInPrivateNetns(), 0)
+            << "the test failed in its private network namespace; see the child output above";
+        return;
+    }
+
+    libxtun_tunnel_opts opts = realtunOpts();
+    libxtun::Tunnel tunnel(opts);
+    ASSERT_EQ(tunnel.openTun(), LIBXTUN_OK);
+
+    const std::string conf =
+        std::string("[Interface]\n") + "PrivateKey = " + kPrivA + "\n" + "I1 = <unclosed\n";
+    libxtun::proto::Awg rejected(libxtun::proto::awg::Config::fromConf(conf).value());
+
+    EXPECT_NE(tunnel.attachProxy(&rejected), LIBXTUN_OK)
+        << "the rejected device never released the blocked tun reader, so the attach hung";
+}
+
 TEST(AwgRealTun, MarkedHandshakeBypassesTunnel) {
     if (!privileged()) {
         GTEST_SKIP() << "skipped: real kernel tun + netns require root";
