@@ -5,6 +5,7 @@
 #include "util/result.h"
 
 #include <memory>
+#include <mutex>
 #include <string>
 
 #ifndef AWG_H
@@ -34,6 +35,7 @@ class Awg : public Proxy, private NonCopyable {
 
     awg::Config m_conf;
     TunnelIo *m_io = nullptr;
+    std::mutex m_ctxMtx;
     void *m_ctx = nullptr;
 };
 

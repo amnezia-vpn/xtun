@@ -63,6 +63,7 @@ ResultXtun<std::unique_ptr<Awg>> Awg::create(const std::string& str) {
 }
 
 int Awg::start(TunnelIo &io) {
+    std::lock_guard<std::mutex> lock(m_ctxMtx);
     if (m_ctx != nullptr) {
         return LIBXTUN_ERR_INVALID_ARGS;
     }
@@ -86,6 +87,7 @@ int Awg::start(TunnelIo &io) {
 }
 
 void Awg::event(ProxyEvent ev) {
+    std::lock_guard<std::mutex> lock(m_ctxMtx);
     if (m_ctx == nullptr) {
         return;
     }
@@ -104,6 +106,7 @@ void Awg::event(ProxyEvent ev) {
 }
 
 void Awg::stop() {
+    std::lock_guard<std::mutex> lock(m_ctxMtx);
     if (m_ctx == nullptr) {
         return;
     }

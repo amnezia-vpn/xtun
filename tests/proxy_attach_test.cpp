@@ -381,9 +381,28 @@ TEST(ProxyStatus, DisconnectedHaltsIoAndDetachesFromTunnel) {
     EXPECT_EQ(StatusSpy::values[0], LIBXTUN_STATUS_DISCONNECTED);
     EXPECT_EQ(proxy.io->write(packet), libxtun::kIoFatal) << "the dead tunnel still carried traffic";
     EXPECT_EQ(device.written(), 1u) << "traffic reached the device after the teardown";
+    EXPECT_EQ(proxy.stopCalls, 1) << "the protocol was left running on a tunnel declared dead";
 
     libxtun::Tunnel next(opts);
     EXPECT_EQ(next.attachProxy(&proxy), LIBXTUN_OK) << "the torn down proxy still looks attached";
+}
+
+TEST(ProxyStatus, DisconnectedStopsTheProtocolOnlyOnce) {
+    StatusSpy::reset();
+
+    RecordingProxy proxy;
+    proxy.bind(libxtun::ClientCallbacks{.on_status = &StatusSpy::handler});
+
+    libxtun_tunnel_opts opts = default_opts();
+    {
+        libxtun::Tunnel tunnel(opts);
+        ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
+
+        proxy.report(libxtun::health::ConnectionState::Disconnected);
+        ASSERT_EQ(proxy.stopCalls, 1);
+    }
+
+    EXPECT_EQ(proxy.stopCalls, 1) << "the tunnel stopped a proxy the verdict had already stopped";
 }
 
 TEST(ProxyStatus, StateReportedAfterDetachIsHarmless) {
