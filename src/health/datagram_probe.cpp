@@ -22,6 +22,9 @@ ProbeOutcome DatagramProbe::run(const DnsQuery &query, std::chrono::milliseconds
 
     {
         std::lock_guard<std::mutex> lock(m_mtx);
+        if (m_aborted) {
+            return ProbeOutcome::NotRun;
+        }
         m_datagram = net::buildUdpDatagram(*source, *target, query.sourcePort(), kDnsPort,
                                            query.bytes());
         if (m_datagram.empty()) {
@@ -32,7 +35,6 @@ ProbeOutcome DatagramProbe::run(const DnsQuery &query, std::chrono::milliseconds
         m_target = *target;
         m_staged = false;
         m_answered = false;
-        m_aborted = false;
         m_awaiting.store(true, std::memory_order_release);
     }
 

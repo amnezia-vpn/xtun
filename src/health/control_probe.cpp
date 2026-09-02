@@ -19,7 +19,7 @@ ControlProbe::ControlProbe(BindSocket bind, std::optional<net::SockAddr> peer)
     : m_bind(std::move(bind)), m_peer(std::move(peer)) {}
 
 ProbeOutcome ControlProbe::run(const DnsQuery &query, std::chrono::milliseconds timeout) {
-    if (!m_bind || !m_peer) {
+    if (!m_bind || !m_peer || m_aborted.load(std::memory_order_acquire)) {
         return ProbeOutcome::NotRun;
     }
     const int family = m_peer->data()->sa_family;
@@ -28,7 +28,6 @@ ProbeOutcome ControlProbe::run(const DnsQuery &query, std::chrono::milliseconds 
         return ProbeOutcome::NotRun;
     }
 
-    m_aborted.store(false, std::memory_order_release);
     m_bind(socket->native(), family);
 
     if (!socket->connect(*m_peer) || !socket->send(query.bytes())) {

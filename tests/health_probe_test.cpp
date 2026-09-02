@@ -363,6 +363,22 @@ TEST(HealthDatagramProbe, DatagramLargerThanTheBufferIsNotStaged) {
     EXPECT_GT(into_large, 0) << "a rejected small buffer consumed the staged datagram";
 }
 
+TEST(HealthDatagramProbe, AbortBeforeRunKeepsTheProbeOffTheTun) {
+    const auto resolvers = fullTunnelPool();
+    int wakes = 0;
+    DatagramProbe probe(resolvers, [&wakes] { ++wakes; });
+
+    probe.abort();
+
+    const auto started = std::chrono::steady_clock::now();
+    const auto outcome = probe.run(DnsQuery(1, 2, 51000), std::chrono::seconds(2));
+    const auto took = std::chrono::steady_clock::now() - started;
+
+    EXPECT_EQ(outcome, ProbeOutcome::NotRun) << "a probe aborted before it ran reported a verdict";
+    EXPECT_EQ(wakes, 0) << "a stopped probe still asked the tunnel to carry a datagram";
+    EXPECT_LT(took, std::chrono::milliseconds(500)) << "the abort was lost and the probe waited";
+}
+
 TEST(HealthDatagramProbe, SilentTunnelIsAFailure) {
     const auto resolvers = fullTunnelPool();
     DatagramProbe probe(resolvers, [] {});
@@ -440,6 +456,24 @@ TEST(HealthControlProbe, SilentResolverIsAFailure) {
 
     EXPECT_EQ(probe.run(DnsQuery(0x1234, 0x5678, 51000), std::chrono::milliseconds(300)),
               ProbeOutcome::Failed);
+}
+
+TEST(HealthControlProbe, AbortBeforeRunIsNoEvidence) {
+    LoopbackResolver resolver;
+    ASSERT_TRUE(resolver.ready());
+
+    int offered = 0;
+    ControlProbe probe([&offered](int, int) { ++offered; }, resolver.peer());
+
+    probe.abort();
+
+    const auto started = std::chrono::steady_clock::now();
+    const auto outcome = probe.run(DnsQuery(0x1234, 0x5678, 51000), std::chrono::seconds(2));
+    const auto took = std::chrono::steady_clock::now() - started;
+
+    EXPECT_EQ(outcome, ProbeOutcome::NotRun) << "a probe aborted before it ran reported a verdict";
+    EXPECT_EQ(offered, 0) << "a stopped probe still opened a socket and sent a query";
+    EXPECT_LT(took, std::chrono::milliseconds(500)) << "the abort was lost and the probe waited";
 }
 
 TEST(HealthControlProbe, AbortMidWaitIsNoEvidence) {
