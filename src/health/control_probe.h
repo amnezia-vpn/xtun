@@ -10,22 +10,24 @@
 #include <chrono>
 #include <functional>
 
-namespace libxtun::health {
+namespace libxtun::health
+{
 
-class ControlProbe final : public ConnectivityProbe, private NonCopyable {
-  public:
-    using BindSocket = std::function<void(int fd, int family)>;
+    class ControlProbe final : public ConnectivityProbe, private NonCopyable
+    {
+    public:
+        using BindSocket = std::function<void(int fd, int family)>;
 
-    ControlProbe(BindSocket bind, const ResolverPool &resolvers);
+        ControlProbe(BindSocket bind, const ResolverPool &resolvers);
 
-    ProbeOutcome run(const DnsQuery &query, std::chrono::milliseconds timeout) override;
-    void abort() noexcept override;
+        ProbeOutcome run(const DnsQuery &query, std::chrono::milliseconds timeout) override;
+        void abort() noexcept override;
 
-  private:
-    BindSocket m_bind;
-    const ResolverPool &m_resolvers;
-    std::atomic<bool> m_aborted{false};
-};
+    private:
+        BindSocket m_bind;
+        const ResolverPool &m_resolvers;
+        std::atomic<bool> m_aborted { false };
+    };
 
 }
 

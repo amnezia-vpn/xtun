@@ -7,7 +7,6 @@
 #include <wintun.h>
 #include <ws2tcpip.h>
 
-
 #include <atomic>
 
 namespace libxtun

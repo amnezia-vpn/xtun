@@ -3,20 +3,27 @@
 
 #include <functional>
 
-namespace libxtun::health {
+namespace libxtun::health
+{
 
-enum class ConnectionState { Unknown, Connected, NoNetwork, Disconnected };
+    enum class ConnectionState {
+        Unknown,
+        Connected,
+        NoNetwork,
+        Disconnected
+    };
 
-class HealthListener {
-  public:
-    virtual ~HealthListener() = default;
+    class HealthListener
+    {
+    public:
+        virtual ~HealthListener() = default;
 
-    virtual void onConnectionState(ConnectionState state) noexcept = 0;
-};
+        virtual void onConnectionState(ConnectionState state) noexcept = 0;
+    };
 
-using LogSink = std::function<void(const char *)>;
+    using LogSink = std::function<void(const char *)>;
 
-class HealthSubsystem;
+    class HealthSubsystem;
 
 }
 

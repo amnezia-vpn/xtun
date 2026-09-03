@@ -1,10 +1,11 @@
 #ifndef NONCOPYABLE_H
 #define NONCOPYABLE_H
 
-struct NonCopyable {
+struct NonCopyable
+{
     NonCopyable() = default;
-    NonCopyable(const NonCopyable&)            = delete;
-    NonCopyable& operator=(const NonCopyable&) = delete;
+    NonCopyable(const NonCopyable &) = delete;
+    NonCopyable &operator=(const NonCopyable &) = delete;
 };
 
 #endif

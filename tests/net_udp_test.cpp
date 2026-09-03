@@ -1,6 +1,6 @@
 #include "net/ip.h"
-#include "net/udp.h"
 #include "net/network_order.h"
+#include "net/udp.h"
 
 #include <gtest/gtest.h>
 
@@ -11,48 +11,54 @@
 #include <string_view>
 #include <vector>
 
-namespace {
+namespace
+{
 
-using libxtun::net::buildUdpDatagram;
-using libxtun::net::internetChecksum;
-using libxtun::net::IpAddress;
-using libxtun::net::kIpv4HeaderLen;
-using libxtun::net::kIpv6HeaderLen;
-using libxtun::net::UdpDatagramView;
+    using libxtun::net::buildUdpDatagram;
+    using libxtun::net::internetChecksum;
+    using libxtun::net::IpAddress;
+    using libxtun::net::kIpv4HeaderLen;
+    using libxtun::net::kIpv6HeaderLen;
+    using libxtun::net::UdpDatagramView;
 
-IpAddress addr(const char *text) {
-    return IpAddress::parse(text).value_or(IpAddress{});
-}
-
-std::vector<std::byte> bytesOf(std::string_view text) {
-    std::vector<std::byte> out;
-    out.reserve(text.size());
-    for (char c : text) {
-        out.push_back(static_cast<std::byte>(c));
+    IpAddress addr(const char *text)
+    {
+        return IpAddress::parse(text).value_or(IpAddress {});
     }
-    return out;
-}
 
-}  // namespace
+    std::vector<std::byte> bytesOf(std::string_view text)
+    {
+        std::vector<std::byte> out;
+        out.reserve(text.size());
+        for (char c : text) {
+            out.push_back(static_cast<std::byte>(c));
+        }
+        return out;
+    }
 
-TEST(NetUdp, ChecksumMatchesRfc1071Example) {
-    const std::array<std::byte, 8> data{std::byte{0x00}, std::byte{0x01}, std::byte{0xf2},
-                                        std::byte{0x03}, std::byte{0xf4}, std::byte{0xf5},
-                                        std::byte{0xf6}, std::byte{0xf7}};
+} // namespace
+
+TEST(NetUdp, ChecksumMatchesRfc1071Example)
+{
+    const std::array<std::byte, 8> data { std::byte { 0x00 }, std::byte { 0x01 }, std::byte { 0xf2 },
+                                          std::byte { 0x03 }, std::byte { 0xf4 }, std::byte { 0xf5 },
+                                          std::byte { 0xf6 }, std::byte { 0xf7 } };
 
     EXPECT_EQ(internetChecksum(data), 0x220d);
 }
 
-TEST(NetUdp, ChecksumOfAValidatedHeaderIsZero) {
+TEST(NetUdp, ChecksumOfAValidatedHeaderIsZero)
+{
     const auto payload = bytesOf("probe");
     const auto packet = buildUdpDatagram(addr("10.9.9.1"), addr("1.1.1.1"), 51000, 53, payload);
     ASSERT_FALSE(packet.empty());
 
-    EXPECT_EQ(internetChecksum({packet.data(), kIpv4HeaderLen}), 0)
-        << "the receiver-side check over the IPv4 header did not cancel out";
+    EXPECT_EQ(internetChecksum({ packet.data(), kIpv4HeaderLen }), 0)
+            << "the receiver-side check over the IPv4 header did not cancel out";
 }
 
-TEST(NetUdp, V4RoundTrip) {
+TEST(NetUdp, V4RoundTrip)
+{
     const auto payload = bytesOf("xtun-probe");
     const auto packet = buildUdpDatagram(addr("10.9.9.1"), addr("1.1.1.1"), 51000, 53, payload);
     ASSERT_EQ(packet.size(), kIpv4HeaderLen + 8 + payload.size());
@@ -67,10 +73,10 @@ TEST(NetUdp, V4RoundTrip) {
     EXPECT_TRUE(std::equal(payload.begin(), payload.end(), view->payload().begin()));
 }
 
-TEST(NetUdp, V6RoundTrip) {
+TEST(NetUdp, V6RoundTrip)
+{
     const auto payload = bytesOf("xtun-probe-v6");
-    const auto packet =
-        buildUdpDatagram(addr("2001:db8::2"), addr("2606:4700:4700::1111"), 49999, 53, payload);
+    const auto packet = buildUdpDatagram(addr("2001:db8::2"), addr("2606:4700:4700::1111"), 49999, 53, payload);
     ASSERT_EQ(packet.size(), kIpv6HeaderLen + 8 + payload.size());
 
     const auto view = UdpDatagramView::parse(packet);
@@ -83,7 +89,8 @@ TEST(NetUdp, V6RoundTrip) {
     EXPECT_TRUE(std::equal(payload.begin(), payload.end(), view->payload().begin()));
 }
 
-TEST(NetUdp, TheViewBorrowsRatherThanCopies) {
+TEST(NetUdp, TheViewBorrowsRatherThanCopies)
+{
     const auto payload = bytesOf("borrowed");
     auto packet = buildUdpDatagram(addr("10.9.9.1"), addr("1.1.1.1"), 51000, 53, payload);
 
@@ -96,14 +103,16 @@ TEST(NetUdp, TheViewBorrowsRatherThanCopies) {
     EXPECT_EQ(view->sourcePort(), 51001) << "the view decoded a copy, not the caller's buffer";
 }
 
-TEST(NetUdp, MismatchedOrInvalidFamiliesBuildNothing) {
+TEST(NetUdp, MismatchedOrInvalidFamiliesBuildNothing)
+{
     const auto payload = bytesOf("x");
 
     EXPECT_TRUE(buildUdpDatagram(addr("10.9.9.1"), addr("2001:db8::1"), 1, 2, payload).empty());
-    EXPECT_TRUE(buildUdpDatagram(IpAddress{}, addr("1.1.1.1"), 1, 2, payload).empty());
+    EXPECT_TRUE(buildUdpDatagram(IpAddress {}, addr("1.1.1.1"), 1, 2, payload).empty());
 }
 
-TEST(NetUdp, ParseRejectsMalformedPackets) {
+TEST(NetUdp, ParseRejectsMalformedPackets)
+{
     const auto payload = bytesOf("xtun");
     const auto packet = buildUdpDatagram(addr("10.9.9.1"), addr("1.1.1.1"), 51000, 53, payload);
 
@@ -135,14 +144,13 @@ TEST(NetUdp, ParseRejectsMalformedPackets) {
 
     auto lying_length = packet;
     libxtun::net::writeBigEndian16(lying_length, kIpv4HeaderLen + 4, 4000);
-    EXPECT_FALSE(UdpDatagramView::parse(lying_length).has_value())
-        << "a UDP length past the end of the buffer parsed";
+    EXPECT_FALSE(UdpDatagramView::parse(lying_length).has_value()) << "a UDP length past the end of the buffer parsed";
 }
 
-TEST(NetUdp, ParseRejectsMalformedV6Packets) {
+TEST(NetUdp, ParseRejectsMalformedV6Packets)
+{
     const auto payload = bytesOf("xtun");
-    const auto packet =
-        buildUdpDatagram(addr("2001:db8::2"), addr("2001:db8::1"), 51000, 53, payload);
+    const auto packet = buildUdpDatagram(addr("2001:db8::2"), addr("2001:db8::1"), 51000, 53, payload);
 
     auto truncated = packet;
     truncated.resize(kIpv6HeaderLen - 1);
@@ -157,7 +165,8 @@ TEST(NetUdp, ParseRejectsMalformedV6Packets) {
     EXPECT_FALSE(UdpDatagramView::parse(lying_length).has_value());
 }
 
-TEST(NetUdp, EmptyPayloadIsAValidDatagram) {
+TEST(NetUdp, EmptyPayloadIsAValidDatagram)
+{
     const auto packet = buildUdpDatagram(addr("10.9.9.1"), addr("1.1.1.1"), 51000, 53, {});
     ASSERT_EQ(packet.size(), kIpv4HeaderLen + 8);
 

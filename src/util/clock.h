@@ -3,31 +3,37 @@
 
 #include <chrono>
 
-namespace libxtun {
+namespace libxtun
+{
 
-class Clock {
-  public:
-    virtual ~Clock() = default;
+    class Clock
+    {
+    public:
+        virtual ~Clock() = default;
 
-    virtual std::chrono::steady_clock::time_point steadyNow() const noexcept = 0;
-    virtual std::chrono::system_clock::time_point wallNow() const noexcept = 0;
-};
+        virtual std::chrono::steady_clock::time_point steadyNow() const noexcept = 0;
+        virtual std::chrono::system_clock::time_point wallNow() const noexcept = 0;
+    };
 
-class RealClock final : public Clock {
-  public:
-    static const RealClock &instance() noexcept {
-        static const RealClock clock;
-        return clock;
-    }
+    class RealClock final : public Clock
+    {
+    public:
+        static const RealClock &instance() noexcept
+        {
+            static const RealClock clock;
+            return clock;
+        }
 
-    std::chrono::steady_clock::time_point steadyNow() const noexcept override {
-        return std::chrono::steady_clock::now();
-    }
+        std::chrono::steady_clock::time_point steadyNow() const noexcept override
+        {
+            return std::chrono::steady_clock::now();
+        }
 
-    std::chrono::system_clock::time_point wallNow() const noexcept override {
-        return std::chrono::system_clock::now();
-    }
-};
+        std::chrono::system_clock::time_point wallNow() const noexcept override
+        {
+            return std::chrono::system_clock::now();
+        }
+    };
 
 }
 

@@ -20,7 +20,6 @@
 #include <sys/uio.h>
 #include <unistd.h>
 
-
 namespace libxtun
 {
 

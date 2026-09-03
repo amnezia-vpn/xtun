@@ -5,32 +5,42 @@
 #include <cstddef>
 #include <span>
 
-namespace libxtun::health {
+namespace libxtun::health
+{
 
-class DnsQuery;
+    class DnsQuery;
 
-enum class ProbeStyle { Datagram };
+    enum class ProbeStyle {
+        Datagram
+    };
 
-enum class ProbeOutcome { NotRun, Answered, Failed };
+    enum class ProbeOutcome {
+        NotRun,
+        Answered,
+        Failed
+    };
 
-class ConnectivityProbe {
-  public:
-    virtual ~ConnectivityProbe() = default;
+    class ConnectivityProbe
+    {
+    public:
+        virtual ~ConnectivityProbe() = default;
 
-    [[nodiscard]] virtual ProbeOutcome run(const DnsQuery &query,
-                                           std::chrono::milliseconds timeout) = 0;
-    virtual void abort() noexcept = 0;
-};
+        [[nodiscard]] virtual ProbeOutcome run(const DnsQuery &query, std::chrono::milliseconds timeout) = 0;
+        virtual void abort() noexcept = 0;
+    };
 
-class PacketInterceptor {
-  public:
-    virtual ~PacketInterceptor() = default;
+    class PacketInterceptor
+    {
+    public:
+        virtual ~PacketInterceptor() = default;
 
-    virtual int stage(std::span<std::byte> buf) noexcept = 0;
-    [[nodiscard]] virtual bool capture(std::span<const std::byte> packet) noexcept = 0;
-};
+        virtual int stage(std::span<std::byte> buf) noexcept = 0;
+        [[nodiscard]] virtual bool capture(std::span<const std::byte> packet) noexcept = 0;
+    };
 
-class TunnelProbe : public ConnectivityProbe, public PacketInterceptor {};
+    class TunnelProbe : public ConnectivityProbe, public PacketInterceptor
+    {
+    };
 
 }
 
