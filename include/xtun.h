@@ -1,7 +1,7 @@
-#include <stddef.h>
-
 #ifndef XTUN_H
 #define XTUN_H
+
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -42,7 +42,8 @@ enum libxtun_status {
     LIBXTUN_STATUS_NO_NETWORK = 3,
 };
 
-struct libxtun_proxy {
+struct libxtun_proxy
+{
     void *handle;
 
     void (*onsockspawn)(int fd, void *priv);
@@ -58,7 +59,8 @@ struct libxtun_proxy {
 int libxtun_proxy_new(struct libxtun_proxy *proxy, enum libxtun_proxy_proto proto, const char *conf);
 void libxtun_proxy_free(struct libxtun_proxy *proxy);
 
-struct libxtun_tunnel {
+struct libxtun_tunnel
+{
     void *handle;
 };
 
@@ -69,7 +71,8 @@ enum libxtun_killswitch_mode {
     LIBXTUN_KILLSWITCH_MODE_LAST = LIBXTUN_KILLSWITCH_MODE_HARD,
 };
 
-struct libxtun_tunnel_opts {
+struct libxtun_tunnel_opts
+{
     size_t size;
     const char *const *dns;
     const char *const *dns_exceptions;

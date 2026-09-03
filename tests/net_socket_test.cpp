@@ -10,29 +10,33 @@
 #include <utility>
 
 #if !defined(_WIN32)
-#include <fcntl.h>
+    #include <fcntl.h>
 #endif
 
-namespace {
+namespace
+{
 
-using libxtun::net::IpAddress;
-using libxtun::net::SockAddr;
-using libxtun::net::Socket;
+    using libxtun::net::IpAddress;
+    using libxtun::net::SockAddr;
+    using libxtun::net::Socket;
 
-bool descriptorIsOpen(int fd) {
+    bool descriptorIsOpen(int fd)
+    {
 #if defined(_WIN32)
-    WSAPROTOCOL_INFOW info{};
-    int len = sizeof(info);
-    return ::getsockopt(libxtun::net::fromAbiDescriptor(fd), SOL_SOCKET, SO_PROTOCOL_INFOW,
-                        reinterpret_cast<char *>(&info), &len) == 0;
+        WSAPROTOCOL_INFOW info {};
+        int len = sizeof(info);
+        return ::getsockopt(libxtun::net::fromAbiDescriptor(fd), SOL_SOCKET, SO_PROTOCOL_INFOW,
+                            reinterpret_cast<char *>(&info), &len)
+                == 0;
 #else
-    return ::fcntl(fd, F_GETFD) != -1;
+        return ::fcntl(fd, F_GETFD) != -1;
 #endif
-}
+    }
 
-}  // namespace
+} // namespace
 
-TEST(NetSocket, UdpOpensBothFamilies) {
+TEST(NetSocket, UdpOpensBothFamilies)
+{
     auto v4 = Socket::udp(AF_INET);
     ASSERT_TRUE(v4.has_value());
     EXPECT_TRUE(descriptorIsOpen(v4->native()));
@@ -44,7 +48,8 @@ TEST(NetSocket, UdpOpensBothFamilies) {
     }
 }
 
-TEST(NetSocket, ClosesExactlyOnceWhenScopeEnds) {
+TEST(NetSocket, ClosesExactlyOnceWhenScopeEnds)
+{
     int fd = -1;
     {
         auto socket = Socket::udp(AF_INET);
@@ -56,7 +61,8 @@ TEST(NetSocket, ClosesExactlyOnceWhenScopeEnds) {
     EXPECT_FALSE(descriptorIsOpen(fd)) << "the descriptor outlived its owner";
 }
 
-TEST(NetSocket, MovedFromSocketDoesNotCloseTheDescriptor) {
+TEST(NetSocket, MovedFromSocketDoesNotCloseTheDescriptor)
+{
     auto source = Socket::udp(AF_INET);
     ASSERT_TRUE(source.has_value());
     const int fd = source->native();
@@ -73,10 +79,11 @@ TEST(NetSocket, MovedFromSocketDoesNotCloseTheDescriptor) {
     source.reset();
 
     EXPECT_TRUE(descriptorIsOpen(reuser->native()))
-        << "destroying the moved-from socket closed whatever took over its descriptor";
+            << "destroying the moved-from socket closed whatever took over its descriptor";
 }
 
-TEST(NetSocket, MoveAssignmentClosesTheOverwrittenDescriptor) {
+TEST(NetSocket, MoveAssignmentClosesTheOverwrittenDescriptor)
+{
     auto first = Socket::udp(AF_INET);
     auto second = Socket::udp(AF_INET);
     ASSERT_TRUE(first.has_value());
@@ -93,19 +100,20 @@ TEST(NetSocket, MoveAssignmentClosesTheOverwrittenDescriptor) {
     EXPECT_TRUE(descriptorIsOpen(kept));
 }
 
-TEST(NetSocket, ConnectAndSendReachALocalListener) {
+TEST(NetSocket, ConnectAndSendReachALocalListener)
+{
     auto listener = Socket::udp(AF_INET);
     ASSERT_TRUE(listener.has_value());
 
-    sockaddr_in bound{};
+    sockaddr_in bound {};
     bound.sin_family = AF_INET;
     bound.sin_port = 0;
     ::inet_pton(AF_INET, "127.0.0.1", &bound.sin_addr);
-    ASSERT_EQ(::bind(libxtun::net::fromAbiDescriptor(listener->native()),
-                     reinterpret_cast<sockaddr *>(&bound), sizeof(bound)),
+    ASSERT_EQ(::bind(libxtun::net::fromAbiDescriptor(listener->native()), reinterpret_cast<sockaddr *>(&bound),
+                     sizeof(bound)),
               0);
 
-    sockaddr_in assigned{};
+    sockaddr_in assigned {};
     socklen_t assigned_len = sizeof(assigned);
     ASSERT_EQ(::getsockname(libxtun::net::fromAbiDescriptor(listener->native()),
                             reinterpret_cast<sockaddr *>(&assigned), &assigned_len),
@@ -116,19 +124,19 @@ TEST(NetSocket, ConnectAndSendReachALocalListener) {
     const SockAddr peer(IpAddress::parse("127.0.0.1").value(), ntohs(assigned.sin_port));
     ASSERT_TRUE(sender->connect(peer));
 
-    const std::array<std::byte, 4> payload{std::byte{'p'}, std::byte{'i'}, std::byte{'n'},
-                                           std::byte{'g'}};
+    const std::array<std::byte, 4> payload { std::byte { 'p' }, std::byte { 'i' }, std::byte { 'n' }, std::byte { 'g' } };
     ASSERT_TRUE(sender->send(payload));
 
     ASSERT_TRUE(listener->waitReadable(std::chrono::milliseconds(500)));
-    std::array<std::byte, 16> buf{};
+    std::array<std::byte, 16> buf {};
     const auto received = listener->receive(buf);
     ASSERT_TRUE(received.has_value());
     EXPECT_EQ(*received, payload.size());
-    EXPECT_EQ(buf[0], std::byte{'p'});
+    EXPECT_EQ(buf[0], std::byte { 'p' });
 }
 
-TEST(NetSocket, WaitReadableTimesOutOnASilentSocket) {
+TEST(NetSocket, WaitReadableTimesOutOnASilentSocket)
+{
     auto socket = Socket::udp(AF_INET);
     ASSERT_TRUE(socket.has_value());
 

@@ -13,133 +13,145 @@
 #include <vector>
 
 #if defined(_WIN32)
-#include <winsock2.h>
+    #include <winsock2.h>
 #else
-#include <sys/socket.h>
+    #include <sys/socket.h>
 #endif
 
-namespace {
+namespace
+{
 
-constexpr bool kVerbose = false;
+    constexpr bool kVerbose = false;
 
-constexpr const char *kPrivA = "YHJIKcg6kMlHqmHvpdetXH9300wKO4NxqX1L+v9h20A=";
-constexpr const char *kPubA = "dpY/lgMy5OZPe6EVFl25AYL8hCsNEPxzO2uZZdzLnlo=";
-constexpr const char *kPrivB = "CPbRqDXAuXNShMCXDVQ6d7mKeVAk2isLmqSNOnVWGWs=";
-constexpr const char *kPubB = "sB1wCAUCSBg8mrN8n4mPMAs4Z2C9QUCu3i6Emfb9omo=";
+    constexpr const char *kPrivA = "YHJIKcg6kMlHqmHvpdetXH9300wKO4NxqX1L+v9h20A=";
+    constexpr const char *kPubA = "dpY/lgMy5OZPe6EVFl25AYL8hCsNEPxzO2uZZdzLnlo=";
+    constexpr const char *kPrivB = "CPbRqDXAuXNShMCXDVQ6d7mKeVAk2isLmqSNOnVWGWs=";
+    constexpr const char *kPubB = "sB1wCAUCSBg8mrN8n4mPMAs4Z2C9QUCu3i6Emfb9omo=";
 
-constexpr int kPortA = 56811;
-constexpr int kPortB = 56812;
+    constexpr int kPortA = 56811;
+    constexpr int kPortB = 56812;
 
-constexpr const char *kAwgParams =
-    "Jc = 2\n"
-    "Jmin = 8\n"
-    "Jmax = 16\n"
-    "S1 = 4\n"
-    "S2 = 6\n"
-    "H1 = 1234567891\n"
-    "H2 = 1234567892\n"
-    "H3 = 1234567893\n"
-    "H4 = 1234567894\n";
+    constexpr const char *kAwgParams = "Jc = 2\n"
+                                       "Jmin = 8\n"
+                                       "Jmax = 16\n"
+                                       "S1 = 4\n"
+                                       "S2 = 6\n"
+                                       "H1 = 1234567891\n"
+                                       "H2 = 1234567892\n"
+                                       "H3 = 1234567893\n"
+                                       "H4 = 1234567894\n";
 
-void logA(const char *str, void *) {
-    if (kVerbose) {
-        std::fprintf(stderr, "[A] %s\n", str);
+    void logA(const char *str, void *)
+    {
+        if (kVerbose) {
+            std::fprintf(stderr, "[A] %s\n", str);
+        }
     }
-}
 
-void logB(const char *str, void *) {
-    if (kVerbose) {
-        std::fprintf(stderr, "[B] %s\n", str);
+    void logB(const char *str, void *)
+    {
+        if (kVerbose) {
+            std::fprintf(stderr, "[B] %s\n", str);
+        }
     }
-}
 
-bool liveSocket(int fd) {
-    sockaddr_storage ss{};
+    bool liveSocket(int fd)
+    {
+        sockaddr_storage ss {};
 #if defined(_WIN32)
-    int len = sizeof(ss);
-    return ::getsockname(static_cast<SOCKET>(fd), reinterpret_cast<sockaddr *>(&ss), &len) == 0;
+        int len = sizeof(ss);
+        return ::getsockname(static_cast<SOCKET>(fd), reinterpret_cast<sockaddr *>(&ss), &len) == 0;
 #else
-    socklen_t len = sizeof(ss);
-    return ::getsockname(fd, reinterpret_cast<sockaddr *>(&ss), &len) == 0;
+        socklen_t len = sizeof(ss);
+        return ::getsockname(fd, reinterpret_cast<sockaddr *>(&ss), &len) == 0;
 #endif
-}
+    }
 
-class SocketRecorder {
-  public:
-    struct Offer {
-        int fd = -1;
-        bool live = false;
+    class SocketRecorder
+    {
+    public:
+        struct Offer
+        {
+            int fd = -1;
+            bool live = false;
+        };
+
+        static void handler(int fd, void *priv)
+        {
+            auto *self = static_cast<SocketRecorder *>(priv);
+            std::lock_guard<std::mutex> lock(self->m_mutex);
+            self->m_offers.push_back({ fd, liveSocket(fd) });
+        }
+
+        std::vector<Offer> offers() const
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            return m_offers;
+        }
+
+    private:
+        mutable std::mutex m_mutex;
+        std::vector<Offer> m_offers;
     };
 
-    static void handler(int fd, void *priv) {
-        auto *self = static_cast<SocketRecorder *>(priv);
-        std::lock_guard<std::mutex> lock(self->m_mutex);
-        self->m_offers.push_back({fd, liveSocket(fd)});
+    libxtun::proto::awg::Config confA()
+    {
+        ;
+        const std::string str = std::string("[Interface]\n") + "PrivateKey = " + kPrivA + "\n"
+                + "ListenPort = " + std::to_string(kPortA) + "\n" + kAwgParams
+                + "\n"
+                  "[Peer]\n"
+                + "PublicKey = " + kPubB + "\n" + "Endpoint = 127.0.0.1:" + std::to_string(kPortB)
+                + "\n"
+                  "AllowedIPs = 10.9.9.2/32\n"
+                  "PersistentKeepalive = 5\n";
+
+        auto res = libxtun::proto::awg::Config::fromConf(str);
+        return res.value();
     }
 
-    std::vector<Offer> offers() const {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        return m_offers;
+    libxtun::proto::awg::Config confB()
+    {
+        const std::string str = std::string("[Interface]\n") + "PrivateKey = " + kPrivB + "\n"
+                + "ListenPort = " + std::to_string(kPortB) + "\n" + kAwgParams
+                + "\n"
+                  "[Peer]\n"
+                + "PublicKey = " + kPubA + "\n" + "Endpoint = 127.0.0.1:" + std::to_string(kPortA)
+                + "\n"
+                  "AllowedIPs = 10.9.9.1/32\n";
+
+        auto res = libxtun::proto::awg::Config::fromConf(str);
+        return res.value();
     }
 
-  private:
-    mutable std::mutex m_mutex;
-    std::vector<Offer> m_offers;
-};
+    std::vector<unsigned char> ipv4Packet(const char *payload)
+    {
+        size_t plen = std::strlen(payload);
+        std::vector<unsigned char> p(20 + plen, 0);
 
-libxtun::proto::awg::Config confA() {;
-    const std::string str = std::string("[Interface]\n") + "PrivateKey = " + kPrivA + "\n" +
-        "ListenPort = " + std::to_string(kPortA) + "\n" + kAwgParams +
-        "\n"
-        "[Peer]\n" +
-        "PublicKey = " + kPubB + "\n" + "Endpoint = 127.0.0.1:" + std::to_string(kPortB) +
-        "\n"
-        "AllowedIPs = 10.9.9.2/32\n"
-        "PersistentKeepalive = 5\n";
+        p[0] = 0x45;
+        p[2] = static_cast<unsigned char>(p.size() >> 8);
+        p[3] = static_cast<unsigned char>(p.size() & 0xff);
+        p[8] = 64;
+        p[9] = 253;
+        p[12] = 10;
+        p[13] = 9;
+        p[14] = 9;
+        p[15] = 1;
+        p[16] = 10;
+        p[17] = 9;
+        p[18] = 9;
+        p[19] = 2;
+        std::memcpy(p.data() + 20, payload, plen);
+        return p;
+    }
 
-    auto res = libxtun::proto::awg::Config::fromConf(str);
-    return res.value();
-}
+} // namespace
 
-libxtun::proto::awg::Config confB() {
-    const std::string str = std::string("[Interface]\n") + "PrivateKey = " + kPrivB + "\n" +
-        "ListenPort = " + std::to_string(kPortB) + "\n" + kAwgParams +
-        "\n"
-        "[Peer]\n" +
-        "PublicKey = " + kPubA + "\n" + "Endpoint = 127.0.0.1:" + std::to_string(kPortA) +
-        "\n"
-        "AllowedIPs = 10.9.9.1/32\n";
-
-    auto res = libxtun::proto::awg::Config::fromConf(str);
-    return res.value();
-}
-
-std::vector<unsigned char> ipv4Packet(const char *payload) {
-    size_t plen = std::strlen(payload);
-    std::vector<unsigned char> p(20 + plen, 0);
-
-    p[0] = 0x45;
-    p[2] = static_cast<unsigned char>(p.size() >> 8);
-    p[3] = static_cast<unsigned char>(p.size() & 0xff);
-    p[8] = 64;
-    p[9] = 253;
-    p[12] = 10;
-    p[13] = 9;
-    p[14] = 9;
-    p[15] = 1;
-    p[16] = 10;
-    p[17] = 9;
-    p[18] = 9;
-    p[19] = 2;
-    std::memcpy(p.data() + 20, payload, plen);
-    return p;
-}
-
-}  // namespace
-
-TEST(AwgRoundtrip, DeliversDataBetweenTwoInstances) {
-    libxtun::ClientCallbacks callbacksA{};
-    libxtun::ClientCallbacks callbacksB{};
+TEST(AwgRoundtrip, DeliversDataBetweenTwoInstances)
+{
+    libxtun::ClientCallbacks callbacksA {};
+    libxtun::ClientCallbacks callbacksB {};
     callbacksA.on_log = logA;
     callbacksB.on_log = logB;
 
@@ -182,11 +194,12 @@ TEST(AwgRoundtrip, DeliversDataBetweenTwoInstances) {
     EXPECT_EQ(got, sent);
 }
 
-TEST(AwgRoundtrip, OffersSpawnedSocketsForProtection) {
+TEST(AwgRoundtrip, OffersSpawnedSocketsForProtection)
+{
     SocketRecorder recorder;
 
-    libxtun::ClientCallbacks callbacksA{};
-    libxtun::ClientCallbacks callbacksB{};
+    libxtun::ClientCallbacks callbacksA {};
+    libxtun::ClientCallbacks callbacksB {};
     callbacksA.on_log = logA;
     callbacksB.on_log = logB;
     callbacksA.on_socket = &SocketRecorder::handler;
@@ -232,12 +245,12 @@ TEST(AwgRoundtrip, OffersSpawnedSocketsForProtection) {
     ASSERT_TRUE(delivered) << "no packet arrived at peer B within the timeout";
     ASSERT_FALSE(offered.empty()) << "onsockspawn never fired for the proxy's own sockets";
     for (const SocketRecorder::Offer &offer : offered) {
-        EXPECT_TRUE(offer.live)
-            << "descriptor " << offer.fd << " was not a live socket when it was offered";
+        EXPECT_TRUE(offer.live) << "descriptor " << offer.fd << " was not a live socket when it was offered";
     }
 }
 
-TEST(AwgRoundtrip, StopUnblocksParkedReader) {
+TEST(AwgRoundtrip, StopUnblocksParkedReader)
+{
     MemTun tun;
 
     libxtun::proto::Awg a(confA());

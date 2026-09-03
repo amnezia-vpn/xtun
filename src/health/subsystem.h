@@ -21,43 +21,45 @@
 #include <string>
 #include <vector>
 
-namespace libxtun::health {
+namespace libxtun::health
+{
 
-struct HealthConfig {
-    std::vector<std::string> dns_servers;
-    std::vector<std::string> tunnel_addresses;
-    std::vector<std::string> tunnel_routes;
-    ProbeStyle probe_style = ProbeStyle::Datagram;
-    HealthSettings settings;
-    ControlProbe::BindSocket bind_socket;
-    std::function<void()> wake_read;
-    LogSink log;
-};
+    struct HealthConfig
+    {
+        std::vector<std::string> dns_servers;
+        std::vector<std::string> tunnel_addresses;
+        std::vector<std::string> tunnel_routes;
+        ProbeStyle probe_style = ProbeStyle::Datagram;
+        HealthSettings settings;
+        ControlProbe::BindSocket bind_socket;
+        std::function<void()> wake_read;
+        LogSink log;
+    };
 
-class HealthSubsystem final : private NonCopyable {
-  public:
-    HealthSubsystem(HealthListener &listener, HealthConfig config,
-                    const Clock &clock = RealClock::instance());
-    ~HealthSubsystem();
+    class HealthSubsystem final : private NonCopyable
+    {
+    public:
+        HealthSubsystem(HealthListener &listener, HealthConfig config, const Clock &clock = RealClock::instance());
+        ~HealthSubsystem();
 
-    [[nodiscard]] TunnelIo &decorate(TunnelIo &device);
+        [[nodiscard]] TunnelIo &decorate(TunnelIo &device);
 
-    void start();
-    void stop() noexcept;
-    void halt() noexcept;
-    void onNetworkChanged() noexcept;
+        void start();
+        void stop() noexcept;
+        void halt() noexcept;
+        void onNetworkChanged() noexcept;
 
-  private:
-    RandomSource m_random;
-    DnsQueryFactory m_queries;
-    ResolverPool m_resolvers;
-    TrafficMeter m_meter;
-    std::unique_ptr<TunnelProbe> m_tunnel_probe;
-    ControlProbe m_control_probe;
-    ThreadedScheduler m_scheduler;
-    HealthMonitor m_monitor;
-    std::optional<MonitoredIo> m_io;
-};
+    private:
+        RandomSource m_random;
+        DnsQueryFactory m_queries;
+        ResolverPool m_resolvers;
+        TrafficMeter m_meter;
+        std::unique_ptr<TunnelProbe> m_tunnel_probe;
+        ControlProbe m_control_probe;
+        ThreadedScheduler m_scheduler;
+        HealthMonitor m_monitor;
+        std::optional<MonitoredIo> m_io;
+    };
 
 }
 

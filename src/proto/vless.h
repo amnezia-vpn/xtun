@@ -1,25 +1,28 @@
+#ifndef VLESS_H
+#define VLESS_H
+
 #include "../proxy.h"
 
 #include <string>
 
-#ifndef VLESS_H
-#define VLESS_H
+namespace libxtun
+{
+    namespace proto
+    {
 
-namespace libxtun {
-namespace proto {
+        class Vless : public Proxy
+        {
+        public:
+            Vless(const std::string &conf);
+            ~Vless();
 
-class Vless : public Proxy {
-  public:
-    Vless(const std::string &conf);
-    ~Vless();
+            const char *name() override
+            {
+                return "vless";
+            }
+        };
 
-    const char * name() override {
-        return "vless";
     }
-};
-
-
-}
 }
 
 #endif // VLESS_H

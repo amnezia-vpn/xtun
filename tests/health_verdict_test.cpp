@@ -7,106 +7,103 @@
 #include <chrono>
 #include <optional>
 
-namespace {
+namespace
+{
 
-using libxtun::health::ConnectionState;
-using libxtun::health::FailureStreak;
-using libxtun::health::Observation;
-using libxtun::health::ProbeOutcome;
-using libxtun::health::resolveVerdict;
-using libxtun::health::SuspendDetector;
+    using libxtun::health::ConnectionState;
+    using libxtun::health::FailureStreak;
+    using libxtun::health::Observation;
+    using libxtun::health::ProbeOutcome;
+    using libxtun::health::resolveVerdict;
+    using libxtun::health::SuspendDetector;
 
-constexpr std::array<ProbeOutcome, 3> kOutcomes{ProbeOutcome::NotRun, ProbeOutcome::Answered,
-                                                ProbeOutcome::Failed};
+    constexpr std::array<ProbeOutcome, 3> kOutcomes { ProbeOutcome::NotRun, ProbeOutcome::Answered, ProbeOutcome::Failed };
 
-}  // namespace
+} // namespace
 
-TEST(HealthVerdict, FreshInboundTrafficAloneSettlesConnected) {
+TEST(HealthVerdict, FreshInboundTrafficAloneSettlesConnected)
+{
     for (ProbeOutcome tunnel : kOutcomes) {
         for (ProbeOutcome control : kOutcomes) {
-            for (bool streak : {false, true}) {
-                const Observation obs{.inbound_fresh = true,
-                                      .tunnel = tunnel,
-                                      .control = control,
-                                      .fail_streak_reached = streak};
+            for (bool streak : { false, true }) {
+                const Observation obs {
+                    .inbound_fresh = true, .tunnel = tunnel, .control = control, .fail_streak_reached = streak
+                };
                 EXPECT_EQ(resolveVerdict(obs), ConnectionState::Connected)
-                    << "fresh inbound traffic did not settle the verdict on its own";
+                        << "fresh inbound traffic did not settle the verdict on its own";
             }
         }
     }
 }
 
-TEST(HealthVerdict, AnsweredTunnelProbeIsConnectedRegardlessOfTheRest) {
+TEST(HealthVerdict, AnsweredTunnelProbeIsConnectedRegardlessOfTheRest)
+{
     for (ProbeOutcome control : kOutcomes) {
-        for (bool streak : {false, true}) {
-            const Observation obs{.tunnel = ProbeOutcome::Answered,
-                                  .control = control,
-                                  .fail_streak_reached = streak};
+        for (bool streak : { false, true }) {
+            const Observation obs { .tunnel = ProbeOutcome::Answered, .control = control, .fail_streak_reached = streak };
             EXPECT_EQ(resolveVerdict(obs), ConnectionState::Connected);
         }
     }
 }
 
-TEST(HealthVerdict, OnlineHostWithADeadTunnelIsDisconnected) {
-    const Observation obs{.tunnel = ProbeOutcome::Failed,
-                          .control = ProbeOutcome::Answered,
-                          .fail_streak_reached = true};
+TEST(HealthVerdict, OnlineHostWithADeadTunnelIsDisconnected)
+{
+    const Observation obs { .tunnel = ProbeOutcome::Failed,
+                            .control = ProbeOutcome::Answered,
+                            .fail_streak_reached = true };
 
     EXPECT_EQ(resolveVerdict(obs), ConnectionState::Disconnected);
 }
 
-TEST(HealthVerdict, NoConnectivityAtAllIsNoNetwork) {
-    const Observation obs{.tunnel = ProbeOutcome::Failed,
-                          .control = ProbeOutcome::Failed,
-                          .fail_streak_reached = true};
+TEST(HealthVerdict, NoConnectivityAtAllIsNoNetwork)
+{
+    const Observation obs { .tunnel = ProbeOutcome::Failed, .control = ProbeOutcome::Failed, .fail_streak_reached = true };
 
     EXPECT_EQ(resolveVerdict(obs), ConnectionState::NoNetwork);
 }
 
-TEST(HealthVerdict, TheStreakGatesEveryTeardownVerdict) {
+TEST(HealthVerdict, TheStreakGatesEveryTeardownVerdict)
+{
     for (ProbeOutcome control : kOutcomes) {
-        const Observation obs{.tunnel = ProbeOutcome::Failed,
-                              .control = control,
-                              .fail_streak_reached = false};
+        const Observation obs { .tunnel = ProbeOutcome::Failed, .control = control, .fail_streak_reached = false };
         EXPECT_FALSE(resolveVerdict(obs).has_value())
-            << "a single failed probe produced a verdict before the streak was reached";
+                << "a single failed probe produced a verdict before the streak was reached";
     }
 }
 
-TEST(HealthVerdict, NoEvidenceYieldsNoVerdict) {
-    EXPECT_FALSE(resolveVerdict(Observation{}).has_value());
+TEST(HealthVerdict, NoEvidenceYieldsNoVerdict)
+{
+    EXPECT_FALSE(resolveVerdict(Observation {}).has_value());
 
-    const Observation no_target{.tunnel = ProbeOutcome::NotRun,
-                                .control = ProbeOutcome::NotRun,
-                                .fail_streak_reached = true};
-    EXPECT_FALSE(resolveVerdict(no_target).has_value())
-        << "a probe that could not run must never decide anything";
+    const Observation no_target { .tunnel = ProbeOutcome::NotRun,
+                                  .control = ProbeOutcome::NotRun,
+                                  .fail_streak_reached = true };
+    EXPECT_FALSE(resolveVerdict(no_target).has_value()) << "a probe that could not run must never decide anything";
 
-    const Observation unbindable_control{.tunnel = ProbeOutcome::Failed,
-                                         .control = ProbeOutcome::NotRun,
-                                         .fail_streak_reached = true};
+    const Observation unbindable_control { .tunnel = ProbeOutcome::Failed,
+                                           .control = ProbeOutcome::NotRun,
+                                           .fail_streak_reached = true };
     EXPECT_FALSE(resolveVerdict(unbindable_control).has_value())
-        << "a failed tunnel probe with no control evidence must hold, not tear down";
+            << "a failed tunnel probe with no control evidence must hold, not tear down";
 }
 
-TEST(HealthVerdict, EveryConclusiveVerdictNeedsEitherTrafficOrAProbeResult) {
-    for (bool fresh : {false, true}) {
+TEST(HealthVerdict, EveryConclusiveVerdictNeedsEitherTrafficOrAProbeResult)
+{
+    for (bool fresh : { false, true }) {
         for (ProbeOutcome tunnel : kOutcomes) {
             for (ProbeOutcome control : kOutcomes) {
-                for (bool streak : {false, true}) {
-                    const Observation obs{.inbound_fresh = fresh,
-                                          .tunnel = tunnel,
-                                          .control = control,
-                                          .fail_streak_reached = streak};
+                for (bool streak : { false, true }) {
+                    const Observation obs {
+                        .inbound_fresh = fresh, .tunnel = tunnel, .control = control, .fail_streak_reached = streak
+                    };
                     const auto verdict = resolveVerdict(obs);
                     if (!verdict.has_value()) {
                         continue;
                     }
                     EXPECT_NE(*verdict, ConnectionState::Unknown)
-                        << "the table produced Unknown, which has no ABI value";
-                    const bool justified = fresh || tunnel == ProbeOutcome::Answered ||
-                                           (tunnel == ProbeOutcome::Failed && streak &&
-                                            control != ProbeOutcome::NotRun);
+                            << "the table produced Unknown, which has no ABI value";
+                    const bool justified = fresh || tunnel == ProbeOutcome::Answered
+                            || (tunnel == ProbeOutcome::Failed && streak && control != ProbeOutcome::NotRun);
                     EXPECT_TRUE(justified) << "a verdict was reached without evidence for it";
                 }
             }
@@ -114,7 +111,8 @@ TEST(HealthVerdict, EveryConclusiveVerdictNeedsEitherTrafficOrAProbeResult) {
     }
 }
 
-TEST(HealthStreak, ReachesTheLimitExactlyAndNotBefore) {
+TEST(HealthStreak, ReachesTheLimitExactlyAndNotBefore)
+{
     FailureStreak streak(2);
 
     EXPECT_FALSE(streak.reached());
@@ -132,19 +130,20 @@ TEST(HealthStreak, ReachesTheLimitExactlyAndNotBefore) {
     EXPECT_TRUE(streak.reached());
 }
 
-TEST(HealthStreak, ResetPreventsAccumulationAcrossGoodPeriods) {
+TEST(HealthStreak, ResetPreventsAccumulationAcrossGoodPeriods)
+{
     FailureStreak streak(2);
 
     streak.increment();
     streak.reset();
     streak.increment();
 
-    EXPECT_FALSE(streak.reached())
-        << "an intermittent failure accumulated across a conclusive verdict";
+    EXPECT_FALSE(streak.reached()) << "an intermittent failure accumulated across a conclusive verdict";
     EXPECT_EQ(streak.count(), 1);
 }
 
-TEST(HealthStreak, LimitOfOneTripsOnTheFirstFailure) {
+TEST(HealthStreak, LimitOfOneTripsOnTheFirstFailure)
+{
     FailureStreak streak(1);
 
     EXPECT_FALSE(streak.reached());
@@ -152,7 +151,8 @@ TEST(HealthStreak, LimitOfOneTripsOnTheFirstFailure) {
     EXPECT_TRUE(streak.reached());
 }
 
-TEST(HealthSuspend, AgreeingClocksAreNotASuspend) {
+TEST(HealthSuspend, AgreeingClocksAreNotASuspend)
+{
     FakeClock clock;
     SuspendDetector detector(clock, std::chrono::seconds(5));
 
@@ -163,7 +163,8 @@ TEST(HealthSuspend, AgreeingClocksAreNotASuspend) {
     EXPECT_FALSE(detector.sample());
 }
 
-TEST(HealthSuspend, WallTimeRunningAheadOfSteadyTimeIsASuspend) {
+TEST(HealthSuspend, WallTimeRunningAheadOfSteadyTimeIsASuspend)
+{
     FakeClock clock;
     SuspendDetector detector(clock, std::chrono::seconds(5));
 
@@ -173,7 +174,8 @@ TEST(HealthSuspend, WallTimeRunningAheadOfSteadyTimeIsASuspend) {
     EXPECT_TRUE(detector.sample()) << "the process slept without the detector noticing";
 }
 
-TEST(HealthSuspend, DivergenceWithinToleranceIsIgnored) {
+TEST(HealthSuspend, DivergenceWithinToleranceIsIgnored)
+{
     FakeClock clock;
     SuspendDetector detector(clock, std::chrono::seconds(5));
 
@@ -183,7 +185,8 @@ TEST(HealthSuspend, DivergenceWithinToleranceIsIgnored) {
     EXPECT_FALSE(detector.sample()) << "ordinary clock skew was reported as a suspend";
 }
 
-TEST(HealthSuspend, BackwardsWallClockJumpIsAlsoDetected) {
+TEST(HealthSuspend, BackwardsWallClockJumpIsAlsoDetected)
+{
     FakeClock clock;
     SuspendDetector detector(clock, std::chrono::seconds(5));
 
@@ -193,7 +196,8 @@ TEST(HealthSuspend, BackwardsWallClockJumpIsAlsoDetected) {
     EXPECT_TRUE(detector.sample());
 }
 
-TEST(HealthSuspend, EachSampleMeasuresOnlySinceTheLastOne) {
+TEST(HealthSuspend, EachSampleMeasuresOnlySinceTheLastOne)
+{
     FakeClock clock;
     SuspendDetector detector(clock, std::chrono::seconds(5));
 
