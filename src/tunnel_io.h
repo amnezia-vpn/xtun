@@ -4,19 +4,21 @@
 #include <cstddef>
 #include <span>
 
-namespace libxtun {
+namespace libxtun
+{
 
-inline constexpr int kReadWake = 0;
-inline constexpr int kIoFatal = -1;
+    inline constexpr int kReadWake = 0;
+    inline constexpr int kIoFatal = -1;
 
-class TunnelIo {
-  public:
-    virtual ~TunnelIo() = default;
+    class TunnelIo
+    {
+    public:
+        virtual ~TunnelIo() = default;
 
-    virtual int read(std::span<std::byte> buf) noexcept = 0;
-    virtual int write(std::span<const std::byte> packet) noexcept = 0;
-    virtual int mtu() const noexcept = 0;
-};
+        virtual int read(std::span<std::byte> buf) noexcept = 0;
+        virtual int write(std::span<const std::byte> packet) noexcept = 0;
+        virtual int mtu() const noexcept = 0;
+    };
 
 }
 

@@ -1,3 +1,4 @@
+#include "fake_tun_device.h"
 #include "proxy.h"
 #include "tunnel.h"
 #include "xtun.h"
@@ -7,7 +8,9 @@
 #include <array>
 #include <cstddef>
 #include <cstring>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -106,14 +109,15 @@ TEST(ProxyAttach, StartsProxyWithTunnelIo) {
     EXPECT_NE(proxy.io, nullptr);
 }
 
-TEST(ProxyAttach, IoIsBoundToTheTunnel) {
+TEST(ProxyAttach, IoIsBoundToTheTunnelDevice) {
     RecordingProxy proxy;
     libxtun_tunnel_opts opts = default_opts();
-    libxtun::Tunnel tunnel(opts);
+    auto device = std::make_unique<FakeTunDevice>(1280);
+    libxtun::Tunnel tunnel(opts, std::move(device));
     ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
     ASSERT_NE(proxy.io, nullptr);
 
-    EXPECT_EQ(proxy.io->mtu(), tunnel.currentMtu());
+    EXPECT_EQ(proxy.io->mtu(), 1280);
 
     std::array<std::byte, 4> buf{};
     EXPECT_EQ(proxy.io->read(buf), libxtun::kIoFatal);
@@ -233,10 +237,12 @@ TEST(ProxyAttach, EachProxyGetsItsOwnMeteredIo) {
 TEST(ProxyAttach, DetachedProxyCanBeAttachedAgain) {
     RecordingProxy proxy;
     libxtun_tunnel_opts opts = default_opts();
-    libxtun::Tunnel next(opts);
+    auto nextDevice = std::make_unique<FakeTunDevice>(1400);
+    libxtun::Tunnel next(opts, std::move(nextDevice));
 
     {
-        libxtun::Tunnel gone(opts);
+        auto goneDevice = std::make_unique<FakeTunDevice>(1200);
+        libxtun::Tunnel gone(opts, std::move(goneDevice));
         ASSERT_EQ(gone.attachProxy(&proxy), LIBXTUN_OK);
     }
 
@@ -245,7 +251,7 @@ TEST(ProxyAttach, DetachedProxyCanBeAttachedAgain) {
 
     EXPECT_EQ(proxy.startCalls, 2);
     EXPECT_NE(proxy.io, nullptr);
-    EXPECT_EQ(proxy.io->mtu(), next.currentMtu());
+    EXPECT_EQ(proxy.io->mtu(), 1400);
 }
 
 TEST(ProxyNew, RejectsBadArgs) {

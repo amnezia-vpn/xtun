@@ -41,8 +41,8 @@ add_library(${PROJECT_NAME}
     ${CMAKE_CURRENT_LIST_DIR}/src/net/udp.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/proto/awg.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/proto/awg_conf.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/platform.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/proxy.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/src/router.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/tunnel.cpp
 )
 target_include_directories(${PROJECT_NAME} PRIVATE
@@ -76,9 +76,7 @@ if(WIN32)
     endif()
     target_link_libraries(${PROJECT_NAME} PRIVATE iphlpapi ws2_32)
     target_compile_definitions(${PROJECT_NAME} PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
-endif()
-
-if(LINUX AND NOT ANDROID)
+elseif(LINUX AND NOT ANDROID)
     find_package(libsystemd REQUIRED)
     target_link_libraries(${PROJECT_NAME} PRIVATE libsystemd::libsystemd)
 endif()
