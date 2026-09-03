@@ -171,8 +171,8 @@ TEST(NetIp, PrefixSetAnswersDefaultRoutePerFamily)
     const std::vector<std::string> split = { "10.8.0.0/24", "192.168.9.0/24" };
     EXPECT_FALSE(PrefixSet::parseAll(split).hasDefaultRoute(AF_INET));
 
-    const std::vector<std::string> full_v4 = { "0.0.0.0/0" };
-    const PrefixSet set = PrefixSet::parseAll(full_v4);
+    const std::vector<std::string> fullV4 = { "0.0.0.0/0" };
+    const PrefixSet set = PrefixSet::parseAll(fullV4);
     EXPECT_TRUE(set.hasDefaultRoute(AF_INET));
     EXPECT_FALSE(set.hasDefaultRoute(AF_INET6)) << "a v4 default answered for v6";
 

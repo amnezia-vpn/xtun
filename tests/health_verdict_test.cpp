@@ -17,17 +17,17 @@ namespace
     using libxtun::health::resolveVerdict;
     using libxtun::health::SuspendDetector;
 
-    constexpr std::array<ProbeOutcome, 3> kOutcomes { ProbeOutcome::NotRun, ProbeOutcome::Answered, ProbeOutcome::Failed };
+    constexpr std::array<ProbeOutcome, 3> OUTCOMES { ProbeOutcome::NotRun, ProbeOutcome::Answered, ProbeOutcome::Failed };
 
 } // namespace
 
 TEST(HealthVerdict, FreshInboundTrafficAloneSettlesConnected)
 {
-    for (ProbeOutcome tunnel : kOutcomes) {
-        for (ProbeOutcome control : kOutcomes) {
+    for (ProbeOutcome tunnel : OUTCOMES) {
+        for (ProbeOutcome control : OUTCOMES) {
             for (bool streak : { false, true }) {
                 const Observation obs {
-                    .inbound_fresh = true, .tunnel = tunnel, .control = control, .fail_streak_reached = streak
+                    .inboundFresh = true, .tunnel = tunnel, .control = control, .failStreakReached = streak
                 };
                 EXPECT_EQ(resolveVerdict(obs), ConnectionState::Connected)
                         << "fresh inbound traffic did not settle the verdict on its own";
@@ -38,9 +38,9 @@ TEST(HealthVerdict, FreshInboundTrafficAloneSettlesConnected)
 
 TEST(HealthVerdict, AnsweredTunnelProbeIsConnectedRegardlessOfTheRest)
 {
-    for (ProbeOutcome control : kOutcomes) {
+    for (ProbeOutcome control : OUTCOMES) {
         for (bool streak : { false, true }) {
-            const Observation obs { .tunnel = ProbeOutcome::Answered, .control = control, .fail_streak_reached = streak };
+            const Observation obs { .tunnel = ProbeOutcome::Answered, .control = control, .failStreakReached = streak };
             EXPECT_EQ(resolveVerdict(obs), ConnectionState::Connected);
         }
     }
@@ -50,22 +50,22 @@ TEST(HealthVerdict, OnlineHostWithADeadTunnelIsDisconnected)
 {
     const Observation obs { .tunnel = ProbeOutcome::Failed,
                             .control = ProbeOutcome::Answered,
-                            .fail_streak_reached = true };
+                            .failStreakReached = true };
 
     EXPECT_EQ(resolveVerdict(obs), ConnectionState::Disconnected);
 }
 
 TEST(HealthVerdict, NoConnectivityAtAllIsNoNetwork)
 {
-    const Observation obs { .tunnel = ProbeOutcome::Failed, .control = ProbeOutcome::Failed, .fail_streak_reached = true };
+    const Observation obs { .tunnel = ProbeOutcome::Failed, .control = ProbeOutcome::Failed, .failStreakReached = true };
 
     EXPECT_EQ(resolveVerdict(obs), ConnectionState::NoNetwork);
 }
 
 TEST(HealthVerdict, TheStreakGatesEveryTeardownVerdict)
 {
-    for (ProbeOutcome control : kOutcomes) {
-        const Observation obs { .tunnel = ProbeOutcome::Failed, .control = control, .fail_streak_reached = false };
+    for (ProbeOutcome control : OUTCOMES) {
+        const Observation obs { .tunnel = ProbeOutcome::Failed, .control = control, .failStreakReached = false };
         EXPECT_FALSE(resolveVerdict(obs).has_value())
                 << "a single failed probe produced a verdict before the streak was reached";
     }
@@ -75,26 +75,26 @@ TEST(HealthVerdict, NoEvidenceYieldsNoVerdict)
 {
     EXPECT_FALSE(resolveVerdict(Observation {}).has_value());
 
-    const Observation no_target { .tunnel = ProbeOutcome::NotRun,
+    const Observation noTarget { .tunnel = ProbeOutcome::NotRun,
                                   .control = ProbeOutcome::NotRun,
-                                  .fail_streak_reached = true };
-    EXPECT_FALSE(resolveVerdict(no_target).has_value()) << "a probe that could not run must never decide anything";
+                                  .failStreakReached = true };
+    EXPECT_FALSE(resolveVerdict(noTarget).has_value()) << "a probe that could not run must never decide anything";
 
-    const Observation unbindable_control { .tunnel = ProbeOutcome::Failed,
+    const Observation unbindableControl { .tunnel = ProbeOutcome::Failed,
                                            .control = ProbeOutcome::NotRun,
-                                           .fail_streak_reached = true };
-    EXPECT_FALSE(resolveVerdict(unbindable_control).has_value())
+                                           .failStreakReached = true };
+    EXPECT_FALSE(resolveVerdict(unbindableControl).has_value())
             << "a failed tunnel probe with no control evidence must hold, not tear down";
 }
 
 TEST(HealthVerdict, EveryConclusiveVerdictNeedsEitherTrafficOrAProbeResult)
 {
     for (bool fresh : { false, true }) {
-        for (ProbeOutcome tunnel : kOutcomes) {
-            for (ProbeOutcome control : kOutcomes) {
+        for (ProbeOutcome tunnel : OUTCOMES) {
+            for (ProbeOutcome control : OUTCOMES) {
                 for (bool streak : { false, true }) {
                     const Observation obs {
-                        .inbound_fresh = fresh, .tunnel = tunnel, .control = control, .fail_streak_reached = streak
+                        .inboundFresh = fresh, .tunnel = tunnel, .control = control, .failStreakReached = streak
                     };
                     const auto verdict = resolveVerdict(obs);
                     if (!verdict.has_value()) {

@@ -44,7 +44,7 @@ namespace
 #endif
     }
 
-    libxtun_tunnel_opts default_opts()
+    libxtun_tunnel_opts defaultOpts()
     {
         libxtun_tunnel_opts opts {};
         opts.size = sizeof(opts);
@@ -55,7 +55,7 @@ namespace
 #if defined(__linux__)
 
     // Independent of libxtun: ask the kernel directly whether the interface exists.
-    bool iface_exists(const char *name)
+    bool ifaceExists(const char *name)
     {
         int sock = ::socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
         if (sock < 0) {
@@ -69,7 +69,7 @@ namespace
         return exists;
     }
 
-    int create_tun(char *name, size_t len)
+    int createTun(char *name, size_t len)
     {
         int fd = ::open("/dev/net/tun", O_RDWR | O_CLOEXEC);
         if (fd < 0) {
@@ -86,7 +86,7 @@ namespace
         return fd;
     }
 
-    int create_persistent_tun(char *name, size_t len)
+    int createPersistentTun(char *name, size_t len)
     {
         int fd = ::open("/dev/net/tun", O_RDWR | O_CLOEXEC);
         if (fd < 0) {
@@ -104,7 +104,7 @@ namespace
         return 0;
     }
 
-    void remove_persistent_tun(const char *name)
+    void removePersistentTun(const char *name)
     {
         int fd = ::open("/dev/net/tun", O_RDWR | O_CLOEXEC);
         if (fd < 0) {
@@ -122,7 +122,7 @@ namespace
 
 #elif defined(__APPLE__)
 
-    int create_tun(char *name, size_t len)
+    int createTun(char *name, size_t len)
     {
         int fd = ::socket(AF_SYSTEM, SOCK_DGRAM, SYSPROTO_CONTROL);
         if (fd < 0) {
@@ -163,16 +163,16 @@ TEST(TunnelLifecycle, BringUpAndDown)
     if (!privileged()) {
         GTEST_SKIP() << "skipped: creating a tun device requires root/Administrator";
     }
-    libxtun_tunnel_opts opts = default_opts();
+    libxtun_tunnel_opts opts = defaultOpts();
     libxtun_tunnel tun;
     int rc = libxtun_tunnel_new(&tun, &opts);
     ASSERT_EQ(rc, LIBXTUN_OK);
 #if defined(__linux__)
-    EXPECT_TRUE(iface_exists("xtun")) << "tunnel reported success but the xtun interface is absent";
+    EXPECT_TRUE(ifaceExists("xtun")) << "tunnel reported success but the xtun interface is absent";
 #endif
     libxtun_tunnel_free(&tun);
 #if defined(__linux__)
-    EXPECT_FALSE(iface_exists("xtun")) << "the xtun interface outlived the tunnel";
+    EXPECT_FALSE(ifaceExists("xtun")) << "the xtun interface outlived the tunnel";
 #endif
 }
 
@@ -184,7 +184,7 @@ TEST(TunnelLifecycle, AdoptByFd)
         GTEST_SKIP() << "skipped: creating a tun device requires root";
     }
     char name[IFNAMSIZ] = { 0 };
-    int fd = create_tun(name, sizeof(name));
+    int fd = createTun(name, sizeof(name));
     ASSERT_GE(fd, 0) << "could not create a tun device";
 
     libxtun_tunnel tun;
@@ -192,11 +192,11 @@ TEST(TunnelLifecycle, AdoptByFd)
     ::close(fd);
     ASSERT_EQ(rc, LIBXTUN_OK);
     #if defined(__linux__)
-    EXPECT_TRUE(iface_exists(name)) << "adopted interface " << name << " vanished after we closed our fd";
+    EXPECT_TRUE(ifaceExists(name)) << "adopted interface " << name << " vanished after we closed our fd";
     #endif
     libxtun_tunnel_free(&tun);
     #if defined(__linux__)
-    EXPECT_FALSE(iface_exists(name)) << "adopted interface " << name << " outlived the tunnel";
+    EXPECT_FALSE(ifaceExists(name)) << "adopted interface " << name << " outlived the tunnel";
     #endif
 }
 
@@ -210,19 +210,19 @@ TEST(TunnelLifecycle, AdoptByName)
         GTEST_SKIP() << "skipped: creating a persistent tun device requires root";
     }
     char name[IFNAMSIZ];
-    ASSERT_EQ(create_persistent_tun(name, sizeof(name)), 0) << "could not create a persistent tun device";
+    ASSERT_EQ(createPersistentTun(name, sizeof(name)), 0) << "could not create a persistent tun device";
 
     libxtun_tunnel tun;
     int rc = libxtun_tunnel_new_from_name(&tun, name);
     if (rc != LIBXTUN_OK) {
-        remove_persistent_tun(name);
+        removePersistentTun(name);
         FAIL() << "libxtun_tunnel_new_from_name failed: " << rc;
     }
-    EXPECT_TRUE(iface_exists(name)) << "adopted interface " << name << " is absent";
+    EXPECT_TRUE(ifaceExists(name)) << "adopted interface " << name << " is absent";
     libxtun_tunnel_free(&tun);
-    EXPECT_TRUE(iface_exists(name)) << "freeing the tunnel destroyed the persistent interface " << name;
-    remove_persistent_tun(name);
-    EXPECT_FALSE(iface_exists(name)) << "interface " << name << " lingered after removal";
+    EXPECT_TRUE(ifaceExists(name)) << "freeing the tunnel destroyed the persistent interface " << name;
+    removePersistentTun(name);
+    EXPECT_FALSE(ifaceExists(name)) << "interface " << name << " lingered after removal";
 }
 
 #elif defined(_WIN32)
@@ -238,14 +238,14 @@ TEST(TunnelLifecycle, AdoptByName)
     HMODULE wintun =
             LoadLibraryExW(L"wintun.dll", nullptr, LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
     ASSERT_NE(wintun, nullptr) << "wintun.dll not found";
-    auto create_adapter = reinterpret_cast<create_fn>(GetProcAddress(wintun, "WintunCreateAdapter"));
-    auto close_adapter = reinterpret_cast<close_fn>(GetProcAddress(wintun, "WintunCloseAdapter"));
-    if (create_adapter == nullptr || close_adapter == nullptr) {
+    auto createAdapter = reinterpret_cast<create_fn>(GetProcAddress(wintun, "WintunCreateAdapter"));
+    auto closeAdapter = reinterpret_cast<close_fn>(GetProcAddress(wintun, "WintunCloseAdapter"));
+    if (createAdapter == nullptr || closeAdapter == nullptr) {
         FreeLibrary(wintun);
         FAIL() << "wintun.dll is missing required entry points";
     }
 
-    void *adapter = create_adapter(L"xtunadopt", L"WireGuard", nullptr);
+    void *adapter = createAdapter(L"xtunadopt", L"WireGuard", nullptr);
     if (adapter == nullptr) {
         FreeLibrary(wintun);
         FAIL() << "creating an adapter requires Administrator";
@@ -254,12 +254,12 @@ TEST(TunnelLifecycle, AdoptByName)
     libxtun_tunnel tun;
     int rc = libxtun_tunnel_new_from_name(&tun, "xtunadopt");
     if (rc != LIBXTUN_OK) {
-        close_adapter(adapter);
+        closeAdapter(adapter);
         FreeLibrary(wintun);
         FAIL() << "libxtun_tunnel_new_from_name failed: " << rc;
     }
     libxtun_tunnel_free(&tun);
-    close_adapter(adapter);
+    closeAdapter(adapter);
     FreeLibrary(wintun);
 }
 

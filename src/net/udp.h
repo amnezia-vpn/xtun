@@ -12,9 +12,9 @@
 namespace libxtun::net
 {
 
-    inline constexpr std::size_t kIpv4HeaderLen = 20;
-    inline constexpr std::size_t kIpv6HeaderLen = 40;
-    inline constexpr std::size_t kUdpHeaderLen = 8;
+    inline constexpr std::size_t IPV4_HEADER_LEN = 20;
+    inline constexpr std::size_t IPV6_HEADER_LEN = 40;
+    inline constexpr std::size_t UDP_HEADER_LEN = 8;
 
     class UdpDatagramView
     {
@@ -33,11 +33,11 @@ namespace libxtun::net
         bool isV6() const noexcept;
 
         std::span<const std::byte> m_packet;
-        std::uint8_t m_header_len = 0;
+        std::uint8_t m_headerLen = 0;
     };
 
     std::vector<std::byte> buildUdpDatagram(const IpAddress &source, const IpAddress &destination,
-                                            std::uint16_t source_port, std::uint16_t destination_port,
+                                            std::uint16_t sourcePort, std::uint16_t destinationPort,
                                             std::span<const std::byte> payload);
 
     std::uint32_t partialSum(std::span<const std::byte> data, std::uint32_t seed = 0) noexcept;

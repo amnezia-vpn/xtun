@@ -31,19 +31,19 @@ namespace libxtun
     struct ProxyProfile
     {
         std::vector<std::string> routes;
-        std::vector<std::string> dns_servers;
+        std::vector<std::string> dnsServers;
         std::vector<std::string> addresses;
-        health::ProbeStyle probe_style = health::ProbeStyle::Datagram;
+        health::ProbeStyle probeStyle = health::ProbeStyle::Datagram;
     };
 
     struct ClientCallbacks
     {
-        void (*on_socket)(int fd, void *priv) = nullptr;
-        void *on_socket_priv = nullptr;
-        void (*on_log)(const char *message, void *priv) = nullptr;
-        void *on_log_priv = nullptr;
-        void (*on_status)(int status, void *priv) = nullptr;
-        void *on_status_priv = nullptr;
+        void (*onSocket)(int fd, void *priv) = nullptr;
+        void *onSocketPriv = nullptr;
+        void (*onLog)(const char *message, void *priv) = nullptr;
+        void *onLogPriv = nullptr;
+        void (*onStatus)(int status, void *priv) = nullptr;
+        void *onStatusPriv = nullptr;
     };
 
     class Proxy : private health::HealthListener

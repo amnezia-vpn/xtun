@@ -20,17 +20,17 @@ namespace libxtun::health
     class ResolverPool
     {
     public:
-        ResolverPool(std::span<const std::string> configured_servers, std::span<const std::string> tunnel_addresses,
-                     std::span<const std::string> tunnel_routes);
+        ResolverPool(std::span<const std::string> configuredServers, std::span<const std::string> tunnelAddresses,
+                     std::span<const std::string> tunnelRoutes);
 
         [[nodiscard]] std::optional<net::IpAddress> select(Reachability via) const;
         [[nodiscard]] std::optional<net::IpAddress> localAddressFor(int family) const;
 
     private:
         std::vector<net::IpAddress> m_candidates;
-        std::size_t m_configured_count = 0;
-        std::vector<net::IpAddress> m_tunnel_addresses;
-        net::PrefixSet m_tunnel_routes;
+        std::size_t m_configuredCount = 0;
+        std::vector<net::IpAddress> m_tunnelAddresses;
+        net::PrefixSet m_tunnelRoutes;
     };
 
 }

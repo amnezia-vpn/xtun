@@ -10,10 +10,10 @@
 class ManualScheduler final : public libxtun::health::Scheduler
 {
 public:
-    void start(Tick tick, std::chrono::milliseconds first_delay) override
+    void start(Tick tick, std::chrono::milliseconds firstDelay) override
     {
         m_tick = std::move(tick);
-        m_first_delay = first_delay;
+        m_firstDelay = firstDelay;
         m_running = true;
         ++m_starts;
     }
@@ -49,7 +49,7 @@ public:
     }
     std::chrono::milliseconds firstDelay() const
     {
-        return m_first_delay;
+        return m_firstDelay;
     }
     int starts() const
     {
@@ -66,7 +66,7 @@ public:
 
 private:
     Tick m_tick;
-    std::chrono::milliseconds m_first_delay { 0 };
+    std::chrono::milliseconds m_firstDelay { 0 };
     bool m_running = false;
     int m_starts = 0;
     int m_stops = 0;

@@ -291,7 +291,7 @@ namespace libxtun
         req.rtm.rtm_protocol = RTPROT_BOOT;
         req.rtm.rtm_scope = RT_SCOPE_LINK;
         req.rtm.rtm_type = RTN_UNICAST;
-        uint32_t table = kProxyTable;
+        uint32_t table = PROXY_TABLE;
         addAttr(&req.nlh, RTA_TABLE, &table, sizeof(table));
         uint32_t oif = static_cast<uint32_t>(m_ifindex);
         addAttr(&req.nlh, RTA_OIF, &oif, sizeof(oif));
@@ -303,7 +303,7 @@ namespace libxtun
 
         // Unmarked traffic uses the private table (the tun); the proxy's own marked
         // packets fall through to the main table and reach the physical link.
-        rc = updateRule(add, family, true, kProxyFwmark, kProxyTable, -1, 32765);
+        rc = updateRule(add, family, true, PROXY_FWMARK, PROXY_TABLE, -1, 32765);
         if (add && rc < 0) {
             return rc;
         }
@@ -494,7 +494,7 @@ namespace libxtun
     int LinuxRouter::bypassSocket(int fd, int family)
     {
         (void)family;
-        unsigned mark = kProxyFwmark;
+        unsigned mark = PROXY_FWMARK;
         if (::setsockopt(fd, SOL_SOCKET, SO_MARK, &mark, sizeof(mark)) != 0) {
             return -1;
         }

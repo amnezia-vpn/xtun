@@ -101,15 +101,15 @@ namespace libxtun
         RunGuard guard(m_running);
 
         if (m_session == nullptr) {
-            return kIoFatal;
+            return IO_FATAL;
         }
 
         for (;;) {
             if (m_closing.load(std::memory_order_acquire)) {
-                return kIoFatal;
+                return IO_FATAL;
             }
-            if (m_inject_pending.exchange(false, std::memory_order_acquire)) {
-                return kReadWake;
+            if (m_injectPending.exchange(false, std::memory_order_acquire)) {
+                return READ_WAKE;
             }
             DWORD packetSize = 0;
             BYTE *packet = m_receivePacket(m_session, &packetSize);
@@ -123,7 +123,7 @@ namespace libxtun
                 WaitForSingleObject(m_readWait, INFINITE);
                 continue;
             }
-            return kIoFatal;
+            return IO_FATAL;
         }
     }
 
@@ -166,12 +166,12 @@ namespace libxtun
     void WindowsTunDevice::resetReadCancellation() noexcept
     {
         m_closing.store(false, std::memory_order_release);
-        m_inject_pending.store(false, std::memory_order_release);
+        m_injectPending.store(false, std::memory_order_release);
     }
 
     void WindowsTunDevice::wakeRead() noexcept
     {
-        m_inject_pending.store(true, std::memory_order_release);
+        m_injectPending.store(true, std::memory_order_release);
         if (m_readWait != nullptr) {
             SetEvent(m_readWait);
         }

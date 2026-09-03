@@ -4,7 +4,7 @@ namespace libxtun::health
 {
 
     SuspendDetector::SuspendDetector(const Clock &clock, std::chrono::seconds tolerance) noexcept
-        : m_clock(clock), m_tolerance(tolerance), m_last_steady(clock.steadyNow()), m_last_wall(clock.wallNow())
+        : m_clock(clock), m_tolerance(tolerance), m_lastSteady(clock.steadyNow()), m_lastWall(clock.wallNow())
     {
     }
 
@@ -13,14 +13,14 @@ namespace libxtun::health
         const auto steady = m_clock.steadyNow();
         const auto wall = m_clock.wallNow();
 
-        const auto steady_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(steady - m_last_steady);
-        const auto wall_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(wall - m_last_wall);
+        const auto steadyElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(steady - m_lastSteady);
+        const auto wallElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(wall - m_lastWall);
 
-        m_last_steady = steady;
-        m_last_wall = wall;
+        m_lastSteady = steady;
+        m_lastWall = wall;
 
         const auto divergence =
-                wall_elapsed > steady_elapsed ? wall_elapsed - steady_elapsed : steady_elapsed - wall_elapsed;
+                wallElapsed > steadyElapsed ? wallElapsed - steadyElapsed : steadyElapsed - wallElapsed;
         return divergence > std::chrono::duration_cast<std::chrono::milliseconds>(m_tolerance);
     }
 

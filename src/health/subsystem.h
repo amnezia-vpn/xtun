@@ -26,13 +26,13 @@ namespace libxtun::health
 
     struct HealthConfig
     {
-        std::vector<std::string> dns_servers;
-        std::vector<std::string> tunnel_addresses;
-        std::vector<std::string> tunnel_routes;
-        ProbeStyle probe_style = ProbeStyle::Datagram;
+        std::vector<std::string> dnsServers;
+        std::vector<std::string> tunnelAddresses;
+        std::vector<std::string> tunnelRoutes;
+        ProbeStyle probeStyle = ProbeStyle::Datagram;
         HealthSettings settings;
-        ControlProbe::BindSocket bind_socket;
-        std::function<void()> wake_read;
+        ControlProbe::BindSocket bindSocket;
+        std::function<void()> wakeRead;
         LogSink log;
     };
 
@@ -54,8 +54,8 @@ namespace libxtun::health
         DnsQueryFactory m_queries;
         ResolverPool m_resolvers;
         TrafficMeter m_meter;
-        std::unique_ptr<TunnelProbe> m_tunnel_probe;
-        ControlProbe m_control_probe;
+        std::unique_ptr<TunnelProbe> m_tunnelProbe;
+        ControlProbe m_controlProbe;
         ThreadedScheduler m_scheduler;
         HealthMonitor m_monitor;
         std::optional<MonitoredIo> m_io;

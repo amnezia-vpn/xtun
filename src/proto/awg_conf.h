@@ -111,10 +111,10 @@ namespace libxtun
                 struct Peer
                 {
                     std::optional<EndpointField> endpoint;
-                    std::optional<KeyField> public_key;
-                    std::optional<KeyField> preshared_key;
-                    std::optional<Uint16Range> persistent_keepalive_interval;
-                    std::vector<PrefixField> allowed_ips;
+                    std::optional<KeyField> publicKey;
+                    std::optional<KeyField> presharedKey;
+                    std::optional<Uint16Range> persistentKeepaliveInterval;
+                    std::vector<PrefixField> allowedIps;
                 };
                 struct Interface
                 {
@@ -124,20 +124,20 @@ namespace libxtun
                     std::optional<PrefixField> address;
 
                     // WireGuard params
-                    std::optional<KeyField> private_key;
+                    std::optional<KeyField> privateKey;
                     std::optional<Uint32Field> fwmark;
-                    std::optional<Uint16Field> listen_port;
+                    std::optional<Uint16Field> listenPort;
 
                     // AWG params
                     std::optional<Uint16Field> jc, jmin, jmax;
                     std::optional<Uint16Field> s1, s2, s3, s4;
                     std::optional<Uint32Field> h1, h2, h3, h4;
                     std::optional<StringField> i1, i2, i3, i4, i5;
-                    std::optional<KeyField> header_protection_key;
-                    std::optional<Uint16Range> content_padding_addition, rekey_after_time, rekey_timeout,
-                            reject_after_time, keepalive_timeout, max_handshake_attempts;
-                    std::optional<BoolField> random_trailers;
-                    std::optional<BoolField> disable_cookies;
+                    std::optional<KeyField> headerProtectionKey;
+                    std::optional<Uint16Range> contentPaddingAddition, rekeyAfterTime, rekeyTimeout,
+                            rejectAfterTime, keepaliveTimeout, maxHandshakeAttempts;
+                    std::optional<BoolField> randomTrailers;
+                    std::optional<BoolField> disableCookies;
 
                     std::vector<Peer> peers;
                 };

@@ -22,7 +22,7 @@ namespace libxtun::health
 
         virtual ~Scheduler() = default;
 
-        virtual void start(Tick tick, std::chrono::milliseconds first_delay) = 0;
+        virtual void start(Tick tick, std::chrono::milliseconds firstDelay) = 0;
         virtual void stop() noexcept = 0;
         virtual void wake() = 0;
         virtual bool running() const noexcept = 0;
@@ -31,22 +31,22 @@ namespace libxtun::health
     class ThreadedScheduler final : public Scheduler, private NonCopyable
     {
     public:
-        ThreadedScheduler(RandomSource &random, int jitter_percent, LogSink log = {});
+        ThreadedScheduler(RandomSource &random, int jitterPercent, LogSink log = {});
         ~ThreadedScheduler() override;
 
-        void start(Tick tick, std::chrono::milliseconds first_delay) override;
+        void start(Tick tick, std::chrono::milliseconds firstDelay) override;
         void stop() noexcept override;
         void wake() override;
         bool running() const noexcept override;
 
     private:
-        void loop(std::chrono::milliseconds first_delay);
+        void loop(std::chrono::milliseconds firstDelay);
         std::chrono::milliseconds withJitter(std::chrono::milliseconds base);
         std::optional<std::chrono::milliseconds> runTick(const Tick &tick, std::chrono::milliseconds fallback) noexcept;
 
         Tick m_tick;
         RandomSource &m_random;
-        int m_jitter_percent;
+        int m_jitterPercent;
         LogSink m_log;
 
         mutable std::mutex m_mtx;

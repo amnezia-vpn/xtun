@@ -78,22 +78,22 @@ namespace
         }
     };
 
-    constexpr auto kPeriod = std::chrono::milliseconds(10000);
+    constexpr auto PERIOD = std::chrono::milliseconds(10000);
 
 } // namespace
 
 TEST(HealthPeriod, ZeroAndNegativeSelectTheDefault)
 {
-    EXPECT_EQ(HealthSettings::fromSeconds(0).period, libxtun::health::kDefaultPeriod);
-    EXPECT_EQ(HealthSettings::fromSeconds(-1).period, libxtun::health::kDefaultPeriod);
-    EXPECT_EQ(HealthSettings::fromSeconds(-3600).period, libxtun::health::kDefaultPeriod);
+    EXPECT_EQ(HealthSettings::fromSeconds(0).period, libxtun::health::DEFAULT_PERIOD);
+    EXPECT_EQ(HealthSettings::fromSeconds(-1).period, libxtun::health::DEFAULT_PERIOD);
+    EXPECT_EQ(HealthSettings::fromSeconds(-3600).period, libxtun::health::DEFAULT_PERIOD);
 }
 
 TEST(HealthPeriod, SubFloorValuesAreRaisedRatherThanHonoured)
 {
-    EXPECT_EQ(HealthSettings::fromSeconds(1).period, libxtun::health::kPeriodFloor);
-    EXPECT_EQ(HealthSettings::fromSeconds(4).period, libxtun::health::kPeriodFloor);
-    EXPECT_EQ(HealthSettings::fromSeconds(5).period, libxtun::health::kPeriodFloor);
+    EXPECT_EQ(HealthSettings::fromSeconds(1).period, libxtun::health::PERIOD_FLOOR);
+    EXPECT_EQ(HealthSettings::fromSeconds(4).period, libxtun::health::PERIOD_FLOOR);
+    EXPECT_EQ(HealthSettings::fromSeconds(5).period, libxtun::health::PERIOD_FLOOR);
 }
 
 TEST(HealthPeriod, ConfiguredCadenceAboveTheFloorIsUsedAsGiven)
@@ -107,10 +107,10 @@ TEST(HealthPeriod, TheRestOfTheSettingsKeepTheirDefaults)
 {
     const HealthSettings settings = HealthSettings::fromSeconds(30);
 
-    EXPECT_EQ(settings.probe_timeout, libxtun::health::kProbeTimeout);
-    EXPECT_EQ(settings.fail_streak, libxtun::health::kFailStreak);
-    EXPECT_EQ(settings.no_network_backoff, libxtun::health::kNoNetworkBackoff);
-    EXPECT_EQ(settings.jitter_percent, libxtun::health::kJitterPercent);
+    EXPECT_EQ(settings.probeTimeout, libxtun::health::PROBE_TIMEOUT);
+    EXPECT_EQ(settings.failStreak, libxtun::health::FAIL_STREAK);
+    EXPECT_EQ(settings.noNetworkBackoff, libxtun::health::NO_NETWORK_BACKOFF);
+    EXPECT_EQ(settings.jitterPercent, libxtun::health::JITTER_PERCENT);
 }
 
 TEST(HealthMonitor, StartArmsTheSchedulerWithThePeriod)
@@ -120,7 +120,7 @@ TEST(HealthMonitor, StartArmsTheSchedulerWithThePeriod)
     s.monitor.start();
 
     EXPECT_TRUE(s.scheduler.armed());
-    EXPECT_EQ(s.scheduler.firstDelay(), kPeriod);
+    EXPECT_EQ(s.scheduler.firstDelay(), PERIOD);
     EXPECT_TRUE(s.monitor.running());
 }
 
@@ -129,7 +129,7 @@ TEST(HealthMonitor, NoEvidenceHoldsUnknownAndEmitsNothing)
     TestSetup s;
     s.monitor.start();
 
-    EXPECT_EQ(s.scheduler.fire(), kPeriod);
+    EXPECT_EQ(s.scheduler.fire(), PERIOD);
 
     EXPECT_TRUE(s.listener.states.empty()) << "a verdict was emitted with no evidence for it";
     EXPECT_EQ(s.monitor.snapshot().state, ConnectionState::Unknown);
@@ -143,7 +143,7 @@ TEST(HealthMonitor, RealTrafficSettlesConnectedWithoutProbing)
     s.monitor.start();
     s.arrive(1);
 
-    EXPECT_EQ(s.scheduler.fire(), kPeriod);
+    EXPECT_EQ(s.scheduler.fire(), PERIOD);
 
     ASSERT_EQ(s.listener.states.size(), 1u);
     EXPECT_EQ(s.listener.states[0], ConnectionState::Connected);
@@ -185,9 +185,9 @@ TEST(HealthMonitor, TheStreakMustBeReachedBeforeTheTunnelIsCalledDead)
     s.control.outcome = ProbeOutcome::Answered;
     s.monitor.start();
 
-    EXPECT_EQ(s.scheduler.fire(), kPeriod);
+    EXPECT_EQ(s.scheduler.fire(), PERIOD);
     EXPECT_TRUE(s.listener.states.empty()) << "one failed probe tore the tunnel down";
-    EXPECT_EQ(s.monitor.snapshot().fail_streak, 1);
+    EXPECT_EQ(s.monitor.snapshot().failStreak, 1);
 
     EXPECT_FALSE(s.scheduler.fire().has_value()) << "a Disconnected verdict must end the loop";
 
@@ -209,7 +209,7 @@ TEST(HealthMonitor, BothPathsSilentIsNoNetworkAndBacksOff)
     ASSERT_EQ(s.listener.states.size(), 1u);
     EXPECT_EQ(s.listener.states[0], ConnectionState::NoNetwork);
     ASSERT_TRUE(next.has_value());
-    EXPECT_EQ(*next, kPeriod * s.settings.no_network_backoff);
+    EXPECT_EQ(*next, PERIOD * s.settings.noNetworkBackoff);
 }
 
 TEST(HealthMonitor, WhileOfflineTheUplinkIsRecheckedBeforeTheTunnel)
@@ -222,10 +222,10 @@ TEST(HealthMonitor, WhileOfflineTheUplinkIsRecheckedBeforeTheTunnel)
     s.scheduler.fire();
     ASSERT_EQ(s.monitor.snapshot().state, ConnectionState::NoNetwork);
 
-    const int tunnel_runs = s.tunnel.runs;
+    const int tunnelRuns = s.tunnel.runs;
     s.scheduler.fire();
 
-    EXPECT_EQ(s.tunnel.runs, tunnel_runs) << "the tunnel was probed while the host was known to be offline";
+    EXPECT_EQ(s.tunnel.runs, tunnelRuns) << "the tunnel was probed while the host was known to be offline";
     EXPECT_EQ(s.control.runs, 2);
 }
 
@@ -254,14 +254,14 @@ TEST(HealthMonitor, ResetIsSilentAndClearsTheStreak)
     s.control.outcome = ProbeOutcome::Answered;
     s.monitor.start();
     s.scheduler.fire();
-    ASSERT_EQ(s.monitor.snapshot().fail_streak, 1);
+    ASSERT_EQ(s.monitor.snapshot().failStreak, 1);
 
     s.monitor.requestReset();
     s.scheduler.fire();
 
     EXPECT_TRUE(s.listener.states.empty()) << "a roam was reported to the client as a state change";
     EXPECT_EQ(s.monitor.snapshot().state, ConnectionState::Unknown);
-    EXPECT_EQ(s.monitor.snapshot().fail_streak, 0);
+    EXPECT_EQ(s.monitor.snapshot().failStreak, 0);
 }
 
 TEST(HealthMonitor, TrafficFromBeforeARoamCannotSatisfyTheFreshnessRule)
@@ -361,12 +361,12 @@ TEST(HealthMonitor, TheSnapshotCarriesTheCountersAndTheStreak)
 
     const auto snapshot = s.monitor.snapshot();
     EXPECT_EQ(snapshot.state, ConnectionState::Connected);
-    EXPECT_EQ(snapshot.traffic.inbound_packets, 3u);
-    EXPECT_EQ(snapshot.traffic.inbound_bytes, 300u);
-    EXPECT_EQ(snapshot.traffic.outbound_packets, 1u);
-    EXPECT_EQ(snapshot.fail_streak, 0);
-    EXPECT_FALSE(snapshot.probe_pending);
-    EXPECT_EQ(snapshot.last_inbound_seen, s.clock.steadyNow());
+    EXPECT_EQ(snapshot.traffic.inboundPackets, 3u);
+    EXPECT_EQ(snapshot.traffic.inboundBytes, 300u);
+    EXPECT_EQ(snapshot.traffic.outboundPackets, 1u);
+    EXPECT_EQ(snapshot.failStreak, 0);
+    EXPECT_FALSE(snapshot.probePending);
+    EXPECT_EQ(snapshot.lastInboundSeen, s.clock.steadyNow());
 }
 
 TEST(HealthMonitor, StoppingStopsTheScheduler)

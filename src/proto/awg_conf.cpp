@@ -173,9 +173,9 @@ namespace libxtun
                 PrefixField field;
 
                 auto slash = str.find('/');
-                std::string_view addr_part = (slash == std::string_view::npos) ? str : str.substr(0, slash);
+                std::string_view addrPart = (slash == std::string_view::npos) ? str : str.substr(0, slash);
 
-                auto res = IpAddrField::fromConf(addr_part);
+                auto res = IpAddrField::fromConf(addrPart);
                 if (!res)
                     return fail(res.error());
                 field.addr = std::move(res).value();
@@ -186,10 +186,10 @@ namespace libxtun
                     return field;
                 }
 
-                std::string_view cidr_part = str.substr(slash + 1);
-                const char *end = cidr_part.data() + cidr_part.size();
+                std::string_view cidrPart = str.substr(slash + 1);
+                const char *end = cidrPart.data() + cidrPart.size();
 
-                auto [p, ec] = std::from_chars(cidr_part.data(), end, field.cidr);
+                auto [p, ec] = std::from_chars(cidrPart.data(), end, field.cidr);
                 if (ec != std::errc {})
                     return fail(ec);
                 if (p != end)
@@ -209,33 +209,33 @@ namespace libxtun
             ResultParser<EndpointField> EndpointField::fromConf(std::string_view str)
             {
                 EndpointField field {};
-                std::string_view addr_part;
-                std::string_view port_part;
+                std::string_view addrPart;
+                std::string_view portPart;
 
                 if (!str.empty() && str.front() == '[') {
                     auto close = str.find(']');
                     if (close == std::string_view::npos)
                         return fail(std::errc::invalid_argument);
-                    addr_part = str.substr(1, close - 1);
+                    addrPart = str.substr(1, close - 1);
                     std::string_view rest = str.substr(close + 1);
                     if (rest.empty() || rest.front() != ':')
                         return fail(std::errc::invalid_argument);
-                    port_part = rest.substr(1);
+                    portPart = rest.substr(1);
                 } else {
                     auto colon = str.find(':');
                     if (colon == std::string_view::npos)
                         return fail(std::errc::invalid_argument);
-                    addr_part = str.substr(0, colon);
-                    port_part = str.substr(colon + 1);
+                    addrPart = str.substr(0, colon);
+                    portPart = str.substr(colon + 1);
                 }
 
-                auto res = IpAddrField::fromConf(addr_part);
+                auto res = IpAddrField::fromConf(addrPart);
                 if (!res)
                     return fail(res.error());
                 field.addr = std::move(res).value();
 
-                const char *end = port_part.data() + port_part.size();
-                auto [p, ec] = std::from_chars(port_part.data(), end, field.port);
+                const char *end = portPart.data() + portPart.size();
+                auto [p, ec] = std::from_chars(portPart.data(), end, field.port);
                 if (ec != std::errc {})
                     return fail(ec);
                 if (p != end)
@@ -338,9 +338,9 @@ namespace libxtun
                     item<&Config::Interface::dns, "DNS", "">(),
                     item<&Config::Interface::mtu, "MTU", "">(),
                     item<&Config::Interface::address, "Address", "">(),
-                    item<&Config::Interface::private_key, "PrivateKey", "private_key">(),
+                    item<&Config::Interface::privateKey, "PrivateKey", "private_key">(),
                     item<&Config::Interface::fwmark, "FwMark", "fwmark">(),
-                    item<&Config::Interface::listen_port, "ListenPort", "listen_port">(),
+                    item<&Config::Interface::listenPort, "ListenPort", "listen_port">(),
                     item<&Config::Interface::jc, "Jc", "jc">(),
                     item<&Config::Interface::jmin, "Jmin", "jmin">(),
                     item<&Config::Interface::jmax, "Jmax", "jmax">(),
@@ -357,24 +357,24 @@ namespace libxtun
                     item<&Config::Interface::i3, "I3", "i3">(),
                     item<&Config::Interface::i4, "I4", "i4">(),
                     item<&Config::Interface::i5, "I5", "i5">(),
-                    item<&Config::Interface::header_protection_key, "HeaderProtectionKey", "header_protection_key">(),
-                    item<&Config::Interface::content_padding_addition, "ContentPaddingAddition", "content_padding_addition">(),
-                    item<&Config::Interface::rekey_after_time, "RekeyAfterTime", "rekey_after_time">(),
-                    item<&Config::Interface::rekey_timeout, "RekeyTimeout", "rekey_timeout">(),
-                    item<&Config::Interface::reject_after_time, "RejectAfterTime", "reject_after_time">(),
-                    item<&Config::Interface::keepalive_timeout, "KeepaliveTimeout", "keepalive_timeout">(),
-                    item<&Config::Interface::max_handshake_attempts, "MaxHandshakeAttempts", "max_handshake_attempts">(),
-                    item<&Config::Interface::random_trailers, "RandomTrailers", "random_trailers">(),
-                    item<&Config::Interface::disable_cookies, "DisableCookies", "disable_cookies">(),
+                    item<&Config::Interface::headerProtectionKey, "HeaderProtectionKey", "header_protection_key">(),
+                    item<&Config::Interface::contentPaddingAddition, "ContentPaddingAddition", "content_padding_addition">(),
+                    item<&Config::Interface::rekeyAfterTime, "RekeyAfterTime", "rekey_after_time">(),
+                    item<&Config::Interface::rekeyTimeout, "RekeyTimeout", "rekey_timeout">(),
+                    item<&Config::Interface::rejectAfterTime, "RejectAfterTime", "reject_after_time">(),
+                    item<&Config::Interface::keepaliveTimeout, "KeepaliveTimeout", "keepalive_timeout">(),
+                    item<&Config::Interface::maxHandshakeAttempts, "MaxHandshakeAttempts", "max_handshake_attempts">(),
+                    item<&Config::Interface::randomTrailers, "RandomTrailers", "random_trailers">(),
+                    item<&Config::Interface::disableCookies, "DisableCookies", "disable_cookies">(),
                 };
 
                 inline constexpr std::array PEER_ITEMS = {
-                    item<&Config::Peer::public_key, "PublicKey", "public_key">(),
+                    item<&Config::Peer::publicKey, "PublicKey", "public_key">(),
                     item<&Config::Peer::endpoint, "Endpoint", "endpoint">(),
-                    item<&Config::Peer::preshared_key, "PresharedKey", "preshared_key">(),
-                    item<&Config::Peer::persistent_keepalive_interval, "PersistentKeepalive",
+                    item<&Config::Peer::presharedKey, "PresharedKey", "preshared_key">(),
+                    item<&Config::Peer::persistentKeepaliveInterval, "PersistentKeepalive",
                          "persistent_keepalive_interval">(),
-                    item<&Config::Peer::allowed_ips, "AllowedIPs", "allowed_ip">(),
+                    item<&Config::Peer::allowedIps, "AllowedIPs", "allowed_ip">(),
                 };
 
                 bool keysEqual(std::string_view a, std::string_view b)

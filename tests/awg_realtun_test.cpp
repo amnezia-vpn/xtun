@@ -98,11 +98,11 @@ namespace
         return std::system((cmd + " >/dev/null 2>&1").c_str()) == 0;
     }
 
-    constexpr const char *kNetnsMarker = "XTUN_NETNS_CHILD";
+    constexpr const char *NETNS_MARKER = "XTUN_NETNS_CHILD";
 
     bool insidePrivateNetns()
     {
-        return ::getenv(kNetnsMarker) != nullptr;
+        return ::getenv(NETNS_MARKER) != nullptr;
     }
 
     // unshare(CLONE_NEWNET) moves only the calling thread, and goxtun's Go runtime
@@ -120,7 +120,7 @@ namespace
 
         // execve only reads the environment strings, so the inherited ones are
         // pointed at rather than copied.
-        std::string marker = std::string(kNetnsMarker) + "=1";
+        std::string marker = std::string(NETNS_MARKER) + "=1";
         std::vector<char *> envp;
         for (char **e = ::environ; *e != nullptr; ++e) {
             envp.push_back(*e);
@@ -148,15 +148,15 @@ namespace
 
 #endif // defined(__linux__)
 
-    constexpr const char *kPrivA = "YHJIKcg6kMlHqmHvpdetXH9300wKO4NxqX1L+v9h20A=";
-    constexpr const char *kPubA = "dpY/lgMy5OZPe6EVFl25AYL8hCsNEPxzO2uZZdzLnlo=";
-    constexpr const char *kPrivB = "CPbRqDXAuXNShMCXDVQ6d7mKeVAk2isLmqSNOnVWGWs=";
-    constexpr const char *kPubB = "sB1wCAUCSBg8mrN8n4mPMAs4Z2C9QUCu3i6Emfb9omo=";
+    constexpr const char *PRIV_KEY_A = "YHJIKcg6kMlHqmHvpdetXH9300wKO4NxqX1L+v9h20A=";
+    constexpr const char *PUB_KEY_A = "dpY/lgMy5OZPe6EVFl25AYL8hCsNEPxzO2uZZdzLnlo=";
+    constexpr const char *PRIV_KEY_B = "CPbRqDXAuXNShMCXDVQ6d7mKeVAk2isLmqSNOnVWGWs=";
+    constexpr const char *PUB_KEY_B = "sB1wCAUCSBg8mrN8n4mPMAs4Z2C9QUCu3i6Emfb9omo=";
 
-    constexpr int kPortA = 56911;
-    constexpr int kPortB = 56912;
+    constexpr int PORT_A = 56911;
+    constexpr int PORT_B = 56912;
 
-    constexpr const char *kAwgParams = "Jc = 2\n"
+    constexpr const char *AWG_PARAMS = "Jc = 2\n"
                                        "Jmin = 8\n"
                                        "Jmax = 16\n"
                                        "S1 = 4\n"
@@ -168,11 +168,11 @@ namespace
 
     libxtun::proto::awg::Config confA(const std::string &allowed = "0.0.0.0/0", const std::string &host = "127.0.0.1")
     {
-        const std::string str = std::string("[Interface]\n") + "PrivateKey = " + kPrivA + "\n"
-                + "ListenPort = " + std::to_string(kPortA) + "\n" + kAwgParams
+        const std::string str = std::string("[Interface]\n") + "PrivateKey = " + PRIV_KEY_A + "\n"
+                + "ListenPort = " + std::to_string(PORT_A) + "\n" + AWG_PARAMS
                 + "\n"
                   "[Peer]\n"
-                + "PublicKey = " + kPubB + "\n" + "Endpoint = " + host + ":" + std::to_string(kPortB)
+                + "PublicKey = " + PUB_KEY_B + "\n" + "Endpoint = " + host + ":" + std::to_string(PORT_B)
                 + "\n"
                   "AllowedIPs = "
                 + allowed
@@ -183,11 +183,11 @@ namespace
 
     libxtun::proto::awg::Config confB(const std::string &host = "127.0.0.1")
     {
-        const std::string str = std::string("[Interface]\n") + "PrivateKey = " + kPrivB + "\n"
-                + "ListenPort = " + std::to_string(kPortB) + "\n" + kAwgParams
+        const std::string str = std::string("[Interface]\n") + "PrivateKey = " + PRIV_KEY_B + "\n"
+                + "ListenPort = " + std::to_string(PORT_B) + "\n" + AWG_PARAMS
                 + "\n"
                   "[Peer]\n"
-                + "PublicKey = " + kPubA + "\n" + "Endpoint = " + host + ":" + std::to_string(kPortA)
+                + "PublicKey = " + PUB_KEY_A + "\n" + "Endpoint = " + host + ":" + std::to_string(PORT_A)
                 + "\n"
                   "AllowedIPs = 10.9.9.1/32\n";
         return libxtun::proto::awg::Config::fromConf(str).value();
@@ -195,8 +195,8 @@ namespace
 
     libxtun::proto::awg::Config confRemote()
     {
-        const std::string str = std::string("[Interface]\n") + "PrivateKey = " + kPrivA + "\n"
-                + "ListenPort = " + std::to_string(kPortA)
+        const std::string str = std::string("[Interface]\n") + "PrivateKey = " + PRIV_KEY_A + "\n"
+                + "ListenPort = " + std::to_string(PORT_A)
                 + "\n"
                   "Jc = 2\n"
                   "Jmin = 8\n"
@@ -209,7 +209,7 @@ namespace
                   "H4 = 1234567894\n"
                   "\n"
                   "[Peer]\n"
-                + "PublicKey = " + kPubB
+                + "PublicKey = " + PUB_KEY_B
                 + "\n"
                   "Endpoint = 203.0.113.2:51820\n"
                   "AllowedIPs = 0.0.0.0/0\n"
@@ -765,18 +765,18 @@ TEST(AwgRealTun, RoamRemarkFollowsDefaultRouteChange)
 namespace
 {
 
-    constexpr bool kVerbose = false;
+    constexpr bool VERBOSE = false;
 
     void logA(const char *str, void *)
     {
-        if (kVerbose) {
+        if (VERBOSE) {
             std::fprintf(stderr, "[A] %s\n", str);
         }
     }
 
     void logB(const char *str, void *)
     {
-        if (kVerbose) {
+        if (VERBOSE) {
             std::fprintf(stderr, "[B] %s\n", str);
         }
     }
@@ -995,7 +995,7 @@ TEST(AwgRealTun, DeliversThroughWintunAdapter)
 
     MemTun tunB;
     libxtun::ClientCallbacks callbacksB {};
-    callbacksB.on_log = logB;
+    callbacksB.onLog = logB;
     libxtun::proto::Awg b(confB(host));
     b.bind(callbacksB);
     b.setInterface("xtunrtb");
@@ -1006,7 +1006,7 @@ TEST(AwgRealTun, DeliversThroughWintunAdapter)
     ASSERT_EQ(tunnel.openTun(), LIBXTUN_OK);
 
     libxtun::ClientCallbacks callbacksA {};
-    callbacksA.on_log = logA;
+    callbacksA.onLog = logA;
     libxtun::proto::Awg a(confA("10.9.9.2/32", host));
     a.bind(callbacksA);
     a.setInterface("xtunrta");

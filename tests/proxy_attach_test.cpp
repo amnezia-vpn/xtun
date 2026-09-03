@@ -64,51 +64,51 @@ namespace
 
     struct LogSpy
     {
-        static std::vector<std::string> lines;
-        static void *priv;
+        static std::vector<std::string> g_lines;
+        static void *g_priv;
 
         static void handler(const char *message, void *p)
         {
-            lines.emplace_back(message);
-            priv = p;
+            g_lines.emplace_back(message);
+            g_priv = p;
         }
 
         static void reset()
         {
-            lines.clear();
-            priv = nullptr;
+            g_lines.clear();
+            g_priv = nullptr;
         }
     };
 
-    std::vector<std::string> LogSpy::lines;
-    void *LogSpy::priv = nullptr;
+    std::vector<std::string> LogSpy::g_lines;
+    void *LogSpy::g_priv = nullptr;
 
     struct StatusSpy
     {
-        static std::vector<int> values;
-        static void *priv;
+        static std::vector<int> g_values;
+        static void *g_priv;
 
         static void handler(int status, void *p)
         {
-            values.push_back(status);
-            priv = p;
+            g_values.push_back(status);
+            g_priv = p;
         }
 
         static void reset()
         {
-            values.clear();
-            priv = nullptr;
+            g_values.clear();
+            g_priv = nullptr;
         }
     };
 
-    std::vector<int> StatusSpy::values;
-    void *StatusSpy::priv = nullptr;
+    std::vector<int> StatusSpy::g_values;
+    void *StatusSpy::g_priv = nullptr;
 
-    constexpr const char *kAwgConf = "[Interface]\n"
+    constexpr const char *AWG_CONF = "[Interface]\n"
                                      "PrivateKey = QMLo1B9mJ0xmz3aQ6QZQZQZQZQZQZQZQZQZQZQZQZFo=\n"
                                      "Jc = 4\n";
 
-    libxtun_tunnel_opts default_opts()
+    libxtun_tunnel_opts defaultOpts()
     {
         libxtun_tunnel_opts opts {};
         opts.size = sizeof(opts);
@@ -120,7 +120,7 @@ namespace
 
 TEST(ProxyAttach, RejectsNullProxy)
 {
-    libxtun_tunnel_opts opts = default_opts();
+    libxtun_tunnel_opts opts = defaultOpts();
     libxtun::Tunnel tunnel(opts);
 
     EXPECT_EQ(tunnel.attachProxy(nullptr), LIBXTUN_ERR_INVALID_ARGS);
@@ -129,7 +129,7 @@ TEST(ProxyAttach, RejectsNullProxy)
 TEST(ProxyAttach, StartsProxyWithTunnelIo)
 {
     RecordingProxy proxy;
-    libxtun_tunnel_opts opts = default_opts();
+    libxtun_tunnel_opts opts = defaultOpts();
     libxtun::Tunnel tunnel(opts);
 
     ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
@@ -141,7 +141,7 @@ TEST(ProxyAttach, StartsProxyWithTunnelIo)
 TEST(ProxyAttach, IoIsBoundToTheTunnelDevice)
 {
     RecordingProxy proxy;
-    libxtun_tunnel_opts opts = default_opts();
+    libxtun_tunnel_opts opts = defaultOpts();
     auto device = std::make_unique<FakeTunDevice>(1280);
     libxtun::Tunnel tunnel(opts, std::move(device));
     ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
@@ -150,8 +150,8 @@ TEST(ProxyAttach, IoIsBoundToTheTunnelDevice)
     EXPECT_EQ(proxy.io->mtu(), 1280);
 
     std::array<std::byte, 4> buf {};
-    EXPECT_EQ(proxy.io->read(buf), libxtun::kIoFatal);
-    EXPECT_EQ(proxy.io->write(buf), libxtun::kIoFatal);
+    EXPECT_EQ(proxy.io->read(buf), libxtun::IO_FATAL);
+    EXPECT_EQ(proxy.io->write(buf), libxtun::IO_FATAL);
 }
 
 TEST(ProxyAttach, FailedStartLeavesProxyDetached)
@@ -160,7 +160,7 @@ TEST(ProxyAttach, FailedStartLeavesProxyDetached)
     proxy.startResult = LIBXTUN_ERR_INVALID_ARGS;
 
     {
-        libxtun_tunnel_opts opts = default_opts();
+        libxtun_tunnel_opts opts = defaultOpts();
         libxtun::Tunnel tunnel(opts);
         EXPECT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_ERR_INVALID_ARGS);
     }
@@ -171,7 +171,7 @@ TEST(ProxyAttach, FailedStartLeavesProxyDetached)
 
 TEST(ProxyAttach, ProxyDestroyedFirstDetachesItself)
 {
-    libxtun_tunnel_opts opts = default_opts();
+    libxtun_tunnel_opts opts = defaultOpts();
     libxtun::Tunnel tunnel(opts);
 
     {
@@ -187,7 +187,7 @@ TEST(ProxyAttach, ProxyDestroyedFirstDetachesItself)
 TEST(ProxyAttach, RejectsReattachingSameProxy)
 {
     RecordingProxy proxy;
-    libxtun_tunnel_opts opts = default_opts();
+    libxtun_tunnel_opts opts = defaultOpts();
     libxtun::Tunnel tunnel(opts);
 
     ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
@@ -200,7 +200,7 @@ TEST(ProxyAttach, AttachingAnotherProxyReplaces)
 {
     RecordingProxy proxy;
     RecordingProxy other;
-    libxtun_tunnel_opts opts = default_opts();
+    libxtun_tunnel_opts opts = defaultOpts();
     libxtun::Tunnel tunnel(opts);
 
     ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
@@ -215,7 +215,7 @@ TEST(ProxyAttach, StopsProxyOnTunnelDestruction)
     RecordingProxy proxy;
 
     {
-        libxtun_tunnel_opts opts = default_opts();
+        libxtun_tunnel_opts opts = defaultOpts();
         libxtun::Tunnel tunnel(opts);
         ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
         EXPECT_EQ(proxy.stopCalls, 0);
@@ -235,7 +235,7 @@ TEST(AttachProxyC, RejectsNullArgs)
     EXPECT_EQ(libxtun_tunnel_attach_proxy(&tun, &proxy), LIBXTUN_ERR_INVALID_ARGS);
     EXPECT_EQ(libxtun_tunnel_attach_proxy(nullptr, &proxy), LIBXTUN_ERR_INVALID_ARGS);
 
-    libxtun::Tunnel tunnel(default_opts());
+    libxtun::Tunnel tunnel(defaultOpts());
     tun.handle = &tunnel;
     proxy.handle = nullptr;
     EXPECT_EQ(libxtun_tunnel_attach_proxy(&tun, &proxy), LIBXTUN_ERR_INVALID_ARGS);
@@ -245,7 +245,7 @@ TEST(AttachProxyC, RejectsNullArgs)
 TEST(AttachProxyC, AttachesThroughHandles)
 {
     RecordingProxy obj;
-    libxtun::Tunnel tunnel(default_opts());
+    libxtun::Tunnel tunnel(defaultOpts());
 
     libxtun_tunnel tun {};
     tun.handle = &tunnel;
@@ -260,7 +260,7 @@ TEST(ProxyAttach, EachProxyGetsItsOwnMeteredIo)
 {
     RecordingProxy first;
     RecordingProxy second;
-    libxtun_tunnel_opts opts = default_opts();
+    libxtun_tunnel_opts opts = defaultOpts();
     libxtun::Tunnel one(opts);
     libxtun::Tunnel two(opts);
 
@@ -275,7 +275,7 @@ TEST(ProxyAttach, EachProxyGetsItsOwnMeteredIo)
 TEST(ProxyAttach, DetachedProxyCanBeAttachedAgain)
 {
     RecordingProxy proxy;
-    libxtun_tunnel_opts opts = default_opts();
+    libxtun_tunnel_opts opts = defaultOpts();
     auto nextDevice = std::make_unique<FakeTunDevice>(1400);
     libxtun::Tunnel next(opts, std::move(nextDevice));
 
@@ -314,16 +314,16 @@ TEST(ProxyCallbacks, LogReachesTheClientPriv)
     cproxy.loghandler_priv = &cookie;
 
     RecordingProxy proxy;
-    proxy.bind(libxtun::ClientCallbacks { .on_socket = cproxy.onsockspawn,
-                                          .on_socket_priv = cproxy.onsockspawn_priv,
-                                          .on_log = cproxy.loghandler,
-                                          .on_log_priv = cproxy.loghandler_priv });
+    proxy.bind(libxtun::ClientCallbacks { .onSocket = cproxy.onsockspawn,
+                                          .onSocketPriv = cproxy.onsockspawn_priv,
+                                          .onLog = cproxy.loghandler,
+                                          .onLogPriv = cproxy.loghandler_priv });
     proxy.log("hello");
 
-    ASSERT_EQ(LogSpy::lines.size(), 1u);
-    EXPECT_EQ(LogSpy::lines[0], "hello");
-    EXPECT_EQ(LogSpy::priv, static_cast<void *>(&cookie));
-    EXPECT_NE(LogSpy::priv, static_cast<void *>(&cproxy));
+    ASSERT_EQ(LogSpy::g_lines.size(), 1u);
+    EXPECT_EQ(LogSpy::g_lines[0], "hello");
+    EXPECT_EQ(LogSpy::g_priv, static_cast<void *>(&cookie));
+    EXPECT_NE(LogSpy::g_priv, static_cast<void *>(&cproxy));
 }
 
 TEST(ProxyCallbacks, LogSurvivesTheCallerStructBeingOverwritten)
@@ -336,16 +336,16 @@ TEST(ProxyCallbacks, LogSurvivesTheCallerStructBeingOverwritten)
     cproxy.loghandler_priv = &cookie;
 
     RecordingProxy proxy;
-    proxy.bind(libxtun::ClientCallbacks { .on_socket = cproxy.onsockspawn,
-                                          .on_socket_priv = cproxy.onsockspawn_priv,
-                                          .on_log = cproxy.loghandler,
-                                          .on_log_priv = cproxy.loghandler_priv });
+    proxy.bind(libxtun::ClientCallbacks { .onSocket = cproxy.onsockspawn,
+                                          .onSocketPriv = cproxy.onsockspawn_priv,
+                                          .onLog = cproxy.loghandler,
+                                          .onLogPriv = cproxy.loghandler_priv });
     std::memset(&cproxy, 0, sizeof(cproxy));
     proxy.log("after");
 
-    ASSERT_EQ(LogSpy::lines.size(), 1u);
-    EXPECT_EQ(LogSpy::lines[0], "after");
-    EXPECT_EQ(LogSpy::priv, static_cast<void *>(&cookie));
+    ASSERT_EQ(LogSpy::g_lines.size(), 1u);
+    EXPECT_EQ(LogSpy::g_lines[0], "after");
+    EXPECT_EQ(LogSpy::g_priv, static_cast<void *>(&cookie));
 }
 
 TEST(ProxyCallbacks, StatusReachesTheClientPriv)
@@ -358,17 +358,17 @@ TEST(ProxyCallbacks, StatusReachesTheClientPriv)
     cproxy.statushandler_priv = &cookie;
 
     RecordingProxy proxy;
-    proxy.bind(libxtun::ClientCallbacks { .on_socket = cproxy.onsockspawn,
-                                          .on_socket_priv = cproxy.onsockspawn_priv,
-                                          .on_log = cproxy.loghandler,
-                                          .on_log_priv = cproxy.loghandler_priv,
-                                          .on_status = cproxy.statushandler,
-                                          .on_status_priv = cproxy.statushandler_priv });
+    proxy.bind(libxtun::ClientCallbacks { .onSocket = cproxy.onsockspawn,
+                                          .onSocketPriv = cproxy.onsockspawn_priv,
+                                          .onLog = cproxy.loghandler,
+                                          .onLogPriv = cproxy.loghandler_priv,
+                                          .onStatus = cproxy.statushandler,
+                                          .onStatusPriv = cproxy.statushandler_priv });
     proxy.status(LIBXTUN_STATUS_CONNECTED);
 
-    ASSERT_EQ(StatusSpy::values.size(), 1u);
-    EXPECT_EQ(StatusSpy::values[0], LIBXTUN_STATUS_CONNECTED);
-    EXPECT_EQ(StatusSpy::priv, static_cast<void *>(&cookie));
+    ASSERT_EQ(StatusSpy::g_values.size(), 1u);
+    EXPECT_EQ(StatusSpy::g_values[0], LIBXTUN_STATUS_CONNECTED);
+    EXPECT_EQ(StatusSpy::g_priv, static_cast<void *>(&cookie));
 }
 
 TEST(ProxyCallbacks, UnboundProxyEmitsNothing)
@@ -380,15 +380,15 @@ TEST(ProxyCallbacks, UnboundProxyEmitsNothing)
     proxy.status(LIBXTUN_STATUS_DISCONNECTED);
     proxy.log("ignored");
 
-    EXPECT_TRUE(StatusSpy::values.empty());
-    EXPECT_TRUE(LogSpy::lines.empty());
+    EXPECT_TRUE(StatusSpy::g_values.empty());
+    EXPECT_TRUE(LogSpy::g_lines.empty());
 }
 
 TEST(ProxyNew, CreatesAwgFromValidConfig)
 {
     libxtun_proxy proxy {};
 
-    ASSERT_EQ(libxtun_proxy_new(&proxy, LIBXTUN_PROXY_PROTO_AWG, kAwgConf), LIBXTUN_OK);
+    ASSERT_EQ(libxtun_proxy_new(&proxy, LIBXTUN_PROXY_PROTO_AWG, AWG_CONF), LIBXTUN_OK);
     ASSERT_NE(proxy.handle, nullptr);
     EXPECT_STREQ(reinterpret_cast<libxtun::Proxy *>(proxy.handle)->name(), "awg");
 

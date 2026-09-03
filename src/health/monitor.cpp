@@ -28,24 +28,24 @@ namespace libxtun::health
             return settings;
         }
         const std::chrono::seconds requested { seconds };
-        settings.period = requested < kPeriodFloor ? kPeriodFloor : requested;
+        settings.period = requested < PERIOD_FLOOR ? PERIOD_FLOOR : requested;
         return settings;
     }
 
     HealthMonitor::HealthMonitor(HealthSettings settings, HealthListener &listener, TrafficMeter &meter,
-                                 ConnectivityProbe &tunnel_probe, ConnectivityProbe &control_probe,
+                                 ConnectivityProbe &tunnelProbe, ConnectivityProbe &controlProbe,
                                  DnsQueryFactory &queries, Scheduler &scheduler, const Clock &clock, LogSink log)
         : m_settings(settings),
           m_listener(listener),
           m_meter(meter),
-          m_tunnel_probe(tunnel_probe),
-          m_control_probe(control_probe),
+          m_tunnelProbe(tunnelProbe),
+          m_controlProbe(controlProbe),
           m_queries(queries),
           m_scheduler(scheduler),
           m_clock(clock),
           m_log(std::move(log)),
-          m_suspend(clock, kSuspendTolerance),
-          m_streak(settings.fail_streak)
+          m_suspend(clock, SUSPEND_TOLERANCE),
+          m_streak(settings.failStreak)
     {
     }
 
@@ -67,12 +67,12 @@ namespace libxtun::health
 
     void HealthMonitor::requestReset() noexcept
     {
-        m_reset_requested.store(true, std::memory_order_release);
+        m_resetRequested.store(true, std::memory_order_release);
     }
 
     HealthSnapshot HealthMonitor::snapshot() const
     {
-        std::lock_guard<std::mutex> lock(m_snapshot_mtx);
+        std::lock_guard<std::mutex> lock(m_snapshotMtx);
         return m_snapshot;
     }
 
@@ -87,7 +87,7 @@ namespace libxtun::health
 
         const auto period = std::chrono::duration_cast<std::chrono::milliseconds>(m_settings.period);
         if (state == ConnectionState::NoNetwork) {
-            return period * std::max(1, m_settings.no_network_backoff);
+            return period * std::max(1, m_settings.noNetworkBackoff);
         }
         return period;
     }
@@ -95,31 +95,31 @@ namespace libxtun::health
     ConnectionState HealthMonitor::evaluate()
     {
         const std::uint64_t inbound = m_meter.inboundPackets();
-        const bool inbound_fresh = inbound != m_inbound_mark;
-        m_inbound_mark = inbound;
-        if (inbound_fresh) {
-            m_last_inbound_seen = m_clock.steadyNow();
+        const bool inboundFresh = inbound != m_inboundMark;
+        m_inboundMark = inbound;
+        if (inboundFresh) {
+            m_lastInboundSeen = m_clock.steadyNow();
         }
 
-        if (m_reset_requested.exchange(false, std::memory_order_acq_rel) || m_suspend.sample()) {
+        if (m_resetRequested.exchange(false, std::memory_order_acq_rel) || m_suspend.sample()) {
             m_streak.reset();
             return resetState(ConnectionState::Unknown);
         }
 
-        Observation obs { .inbound_fresh = inbound_fresh };
+        Observation obs { .inboundFresh = inboundFresh };
         if (const auto verdict = resolveVerdict(obs)) {
             m_streak.reset();
             return settle(*verdict);
         }
 
         if (m_state == ConnectionState::NoNetwork) {
-            obs.control = probeWith(m_control_probe);
+            obs.control = probeWith(m_controlProbe);
             if (obs.control != ProbeOutcome::Answered) {
                 return m_state;
             }
         }
 
-        obs.tunnel = probeWith(m_tunnel_probe);
+        obs.tunnel = probeWith(m_tunnelProbe);
         if (const auto verdict = resolveVerdict(obs)) {
             m_streak.reset();
             return settle(*verdict);
@@ -129,12 +129,12 @@ namespace libxtun::health
         }
 
         m_streak.increment();
-        obs.fail_streak_reached = m_streak.reached();
-        if (!obs.fail_streak_reached) {
+        obs.failStreakReached = m_streak.reached();
+        if (!obs.failStreakReached) {
             return m_state;
         }
         if (obs.control == ProbeOutcome::NotRun) {
-            obs.control = probeWith(m_control_probe);
+            obs.control = probeWith(m_controlProbe);
         }
 
         const auto verdict = resolveVerdict(obs);
@@ -144,7 +144,7 @@ namespace libxtun::health
     ProbeOutcome HealthMonitor::probeWith(ConnectivityProbe &probe)
     {
         publish(true);
-        const ProbeOutcome outcome = probe.run(m_queries.next(), m_settings.probe_timeout);
+        const ProbeOutcome outcome = probe.run(m_queries.next(), m_settings.probeTimeout);
         publish(false);
         return outcome;
     }
@@ -171,14 +171,14 @@ namespace libxtun::health
         return m_state;
     }
 
-    void HealthMonitor::publish(bool probe_pending)
+    void HealthMonitor::publish(bool probePending)
     {
-        std::lock_guard<std::mutex> lock(m_snapshot_mtx);
+        std::lock_guard<std::mutex> lock(m_snapshotMtx);
         m_snapshot.state = m_state;
         m_snapshot.traffic = m_meter.counters();
-        m_snapshot.last_inbound_seen = m_last_inbound_seen;
-        m_snapshot.fail_streak = m_streak.count();
-        m_snapshot.probe_pending = probe_pending;
+        m_snapshot.lastInboundSeen = m_lastInboundSeen;
+        m_snapshot.failStreak = m_streak.count();
+        m_snapshot.probePending = probePending;
     }
 
 }

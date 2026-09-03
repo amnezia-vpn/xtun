@@ -12,43 +12,43 @@ namespace libxtun::health
     public:
         struct Counters
         {
-            uint64_t outbound_packets = 0;
-            uint64_t inbound_packets = 0;
-            uint64_t outbound_bytes = 0;
-            uint64_t inbound_bytes = 0;
+            uint64_t outboundPackets = 0;
+            uint64_t inboundPackets = 0;
+            uint64_t outboundBytes = 0;
+            uint64_t inboundBytes = 0;
         };
 
         TrafficMeter() noexcept = default;
 
         void recordOutbound(int bytes) noexcept
         {
-            m_outbound_packets.fetch_add(1, std::memory_order_relaxed);
-            m_outbound_bytes.fetch_add(static_cast<uint64_t>(bytes), std::memory_order_relaxed);
+            m_outboundPackets.fetch_add(1, std::memory_order_relaxed);
+            m_outboundBytes.fetch_add(static_cast<uint64_t>(bytes), std::memory_order_relaxed);
         }
 
         void recordInbound(int bytes) noexcept
         {
-            m_inbound_packets.fetch_add(1, std::memory_order_relaxed);
-            m_inbound_bytes.fetch_add(static_cast<uint64_t>(bytes), std::memory_order_relaxed);
+            m_inboundPackets.fetch_add(1, std::memory_order_relaxed);
+            m_inboundBytes.fetch_add(static_cast<uint64_t>(bytes), std::memory_order_relaxed);
         }
 
         Counters counters() const noexcept
         {
-            return { m_outbound_packets.load(std::memory_order_relaxed),
-                     m_inbound_packets.load(std::memory_order_relaxed),
-                     m_outbound_bytes.load(std::memory_order_relaxed), m_inbound_bytes.load(std::memory_order_relaxed) };
+            return { m_outboundPackets.load(std::memory_order_relaxed),
+                     m_inboundPackets.load(std::memory_order_relaxed),
+                     m_outboundBytes.load(std::memory_order_relaxed), m_inboundBytes.load(std::memory_order_relaxed) };
         }
 
         uint64_t inboundPackets() const noexcept
         {
-            return m_inbound_packets.load(std::memory_order_relaxed);
+            return m_inboundPackets.load(std::memory_order_relaxed);
         }
 
     private:
-        std::atomic<uint64_t> m_outbound_packets { 0 };
-        std::atomic<uint64_t> m_inbound_packets { 0 };
-        std::atomic<uint64_t> m_outbound_bytes { 0 };
-        std::atomic<uint64_t> m_inbound_bytes { 0 };
+        std::atomic<uint64_t> m_outboundPackets { 0 };
+        std::atomic<uint64_t> m_inboundPackets { 0 };
+        std::atomic<uint64_t> m_outboundBytes { 0 };
+        std::atomic<uint64_t> m_inboundBytes { 0 };
     };
 
 }

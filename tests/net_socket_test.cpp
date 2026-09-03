@@ -114,9 +114,9 @@ TEST(NetSocket, ConnectAndSendReachALocalListener)
               0);
 
     sockaddr_in assigned {};
-    socklen_t assigned_len = sizeof(assigned);
+    socklen_t assignedLen = sizeof(assigned);
     ASSERT_EQ(::getsockname(libxtun::net::fromAbiDescriptor(listener->native()),
-                            reinterpret_cast<sockaddr *>(&assigned), &assigned_len),
+                            reinterpret_cast<sockaddr *>(&assigned), &assignedLen),
               0);
 
     auto sender = Socket::udp(AF_INET);

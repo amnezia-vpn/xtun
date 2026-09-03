@@ -23,22 +23,22 @@ namespace
         return address ? address->toString() : std::string {};
     }
 
-    const std::vector<std::string> kFullTunnel = { "0.0.0.0/0" };
-    const std::vector<std::string> kSplitTunnel = { "10.8.0.0/24", "192.168.9.0/24" };
-    const std::vector<std::string> kTunnelAddress = { "10.8.0.2/24" };
+    const std::vector<std::string> FULL_TUNNEL = { "0.0.0.0/0" };
+    const std::vector<std::string> SPLIT_TUNNEL = { "10.8.0.0/24", "192.168.9.0/24" };
+    const std::vector<std::string> TUNNEL_ADDRESS = { "10.8.0.2/24" };
 
 } // namespace
 
 TEST(HealthResolver, FullTunnelSelectsTheConfiguredResolver)
 {
-    const auto resolvers = pool({ "1.1.1.1" }, kTunnelAddress, kFullTunnel);
+    const auto resolvers = pool({ "1.1.1.1" }, TUNNEL_ADDRESS, FULL_TUNNEL);
 
     EXPECT_EQ(selected(resolvers, Reachability::InsideTunnel), "1.1.1.1");
 }
 
 TEST(HealthResolver, SplitTunnelWithAnUnroutedResolverSelectsNothing)
 {
-    const auto resolvers = pool({ "1.1.1.1" }, kTunnelAddress, kSplitTunnel);
+    const auto resolvers = pool({ "1.1.1.1" }, TUNNEL_ADDRESS, SPLIT_TUNNEL);
 
     EXPECT_FALSE(resolvers.select(Reachability::InsideTunnel).has_value())
             << "a resolver the tunnel does not carry was offered as an in-tunnel target";
@@ -46,23 +46,23 @@ TEST(HealthResolver, SplitTunnelWithAnUnroutedResolverSelectsNothing)
 
 TEST(HealthResolver, SplitTunnelUsesAnInternalResolverItActuallyRoutes)
 {
-    const auto resolvers = pool({ "10.8.0.1" }, kTunnelAddress, kSplitTunnel);
+    const auto resolvers = pool({ "10.8.0.1" }, TUNNEL_ADDRESS, SPLIT_TUNNEL);
 
     EXPECT_EQ(selected(resolvers, Reachability::InsideTunnel), "10.8.0.1");
 }
 
 TEST(HealthResolver, PublicFallbackIsAdmissibleOnlyBehindADefaultRoute)
 {
-    EXPECT_EQ(selected(pool({}, kTunnelAddress, kFullTunnel), Reachability::InsideTunnel), "1.1.1.1");
+    EXPECT_EQ(selected(pool({}, TUNNEL_ADDRESS, FULL_TUNNEL), Reachability::InsideTunnel), "1.1.1.1");
 
-    EXPECT_FALSE(pool({}, kTunnelAddress, kSplitTunnel).select(Reachability::InsideTunnel))
+    EXPECT_FALSE(pool({}, TUNNEL_ADDRESS, SPLIT_TUNNEL).select(Reachability::InsideTunnel))
             << "the public fallback was guessed into a split tunnel";
 }
 
 TEST(HealthResolver, InTunnelTargetNeedsALocalAddressOfItsFamily)
 {
-    const std::vector<std::string> dual_default = { "0.0.0.0/0", "::/0" };
-    const auto resolvers = pool({ "2606:4700:4700::1111" }, kTunnelAddress, dual_default);
+    const std::vector<std::string> dualDefault = { "0.0.0.0/0", "::/0" };
+    const auto resolvers = pool({ "2606:4700:4700::1111" }, TUNNEL_ADDRESS, dualDefault);
 
     EXPECT_EQ(selected(resolvers, Reachability::InsideTunnel), "1.1.1.1")
             << "a v6 target was selected with no v6 address to send from";
@@ -80,7 +80,7 @@ TEST(HealthResolver, InTunnelSelectsV6WhenTheTunnelHasAV6Address)
 TEST(HealthResolver, ControlProbeFallsBackFromATunnelInternalResolver)
 {
     const std::vector<std::string> addresses = { "172.29.172.1/24" };
-    const auto resolvers = pool({ "172.29.172.254" }, addresses, kFullTunnel);
+    const auto resolvers = pool({ "172.29.172.254" }, addresses, FULL_TUNNEL);
 
     EXPECT_EQ(selected(resolvers, Reachability::PhysicalInterface), "1.1.1.1")
             << "an AmneziaWG-internal resolver was probed from the physical interface";
@@ -88,21 +88,21 @@ TEST(HealthResolver, ControlProbeFallsBackFromATunnelInternalResolver)
 
 TEST(HealthResolver, ControlProbeRejectsPrivateConfiguredResolvers)
 {
-    EXPECT_EQ(selected(pool({ "10.8.0.1" }, kTunnelAddress, kFullTunnel), Reachability::PhysicalInterface), "1.1.1.1");
-    EXPECT_EQ(selected(pool({ "192.168.1.1" }, kTunnelAddress, kFullTunnel), Reachability::PhysicalInterface), "1.1.1.1");
+    EXPECT_EQ(selected(pool({ "10.8.0.1" }, TUNNEL_ADDRESS, FULL_TUNNEL), Reachability::PhysicalInterface), "1.1.1.1");
+    EXPECT_EQ(selected(pool({ "192.168.1.1" }, TUNNEL_ADDRESS, FULL_TUNNEL), Reachability::PhysicalInterface), "1.1.1.1");
 }
 
 TEST(HealthResolver, ControlProbeNeverProbesOurOwnAddress)
 {
     const std::vector<std::string> addresses = { "1.1.1.1/32" };
-    const auto resolvers = pool({ "1.1.1.1" }, addresses, kFullTunnel);
+    const auto resolvers = pool({ "1.1.1.1" }, addresses, FULL_TUNNEL);
 
     EXPECT_EQ(selected(resolvers, Reachability::PhysicalInterface), "8.8.8.8");
 }
 
 TEST(HealthResolver, ControlProbeIgnoresTheRouteSet)
 {
-    const auto resolvers = pool({ "8.8.8.8" }, kTunnelAddress, {});
+    const auto resolvers = pool({ "8.8.8.8" }, TUNNEL_ADDRESS, {});
 
     EXPECT_EQ(selected(resolvers, Reachability::PhysicalInterface), "8.8.8.8");
     EXPECT_FALSE(resolvers.select(Reachability::InsideTunnel).has_value());
@@ -111,7 +111,7 @@ TEST(HealthResolver, ControlProbeIgnoresTheRouteSet)
 TEST(HealthResolver, LocalAddressIsSelectedPerFamily)
 {
     const std::vector<std::string> addresses = { "10.8.0.2/24", "fd00::2/64" };
-    const auto resolvers = pool({}, addresses, kFullTunnel);
+    const auto resolvers = pool({}, addresses, FULL_TUNNEL);
 
     const auto v4 = resolvers.localAddressFor(AF_INET);
     const auto v6 = resolvers.localAddressFor(AF_INET6);
@@ -123,7 +123,7 @@ TEST(HealthResolver, LocalAddressIsSelectedPerFamily)
 
 TEST(HealthResolver, AdoptedDeviceWithNoOptionsHasNoLocalAddress)
 {
-    const auto resolvers = pool({}, {}, kFullTunnel);
+    const auto resolvers = pool({}, {}, FULL_TUNNEL);
 
     EXPECT_FALSE(resolvers.localAddressFor(AF_INET).has_value());
     EXPECT_FALSE(resolvers.select(Reachability::InsideTunnel).has_value())
@@ -134,7 +134,7 @@ TEST(HealthResolver, AdoptedDeviceWithNoOptionsHasNoLocalAddress)
 TEST(HealthResolver, UnparsableEntriesAreSkippedRatherThanFatal)
 {
     const std::vector<std::string> dns = { "not-an-address", "8.8.8.8" };
-    const auto resolvers = pool(dns, kTunnelAddress, kFullTunnel);
+    const auto resolvers = pool(dns, TUNNEL_ADDRESS, FULL_TUNNEL);
 
     EXPECT_EQ(selected(resolvers, Reachability::InsideTunnel), "8.8.8.8");
 }
