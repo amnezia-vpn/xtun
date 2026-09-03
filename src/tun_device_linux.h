@@ -44,8 +44,8 @@ namespace libxtun
         int m_monitorFd = -1;
         int m_monitorCancelFd = -1;
         std::thread m_monitor;
-        std::atomic<bool> m_read_cancelled { false };
-        std::atomic<bool> m_inject_pending { false };
+        std::atomic<bool> m_readCancelled { false };
+        std::atomic<bool> m_injectPending { false };
         std::atomic<bool> m_up { false };
         std::atomic<int> m_mtu { 0 };
         TunDeviceListener *m_listener = nullptr;

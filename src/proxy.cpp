@@ -52,15 +52,15 @@ void libxtun::Proxy::cancelIo()
 
 void libxtun::Proxy::emitLog(const char *message) noexcept
 {
-    if (m_callbacks.on_log != nullptr) {
-        m_callbacks.on_log(message, m_callbacks.on_log_priv);
+    if (m_callbacks.onLog != nullptr) {
+        m_callbacks.onLog(message, m_callbacks.onLogPriv);
     }
 }
 
 void libxtun::Proxy::emitStatus(int status) noexcept
 {
-    if (m_callbacks.on_status != nullptr) {
-        m_callbacks.on_status(status, m_callbacks.on_status_priv);
+    if (m_callbacks.onStatus != nullptr) {
+        m_callbacks.onStatus(status, m_callbacks.onStatusPriv);
     }
 }
 
@@ -69,8 +69,8 @@ void libxtun::Proxy::registerBypassSocket(int fd, int family)
     if (Tunnel *tunnel = m_tunnel.load(std::memory_order_acquire)) {
         tunnel->registerBypassSocket(fd, family);
     }
-    if (m_callbacks.on_socket != nullptr) {
-        m_callbacks.on_socket(fd, m_callbacks.on_socket_priv);
+    if (m_callbacks.onSocket != nullptr) {
+        m_callbacks.onSocket(fd, m_callbacks.onSocketPriv);
     }
 }
 
@@ -79,8 +79,8 @@ void libxtun::Proxy::bypassSocket(int fd, int family)
     if (Tunnel *tunnel = m_tunnel.load(std::memory_order_acquire)) {
         tunnel->bypassSocket(fd, family);
     }
-    if (m_callbacks.on_socket != nullptr) {
-        m_callbacks.on_socket(fd, m_callbacks.on_socket_priv);
+    if (m_callbacks.onSocket != nullptr) {
+        m_callbacks.onSocket(fd, m_callbacks.onSocketPriv);
     }
 }
 
@@ -103,7 +103,7 @@ void libxtun::Proxy::onConnectionState(health::ConnectionState state) noexcept
 libxtun::TunnelIo &libxtun::Proxy::attach(Tunnel &tunnel, health::HealthConfig config, TunnelIo &device)
 {
     m_tunnel.store(&tunnel, std::memory_order_release);
-    config.bind_socket = [this](int fd, int family) { bypassSocket(fd, family); };
+    config.bindSocket = [this](int fd, int family) { bypassSocket(fd, family); };
     config.log = [this](const char *message) { emitLog(message); };
 
     health::HealthListener &listener = *this;
@@ -130,12 +130,12 @@ int libxtun_proxy_new(struct libxtun_proxy *proxy, enum libxtun_proxy_proto prot
         return res.error();
 
     auto obj = std::move(res.value());
-    obj->bind(ClientCallbacks { .on_socket = proxy->onsockspawn,
-                                .on_socket_priv = proxy->onsockspawn_priv,
-                                .on_log = proxy->loghandler,
-                                .on_log_priv = proxy->loghandler_priv,
-                                .on_status = proxy->statushandler,
-                                .on_status_priv = proxy->statushandler_priv });
+    obj->bind(ClientCallbacks { .onSocket = proxy->onsockspawn,
+                                .onSocketPriv = proxy->onsockspawn_priv,
+                                .onLog = proxy->loghandler,
+                                .onLogPriv = proxy->loghandler_priv,
+                                .onStatus = proxy->statushandler,
+                                .onStatusPriv = proxy->statushandler_priv });
 
     proxy->handle = obj.release();
     return LIBXTUN_OK;

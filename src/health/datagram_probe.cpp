@@ -26,7 +26,7 @@ namespace libxtun::health
 
         {
             std::lock_guard<std::mutex> lock(m_mtx);
-            m_datagram = net::buildUdpDatagram(*source, *target, query.sourcePort(), kDnsPort, query.bytes());
+            m_datagram = net::buildUdpDatagram(*source, *target, query.sourcePort(), DNS_PORT, query.bytes());
             if (m_datagram.empty()) {
                 return ProbeOutcome::NotRun;
             }
@@ -80,7 +80,7 @@ namespace libxtun::health
             return false;
         }
         const auto udp = net::UdpDatagramView::parse(packet);
-        if (!udp || udp->sourcePort() != kDnsPort) {
+        if (!udp || udp->sourcePort() != DNS_PORT) {
             return false;
         }
 

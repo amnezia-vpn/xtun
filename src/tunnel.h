@@ -99,8 +99,8 @@ namespace libxtun
         std::unique_ptr<TunDevice> m_device;
         bool m_started = false;
 
-        BypassSocketRegistry m_bypass_sockets;
-        health::HealthSettings m_health_settings;
+        BypassSocketRegistry m_bypassSockets;
+        health::HealthSettings m_healthSettings;
 
         std::function<void(Event)> m_onEvent;
         std::mutex m_proxyMtx;

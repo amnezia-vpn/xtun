@@ -24,11 +24,11 @@ namespace libxtun::health
 
     HealthSubsystem::HealthSubsystem(HealthListener &listener, HealthConfig config, const Clock &clock)
         : m_queries(m_random),
-          m_resolvers(config.dns_servers, config.tunnel_addresses, config.tunnel_routes),
-          m_tunnel_probe(makeTunnelProbe(config.probe_style, m_resolvers, std::move(config.wake_read))),
-          m_control_probe(std::move(config.bind_socket), m_resolvers),
-          m_scheduler(m_random, config.settings.jitter_percent, config.log),
-          m_monitor(config.settings, listener, m_meter, *m_tunnel_probe, m_control_probe, m_queries, m_scheduler, clock,
+          m_resolvers(config.dnsServers, config.tunnelAddresses, config.tunnelRoutes),
+          m_tunnelProbe(makeTunnelProbe(config.probeStyle, m_resolvers, std::move(config.wakeRead))),
+          m_controlProbe(std::move(config.bindSocket), m_resolvers),
+          m_scheduler(m_random, config.settings.jitterPercent, config.log),
+          m_monitor(config.settings, listener, m_meter, *m_tunnelProbe, m_controlProbe, m_queries, m_scheduler, clock,
                     std::move(config.log))
     {
     }
@@ -40,7 +40,7 @@ namespace libxtun::health
 
     TunnelIo &HealthSubsystem::decorate(TunnelIo &device)
     {
-        m_io.emplace(device, m_meter, *m_tunnel_probe);
+        m_io.emplace(device, m_meter, *m_tunnelProbe);
         return *m_io;
     }
 
@@ -51,8 +51,8 @@ namespace libxtun::health
 
     void HealthSubsystem::stop() noexcept
     {
-        m_tunnel_probe->abort();
-        m_control_probe.abort();
+        m_tunnelProbe->abort();
+        m_controlProbe.abort();
         m_monitor.stop();
     }
 

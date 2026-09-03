@@ -11,16 +11,16 @@
 namespace libxtun::health
 {
 
-    inline constexpr std::uint16_t kDnsPort = 53;
-    inline constexpr std::uint16_t kEphemeralPortFirst = 49152;
-    inline constexpr std::uint16_t kEphemeralPortLast = 65535;
-    inline constexpr std::size_t kMaxDnsResponse = 512;
+    inline constexpr std::uint16_t DNS_PORT = 53;
+    inline constexpr std::uint16_t EPHEMERAL_PORT_FIRST = 49152;
+    inline constexpr std::uint16_t EPHEMERAL_PORT_LAST = 65535;
+    inline constexpr std::size_t MAX_DNS_RESPONSE = 512;
 
     class DnsQuery
     {
     public:
         DnsQuery() = default;
-        DnsQuery(std::uint16_t transaction_id, std::uint32_t nonce, std::uint16_t source_port);
+        DnsQuery(std::uint16_t transactionId, std::uint32_t nonce, std::uint16_t sourcePort);
 
         std::span<const std::byte> bytes() const noexcept
         {
@@ -28,15 +28,15 @@ namespace libxtun::health
         }
         std::uint16_t sourcePort() const noexcept
         {
-            return m_source_port;
+            return m_sourcePort;
         }
 
         bool matchesResponse(std::span<const std::byte> response) const noexcept;
 
     private:
         std::vector<std::byte> m_bytes;
-        std::uint16_t m_transaction_id = 0;
-        std::uint16_t m_source_port = 0;
+        std::uint16_t m_transactionId = 0;
+        std::uint16_t m_sourcePort = 0;
     };
 
     class DnsQueryFactory

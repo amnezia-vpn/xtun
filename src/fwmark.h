@@ -4,8 +4,8 @@
 namespace libxtun
 {
 
-    constexpr unsigned int kProxyFwmark = 0x7874;
-    constexpr unsigned int kProxyTable = 0x7874;
+    constexpr unsigned int PROXY_FWMARK = 0x7874;
+    constexpr unsigned int PROXY_TABLE = 0x7874;
 
 }
 

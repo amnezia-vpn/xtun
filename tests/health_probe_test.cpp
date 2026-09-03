@@ -25,16 +25,16 @@ namespace
     using libxtun::health::DatagramProbe;
     using libxtun::health::DnsQuery;
     using libxtun::health::DnsQueryFactory;
-    using libxtun::health::kDnsPort;
-    using libxtun::health::kEphemeralPortFirst;
-    using libxtun::health::kEphemeralPortLast;
+    using libxtun::health::DNS_PORT;
+    using libxtun::health::EPHEMERAL_PORT_FIRST;
+    using libxtun::health::EPHEMERAL_PORT_LAST;
     using libxtun::health::ProbeOutcome;
     using libxtun::health::ResolverPool;
     using libxtun::net::IpAddress;
 
-    constexpr std::uint16_t kRcodeNoError = 0;
-    constexpr std::uint16_t kRcodeNxDomain = 3;
-    constexpr std::uint16_t kRcodeServFail = 2;
+    constexpr std::uint16_t RCODE_NO_ERROR = 0;
+    constexpr std::uint16_t RCODE_NX_DOMAIN = 3;
+    constexpr std::uint16_t RCODE_SERV_FAIL = 2;
 
     IpAddress addr(const char *text)
     {
@@ -42,18 +42,18 @@ namespace
     }
 
     // QR = 0x8000, RD = 0x0100, RA = 0x0080
-    constexpr std::uint16_t kRecursiveResponseFlags = 0x8180;
+    constexpr std::uint16_t RECURSIVE_RESPONSE_FLAGS = 0x8180;
 
     std::vector<std::byte> responsePayload(const DnsQuery &query, std::uint16_t rcode)
     {
         std::vector<std::byte> out(query.bytes().begin(), query.bytes().end());
-        libxtun::net::writeBigEndian16(out, 2, static_cast<std::uint16_t>(kRecursiveResponseFlags | rcode));
+        libxtun::net::writeBigEndian16(out, 2, static_cast<std::uint16_t>(RECURSIVE_RESPONSE_FLAGS | rcode));
         return out;
     }
 
     std::vector<std::byte> reply(const DnsQuery &query, const IpAddress &from, const IpAddress &to, std::uint16_t rcode)
     {
-        return libxtun::net::buildUdpDatagram(from, to, kDnsPort, query.sourcePort(), responsePayload(query, rcode));
+        return libxtun::net::buildUdpDatagram(from, to, DNS_PORT, query.sourcePort(), responsePayload(query, rcode));
     }
 
     ResolverPool fullTunnelPool()
@@ -106,28 +106,28 @@ TEST(HealthDnsQuery, AcceptsNoErrorAndNxDomain)
 {
     const DnsQuery query(0x4321, 0x11223344, 51000);
 
-    EXPECT_TRUE(query.matchesResponse(responsePayload(query, kRcodeNoError)));
-    EXPECT_TRUE(query.matchesResponse(responsePayload(query, kRcodeNxDomain)))
+    EXPECT_TRUE(query.matchesResponse(responsePayload(query, RCODE_NO_ERROR)));
+    EXPECT_TRUE(query.matchesResponse(responsePayload(query, RCODE_NX_DOMAIN)))
             << "NXDOMAIN proves the resolver did upstream work and must count";
 }
 
 TEST(HealthDnsQuery, RejectsAnythingThatIsNotTheAnswer)
 {
     const DnsQuery query(0x4321, 0x11223344, 51000);
-    const DnsQuery same_id_other_name(0x4321, 0x55667788, 51000);
+    const DnsQuery sameIdOtherName(0x4321, 0x55667788, 51000);
 
-    auto wrong_id = responsePayload(query, kRcodeNoError);
-    libxtun::net::writeBigEndian16(wrong_id, 0, 0x4322);
-    EXPECT_FALSE(query.matchesResponse(wrong_id));
+    auto wrongId = responsePayload(query, RCODE_NO_ERROR);
+    libxtun::net::writeBigEndian16(wrongId, 0, 0x4322);
+    EXPECT_FALSE(query.matchesResponse(wrongId));
 
-    EXPECT_FALSE(query.matchesResponse(responsePayload(same_id_other_name, kRcodeNoError)))
+    EXPECT_FALSE(query.matchesResponse(responsePayload(sameIdOtherName, RCODE_NO_ERROR)))
             << "an answer carrying our transaction id but a different question matched";
 
-    EXPECT_FALSE(query.matchesResponse(responsePayload(query, kRcodeServFail)));
+    EXPECT_FALSE(query.matchesResponse(responsePayload(query, RCODE_SERV_FAIL)));
 
     EXPECT_FALSE(query.matchesResponse(query.bytes())) << "the query itself matched as a response";
 
-    auto truncated = responsePayload(query, kRcodeNoError);
+    auto truncated = responsePayload(query, RCODE_NO_ERROR);
     truncated.resize(truncated.size() - 2);
     EXPECT_FALSE(query.matchesResponse(truncated));
 
@@ -140,7 +140,7 @@ TEST(HealthDnsQuery, DefaultConstructedQueryMatchesNothing)
     const DnsQuery real(0x4321, 0x11223344, 51000);
 
     EXPECT_TRUE(unset.bytes().empty());
-    EXPECT_FALSE(unset.matchesResponse(responsePayload(real, kRcodeNoError)));
+    EXPECT_FALSE(unset.matchesResponse(responsePayload(real, RCODE_NO_ERROR)));
     EXPECT_FALSE(unset.matchesResponse({}));
 }
 
@@ -156,8 +156,8 @@ TEST(HealthDnsQuery, TheFactoryVariesEveryIdentifier)
     EXPECT_NE(first.sourcePort(), second.sourcePort());
     EXPECT_NE(second.sourcePort(), third.sourcePort());
     for (const DnsQuery *query : { &first, &second, &third }) {
-        EXPECT_GE(query->sourcePort(), kEphemeralPortFirst);
-        EXPECT_LE(query->sourcePort(), kEphemeralPortLast);
+        EXPECT_GE(query->sourcePort(), EPHEMERAL_PORT_FIRST);
+        EXPECT_LE(query->sourcePort(), EPHEMERAL_PORT_LAST);
     }
 
     EXPECT_FALSE(std::equal(first.bytes().begin(), first.bytes().end(), second.bytes().begin()))
@@ -187,7 +187,7 @@ TEST(HealthDatagramProbe, StagesTheDatagramAndStealsTheReply)
         const int n = probe.stage(buf);
         ASSERT_GT(n, 0);
         staged.assign(buf.begin(), buf.begin() + n);
-        consumed = probe.capture(reply(query, addr("1.1.1.1"), addr("10.8.0.2"), kRcodeNoError));
+        consumed = probe.capture(reply(query, addr("1.1.1.1"), addr("10.8.0.2"), RCODE_NO_ERROR));
     };
 
     EXPECT_EQ(probe.run(query, std::chrono::milliseconds(500)), ProbeOutcome::Answered);
@@ -198,7 +198,7 @@ TEST(HealthDatagramProbe, StagesTheDatagramAndStealsTheReply)
     EXPECT_EQ(sent->source(), addr("10.8.0.2"));
     EXPECT_EQ(sent->destination(), addr("1.1.1.1"));
     EXPECT_EQ(sent->sourcePort(), query.sourcePort());
-    EXPECT_EQ(sent->destinationPort(), kDnsPort);
+    EXPECT_EQ(sent->destinationPort(), DNS_PORT);
 }
 
 TEST(HealthDatagramProbe, StagesTheDatagramOnlyOnce)
@@ -209,16 +209,16 @@ TEST(HealthDatagramProbe, StagesTheDatagramOnlyOnce)
     std::function<void()> wake;
     DatagramProbe probe(resolvers, [&wake] { wake(); });
 
-    int second_attempt = -1;
+    int secondAttempt = -1;
     wake = [&] {
         std::array<std::byte, 2048> buf {};
         ASSERT_GT(probe.stage(buf), 0);
-        second_attempt = probe.stage(buf);
+        secondAttempt = probe.stage(buf);
         probe.abort();
     };
 
     EXPECT_EQ(probe.run(query, std::chrono::milliseconds(500)), ProbeOutcome::NotRun);
-    EXPECT_EQ(second_attempt, 0) << "the probe datagram was staged twice";
+    EXPECT_EQ(secondAttempt, 0) << "the probe datagram was staged twice";
 }
 
 TEST(HealthDatagramProbe, ForeignTrafficIsForwardedNotStolen)
@@ -230,23 +230,23 @@ TEST(HealthDatagramProbe, ForeignTrafficIsForwardedNotStolen)
     std::function<void()> wake;
     DatagramProbe probe(resolvers, [&wake] { wake(); });
 
-    bool stole_wrong_port = false;
-    bool stole_wrong_source = false;
-    bool stole_wrong_destination = false;
+    bool stoleWrongPort = false;
+    bool stoleWrongSource = false;
+    bool stoleWrongDestination = false;
     wake = [&] {
         std::array<std::byte, 2048> buf {};
         ASSERT_GT(probe.stage(buf), 0);
 
-        stole_wrong_port = probe.capture(reply(other, addr("1.1.1.1"), addr("10.8.0.2"), kRcodeNoError));
-        stole_wrong_source = probe.capture(reply(query, addr("8.8.8.8"), addr("10.8.0.2"), kRcodeNoError));
-        stole_wrong_destination = probe.capture(reply(query, addr("1.1.1.1"), addr("10.8.0.9"), kRcodeNoError));
+        stoleWrongPort = probe.capture(reply(other, addr("1.1.1.1"), addr("10.8.0.2"), RCODE_NO_ERROR));
+        stoleWrongSource = probe.capture(reply(query, addr("8.8.8.8"), addr("10.8.0.2"), RCODE_NO_ERROR));
+        stoleWrongDestination = probe.capture(reply(query, addr("1.1.1.1"), addr("10.8.0.9"), RCODE_NO_ERROR));
         probe.abort();
     };
 
     EXPECT_EQ(probe.run(query, std::chrono::milliseconds(500)), ProbeOutcome::NotRun);
-    EXPECT_FALSE(stole_wrong_port) << "a reply addressed to another port was stolen";
-    EXPECT_FALSE(stole_wrong_source) << "a reply from another resolver was stolen";
-    EXPECT_FALSE(stole_wrong_destination) << "a reply to another host was stolen";
+    EXPECT_FALSE(stoleWrongPort) << "a reply addressed to another port was stolen";
+    EXPECT_FALSE(stoleWrongSource) << "a reply from another resolver was stolen";
+    EXPECT_FALSE(stoleWrongDestination) << "a reply to another host was stolen";
 }
 
 TEST(HealthDatagramProbe, NothingIsStolenWhileNoProbeIsInFlight)
@@ -255,7 +255,7 @@ TEST(HealthDatagramProbe, NothingIsStolenWhileNoProbeIsInFlight)
     const DnsQuery query(0x1111, 0x22223333, 51000);
     DatagramProbe probe(resolvers, [] { });
 
-    EXPECT_FALSE(probe.capture(reply(query, addr("1.1.1.1"), addr("10.8.0.2"), kRcodeNoError)));
+    EXPECT_FALSE(probe.capture(reply(query, addr("1.1.1.1"), addr("10.8.0.2"), RCODE_NO_ERROR)));
 }
 
 TEST(HealthDatagramProbe, ThePreviousProbesReplyIsNotStolenAfterThePortRotates)
@@ -270,20 +270,20 @@ TEST(HealthDatagramProbe, ThePreviousProbesReplyIsNotStolenAfterThePortRotates)
     wake = [&] {
         std::array<std::byte, 2048> buf {};
         ASSERT_GT(probe.stage(buf), 0);
-        ASSERT_TRUE(probe.capture(reply(first, addr("1.1.1.1"), addr("10.8.0.2"), kRcodeNoError)));
+        ASSERT_TRUE(probe.capture(reply(first, addr("1.1.1.1"), addr("10.8.0.2"), RCODE_NO_ERROR)));
     };
     ASSERT_EQ(probe.run(first, std::chrono::milliseconds(500)), ProbeOutcome::Answered);
 
-    bool stole_stale = false;
+    bool stoleStale = false;
     wake = [&] {
         std::array<std::byte, 2048> buf {};
         ASSERT_GT(probe.stage(buf), 0);
-        stole_stale = probe.capture(reply(first, addr("1.1.1.1"), addr("10.8.0.2"), kRcodeNoError));
+        stoleStale = probe.capture(reply(first, addr("1.1.1.1"), addr("10.8.0.2"), RCODE_NO_ERROR));
         probe.abort();
     };
 
     EXPECT_EQ(probe.run(second, std::chrono::milliseconds(500)), ProbeOutcome::NotRun);
-    EXPECT_FALSE(stole_stale) << "a reply carrying the previous probe's port was stolen";
+    EXPECT_FALSE(stoleStale) << "a reply carrying the previous probe's port was stolen";
 }
 
 TEST(HealthDatagramProbe, SilentTunnelIsAFailure)
@@ -307,18 +307,18 @@ TEST(HealthControlProbe, TheDescriptorIsOfferedBeforeAnyTrafficLeavesIt)
 {
     const auto resolvers = fullTunnelPool();
 
-    int offered_fd = -1;
-    int offered_family = 0;
+    int offeredFd = -1;
+    int offeredFamily = 0;
     ControlProbe probe(
             [&](int fd, int family) {
-                offered_fd = fd;
-                offered_family = family;
+                offeredFd = fd;
+                offeredFamily = family;
             },
             resolvers);
 
     const auto outcome = probe.run(DnsQuery(0x1234, 0x5678, 51000), std::chrono::milliseconds(10));
 
     EXPECT_NE(outcome, ProbeOutcome::NotRun);
-    EXPECT_GE(offered_fd, 0) << "the socket was never offered for protection";
-    EXPECT_EQ(offered_family, AF_INET);
+    EXPECT_GE(offeredFd, 0) << "the socket was never offered for protection";
+    EXPECT_EQ(offeredFamily, AF_INET);
 }

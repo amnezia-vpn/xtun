@@ -12,10 +12,10 @@ namespace libxtun::health
     {
         for (;;) {
             if (halted()) {
-                return kIoFatal;
+                return IO_FATAL;
             }
             const int n = m_device.read(buf);
-            if (n != kReadWake) {
+            if (n != READ_WAKE) {
                 if (n > 0) {
                     m_meter.recordOutbound(n);
                 }
@@ -30,7 +30,7 @@ namespace libxtun::health
     int MonitoredIo::write(std::span<const std::byte> packet) noexcept
     {
         if (halted()) {
-            return kIoFatal;
+            return IO_FATAL;
         }
         if (m_interceptor.capture(packet)) {
             return static_cast<int>(packet.size());

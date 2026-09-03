@@ -108,7 +108,7 @@ namespace libxtun
     int LinuxTunDevice::read(std::span<std::byte> buf) noexcept
     {
         if (m_tunFd < 0) {
-            return kIoFatal;
+            return IO_FATAL;
         }
 
         struct pollfd fds[2];
@@ -118,24 +118,24 @@ namespace libxtun
         fds[1].events = POLLIN;
 
         for (;;) {
-            if (m_read_cancelled.load(std::memory_order_acquire)) {
-                return kIoFatal;
+            if (m_readCancelled.load(std::memory_order_acquire)) {
+                return IO_FATAL;
             }
             if (::poll(fds, 2, -1) < 0) {
                 if (errno == EINTR) {
                     continue;
                 }
-                return kIoFatal;
+                return IO_FATAL;
             }
             if (fds[1].revents & POLLIN) {
                 uint64_t drained;
                 while (::read(m_readCancelFd, &drained, sizeof(drained)) > 0) {
                 }
-                if (m_read_cancelled.load(std::memory_order_acquire)) {
-                    return kIoFatal;
+                if (m_readCancelled.load(std::memory_order_acquire)) {
+                    return IO_FATAL;
                 }
-                if (m_inject_pending.exchange(false, std::memory_order_acquire)) {
-                    return kReadWake;
+                if (m_injectPending.exchange(false, std::memory_order_acquire)) {
+                    return READ_WAKE;
                 }
                 continue;
             }
@@ -190,8 +190,8 @@ namespace libxtun
 
     void LinuxTunDevice::resetReadCancellation() noexcept
     {
-        m_read_cancelled.store(false, std::memory_order_release);
-        m_inject_pending.store(false, std::memory_order_release);
+        m_readCancelled.store(false, std::memory_order_release);
+        m_injectPending.store(false, std::memory_order_release);
 
         if (m_readCancelFd < 0) {
             return;
@@ -204,7 +204,7 @@ namespace libxtun
 
     void LinuxTunDevice::wakeRead() noexcept
     {
-        m_inject_pending.store(true, std::memory_order_release);
+        m_injectPending.store(true, std::memory_order_release);
         if (m_readCancelFd >= 0) {
             uint64_t one = 1;
             (void)::write(m_readCancelFd, &one, sizeof(one));
@@ -213,7 +213,7 @@ namespace libxtun
 
     void LinuxTunDevice::cancelRead() noexcept
     {
-        m_read_cancelled.store(true, std::memory_order_release);
+        m_readCancelled.store(true, std::memory_order_release);
         if (m_readCancelFd >= 0) {
             uint64_t one = 1;
             (void)::write(m_readCancelFd, &one, sizeof(one));

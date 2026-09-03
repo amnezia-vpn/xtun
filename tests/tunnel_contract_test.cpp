@@ -16,7 +16,7 @@
 namespace
 {
 
-    libxtun_tunnel_opts default_opts()
+    libxtun_tunnel_opts defaultOpts()
     {
         libxtun_tunnel_opts opts {};
         opts.size = sizeof(opts);
@@ -28,7 +28,7 @@ namespace
 
 TEST(TunnelNew, RejectsNullTunnel)
 {
-    libxtun_tunnel_opts opts = default_opts();
+    libxtun_tunnel_opts opts = defaultOpts();
     EXPECT_EQ(libxtun_tunnel_new(nullptr, &opts), LIBXTUN_ERR_INVALID_ARGS);
 }
 
@@ -41,7 +41,7 @@ TEST(TunnelNew, RejectsNullOpts)
 TEST(TunnelNew, RejectsUndersizedOpts)
 {
     libxtun_tunnel tun;
-    libxtun_tunnel_opts opts = default_opts();
+    libxtun_tunnel_opts opts = defaultOpts();
     opts.size = sizeof(opts) - 1;
     EXPECT_EQ(libxtun_tunnel_new(&tun, &opts), LIBXTUN_ERR_INVALID_ARGS);
     EXPECT_EQ(tun.handle, nullptr);
@@ -50,7 +50,7 @@ TEST(TunnelNew, RejectsUndersizedOpts)
 TEST(TunnelNew, RejectsOutOfRangeKillswitch)
 {
     libxtun_tunnel tun;
-    libxtun_tunnel_opts opts = default_opts();
+    libxtun_tunnel_opts opts = defaultOpts();
     opts.killswitch_mode = static_cast<libxtun_killswitch_mode>(LIBXTUN_KILLSWITCH_MODE_LAST + 1);
     EXPECT_EQ(libxtun_tunnel_new(&tun, &opts), LIBXTUN_ERR_INVALID_ARGS);
 }

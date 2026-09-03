@@ -14,8 +14,8 @@
 namespace
 {
 
-    using libxtun::kIoFatal;
-    using libxtun::kReadWake;
+    using libxtun::IO_FATAL;
+    using libxtun::READ_WAKE;
 
     class FakeDevice final : public libxtun::TunnelIo
     {
@@ -26,7 +26,7 @@ namespace
         int read(std::span<std::byte> buf) noexcept override
         {
             if (reads.empty()) {
-                return kIoFatal;
+                return IO_FATAL;
             }
             const int n = reads.front();
             reads.pop_front();
@@ -51,30 +51,30 @@ namespace
     class FakeInterceptor final : public libxtun::health::PacketInterceptor
     {
     public:
-        int stage_bytes = 0;
-        bool capture_next = false;
-        int stage_calls = 0;
+        int stageBytes = 0;
+        bool captureNext = false;
+        int stageCalls = 0;
         std::vector<std::vector<std::byte>> captured;
 
         int stage(std::span<std::byte> buf) noexcept override
         {
-            ++stage_calls;
-            if (stage_bytes <= 0) {
+            ++stageCalls;
+            if (stageBytes <= 0) {
                 return 0;
             }
-            const int n = std::min<int>(stage_bytes, static_cast<int>(buf.size()));
+            const int n = std::min<int>(stageBytes, static_cast<int>(buf.size()));
             std::fill_n(buf.begin(), n, std::byte { 0xcd });
-            stage_bytes = 0;
+            stageBytes = 0;
             return n;
         }
 
         bool capture(std::span<const std::byte> packet) noexcept override
         {
-            if (!capture_next) {
+            if (!captureNext) {
                 return false;
             }
             captured.emplace_back(packet.begin(), packet.end());
-            capture_next = false;
+            captureNext = false;
             return true;
         }
     };
@@ -99,9 +99,9 @@ TEST(HealthMonitoredIo, ReadsCountAsOutboundTraffic)
     EXPECT_EQ(s.io.read(s.buf), 40);
 
     const auto counters = s.meter.counters();
-    EXPECT_EQ(counters.outbound_packets, 1u);
-    EXPECT_EQ(counters.outbound_bytes, 40u);
-    EXPECT_EQ(counters.inbound_packets, 0u);
+    EXPECT_EQ(counters.outboundPackets, 1u);
+    EXPECT_EQ(counters.outboundBytes, 40u);
+    EXPECT_EQ(counters.inboundPackets, 0u);
     EXPECT_EQ(s.meter.inboundPackets(), 0u);
 }
 
@@ -112,9 +112,9 @@ TEST(HealthMonitoredIo, WritesCountAsInboundTraffic)
     EXPECT_EQ(s.io.write(std::span<const std::byte>(s.buf.data(), 32)), 32);
 
     const auto counters = s.meter.counters();
-    EXPECT_EQ(counters.inbound_packets, 1u);
-    EXPECT_EQ(counters.inbound_bytes, 32u);
-    EXPECT_EQ(counters.outbound_packets, 0u);
+    EXPECT_EQ(counters.inboundPackets, 1u);
+    EXPECT_EQ(counters.inboundBytes, 32u);
+    EXPECT_EQ(counters.outboundPackets, 0u);
     EXPECT_EQ(s.meter.inboundPackets(), 1u);
     ASSERT_EQ(s.device.writes.size(), 1u);
 }
@@ -122,27 +122,27 @@ TEST(HealthMonitoredIo, WritesCountAsInboundTraffic)
 TEST(HealthMonitoredIo, SpuriousWakeReadsAgainInsteadOfReturningZero)
 {
     TestSetup s;
-    s.device.reads = { kReadWake, 20 };
+    s.device.reads = { READ_WAKE, 20 };
 
     EXPECT_EQ(s.io.read(s.buf), 20);
-    EXPECT_EQ(s.interceptor.stage_calls, 1);
+    EXPECT_EQ(s.interceptor.stageCalls, 1);
     EXPECT_TRUE(s.device.reads.empty());
 }
 
 TEST(HealthMonitoredIo, StagedProbeIsReturnedAndNotMetered)
 {
     TestSetup s;
-    s.device.reads = { kReadWake };
-    s.interceptor.stage_bytes = 12;
+    s.device.reads = { READ_WAKE };
+    s.interceptor.stageBytes = 12;
 
     EXPECT_EQ(s.io.read(s.buf), 12);
-    EXPECT_EQ(s.meter.counters().outbound_packets, 0u);
+    EXPECT_EQ(s.meter.counters().outboundPackets, 0u);
 }
 
 TEST(HealthMonitoredIo, CapturedReplyNeverReachesTheDeviceOrTheMeter)
 {
     TestSetup s;
-    s.interceptor.capture_next = true;
+    s.interceptor.captureNext = true;
 
     EXPECT_EQ(s.io.write(std::span<const std::byte>(s.buf.data(), 24)), 24);
 
@@ -160,8 +160,8 @@ TEST(HealthMonitoredIo, HaltLatchesBothDirections)
     s.io.halt();
 
     EXPECT_TRUE(s.io.halted());
-    EXPECT_EQ(s.io.read(s.buf), kIoFatal);
-    EXPECT_EQ(s.io.write(std::span<const std::byte>(s.buf.data(), 24)), kIoFatal);
+    EXPECT_EQ(s.io.read(s.buf), IO_FATAL);
+    EXPECT_EQ(s.io.write(std::span<const std::byte>(s.buf.data(), 24)), IO_FATAL);
     EXPECT_TRUE(s.device.writes.empty());
     EXPECT_EQ(s.device.reads.size(), 1u) << "the device was read after the decorator was halted";
 }
@@ -170,8 +170,8 @@ TEST(HealthMonitoredIo, FatalDeviceReadPropagates)
 {
     TestSetup s;
 
-    EXPECT_EQ(s.io.read(s.buf), kIoFatal);
-    EXPECT_EQ(s.meter.counters().outbound_packets, 0u);
+    EXPECT_EQ(s.io.read(s.buf), IO_FATAL);
+    EXPECT_EQ(s.meter.counters().outboundPackets, 0u);
 }
 
 TEST(HealthMonitoredIo, MtuIsForwardedToTheDevice)

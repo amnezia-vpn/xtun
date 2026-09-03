@@ -26,7 +26,7 @@ namespace
     int tunRead(void *b, int len, void *priv)
     {
         if (b == nullptr || len <= 0) {
-            return libxtun::kIoFatal;
+            return libxtun::IO_FATAL;
         }
         auto *io = static_cast<libxtun::TunnelIo *>(priv);
         return io->read({ static_cast<std::byte *>(b), static_cast<std::size_t>(len) });
@@ -35,7 +35,7 @@ namespace
     int tunWrite(void *b, int len, void *priv)
     {
         if (b == nullptr || len <= 0) {
-            return libxtun::kIoFatal;
+            return libxtun::IO_FATAL;
         }
         auto *io = static_cast<libxtun::TunnelIo *>(priv);
         return io->write({ static_cast<const std::byte *>(b), static_cast<std::size_t>(len) });
@@ -150,12 +150,12 @@ namespace libxtun
 
             ProxyProfile out;
             for (const auto &peer : iface.peers) {
-                for (const auto &ip : peer.allowed_ips) {
+                for (const auto &ip : peer.allowedIps) {
                     out.routes.push_back(ip.toUapi());
                 }
             }
             for (const auto &server : iface.dns) {
-                out.dns_servers.push_back(server.toUapi());
+                out.dnsServers.push_back(server.toUapi());
             }
             if (iface.address.has_value()) {
                 out.addresses.push_back(iface.address->toUapi());

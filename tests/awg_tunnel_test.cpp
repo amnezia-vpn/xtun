@@ -28,7 +28,7 @@ namespace
 #endif
     }
 
-    constexpr const char *kConf = "[Interface]\n"
+    constexpr const char *CONF = "[Interface]\n"
                                   "PrivateKey = YHJIKcg6kMlHqmHvpdetXH9300wKO4NxqX1L+v9h20A=\n"
                                   "Jc = 2\n"
                                   "Jmin = 8\n"
@@ -39,7 +39,7 @@ namespace
                                   "Endpoint = 127.0.0.1:57777\n"
                                   "AllowedIPs = 10.99.0.2/32\n";
 
-    libxtun_tunnel_opts default_opts()
+    libxtun_tunnel_opts defaultOpts()
     {
         libxtun_tunnel_opts opts {};
         opts.size = sizeof(opts);
@@ -56,9 +56,9 @@ TEST(AwgTunnel, AttachAndTeardownTunnelFirst)
     }
 
     libxtun_proxy proxy {};
-    ASSERT_EQ(libxtun_proxy_new(&proxy, LIBXTUN_PROXY_PROTO_AWG, kConf), LIBXTUN_OK);
+    ASSERT_EQ(libxtun_proxy_new(&proxy, LIBXTUN_PROXY_PROTO_AWG, CONF), LIBXTUN_OK);
 
-    libxtun_tunnel_opts opts = default_opts();
+    libxtun_tunnel_opts opts = defaultOpts();
     libxtun_tunnel tun {};
     ASSERT_EQ(libxtun_tunnel_new(&tun, &opts), LIBXTUN_OK);
 
@@ -75,9 +75,9 @@ TEST(AwgTunnel, AttachAndTeardownProxyFirst)
     }
 
     libxtun_proxy proxy {};
-    ASSERT_EQ(libxtun_proxy_new(&proxy, LIBXTUN_PROXY_PROTO_AWG, kConf), LIBXTUN_OK);
+    ASSERT_EQ(libxtun_proxy_new(&proxy, LIBXTUN_PROXY_PROTO_AWG, CONF), LIBXTUN_OK);
 
-    libxtun_tunnel_opts opts = default_opts();
+    libxtun_tunnel_opts opts = defaultOpts();
     libxtun_tunnel tun {};
     ASSERT_EQ(libxtun_tunnel_new(&tun, &opts), LIBXTUN_OK);
 

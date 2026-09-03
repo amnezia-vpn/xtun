@@ -36,7 +36,7 @@ namespace libxtun
           m_confMtu(opts.mtu),
           m_router(Router::create()),
           m_device(std::move(device)),
-          m_health_settings(health::HealthSettings::fromSeconds(opts.health_seconds))
+          m_healthSettings(health::HealthSettings::fromSeconds(opts.health_seconds))
     {
     }
 
@@ -173,19 +173,19 @@ namespace libxtun
         if (m_proxy == nullptr || (expected != nullptr && m_proxy != expected)) {
             return nullptr;
         }
-        m_bypass_sockets.clear();
+        m_bypassSockets.clear();
         return std::exchange(m_proxy, nullptr);
     }
 
     health::HealthConfig Tunnel::healthConfigFor(const ProxyProfile &profile)
     {
         health::HealthConfig config;
-        config.dns_servers = m_dns.empty() ? profile.dns_servers : m_dns;
-        config.tunnel_addresses = m_ifAddrs.empty() ? profile.addresses : m_ifAddrs;
-        config.tunnel_routes = profile.routes;
-        config.probe_style = profile.probe_style;
-        config.settings = m_health_settings;
-        config.wake_read = [this] { wakeRead(); };
+        config.dnsServers = m_dns.empty() ? profile.dnsServers : m_dns;
+        config.tunnelAddresses = m_ifAddrs.empty() ? profile.addresses : m_ifAddrs;
+        config.tunnelRoutes = profile.routes;
+        config.probeStyle = profile.probeStyle;
+        config.settings = m_healthSettings;
+        config.wakeRead = [this] { wakeRead(); };
         return config;
     }
 
@@ -213,7 +213,7 @@ namespace libxtun
     void Tunnel::registerBypassSocket(int fd, int family)
     {
         if (m_router != nullptr) {
-            m_bypass_sockets.add(*m_router, fd, family);
+            m_bypassSockets.add(*m_router, fd, family);
         }
     }
 
@@ -245,7 +245,7 @@ namespace libxtun
     void Tunnel::onRouteChange()
     {
         if (m_router != nullptr && m_router->bypassChanged()) {
-            m_bypass_sockets.rebind(*m_router);
+            m_bypassSockets.rebind(*m_router);
         }
 
         std::lock_guard<std::mutex> lock(m_proxyMtx);

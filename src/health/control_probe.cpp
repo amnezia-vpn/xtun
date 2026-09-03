@@ -12,7 +12,7 @@ namespace libxtun::health
 
     namespace
     {
-        constexpr std::chrono::milliseconds kAbortPollSlice { 250 };
+        constexpr std::chrono::milliseconds ABORT_POLL_SLICE { 250 };
     }
 
     ControlProbe::ControlProbe(BindSocket bind, const ResolverPool &resolvers)
@@ -37,11 +37,11 @@ namespace libxtun::health
         m_aborted.store(false, std::memory_order_release);
         m_bind(socket->native(), target->family());
 
-        if (!socket->connect(net::SockAddr(*target, kDnsPort)) || !socket->send(query.bytes())) {
+        if (!socket->connect(net::SockAddr(*target, DNS_PORT)) || !socket->send(query.bytes())) {
             return ProbeOutcome::Failed;
         }
 
-        std::array<std::byte, kMaxDnsResponse> buf {};
+        std::array<std::byte, MAX_DNS_RESPONSE> buf {};
         const auto deadline = std::chrono::steady_clock::now() + timeout;
         while (!m_aborted.load(std::memory_order_acquire)) {
             const auto remaining =
@@ -49,7 +49,7 @@ namespace libxtun::health
             if (remaining <= std::chrono::milliseconds::zero()) {
                 return ProbeOutcome::Failed;
             }
-            if (!socket->waitReadable(std::min(remaining, kAbortPollSlice))) {
+            if (!socket->waitReadable(std::min(remaining, ABORT_POLL_SLICE))) {
                 continue;
             }
             const auto received = socket->receive(buf);

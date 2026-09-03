@@ -6,8 +6,8 @@
 namespace libxtun::health
 {
 
-    ThreadedScheduler::ThreadedScheduler(RandomSource &random, int jitter_percent, LogSink log)
-        : m_random(random), m_jitter_percent(jitter_percent), m_log(std::move(log))
+    ThreadedScheduler::ThreadedScheduler(RandomSource &random, int jitterPercent, LogSink log)
+        : m_random(random), m_jitterPercent(jitterPercent), m_log(std::move(log))
     {
     }
 
@@ -16,7 +16,7 @@ namespace libxtun::health
         stop();
     }
 
-    void ThreadedScheduler::start(Tick tick, std::chrono::milliseconds first_delay)
+    void ThreadedScheduler::start(Tick tick, std::chrono::milliseconds firstDelay)
     {
         stop();
 
@@ -25,7 +25,7 @@ namespace libxtun::health
         m_stop = false;
         m_wake = false;
         m_running = true;
-        m_thread = std::thread(&ThreadedScheduler::loop, this, first_delay);
+        m_thread = std::thread(&ThreadedScheduler::loop, this, firstDelay);
     }
 
     void ThreadedScheduler::stop() noexcept
@@ -57,10 +57,10 @@ namespace libxtun::health
         return m_running;
     }
 
-    void ThreadedScheduler::loop(std::chrono::milliseconds first_delay)
+    void ThreadedScheduler::loop(std::chrono::milliseconds firstDelay)
     {
         std::unique_lock<std::mutex> lock(m_mtx);
-        std::chrono::milliseconds delay = first_delay;
+        std::chrono::milliseconds delay = firstDelay;
 
         for (;;) {
             m_cond.wait_for(lock, withJitter(delay), [this] { return m_stop || m_wake; });
@@ -101,10 +101,10 @@ namespace libxtun::health
 
     std::chrono::milliseconds ThreadedScheduler::withJitter(std::chrono::milliseconds base)
     {
-        if (m_jitter_percent <= 0 || base <= std::chrono::milliseconds::zero()) {
+        if (m_jitterPercent <= 0 || base <= std::chrono::milliseconds::zero()) {
             return base;
         }
-        const auto span = static_cast<int>(base.count() * m_jitter_percent / 100);
+        const auto span = static_cast<int>(base.count() * m_jitterPercent / 100);
         return base + std::chrono::milliseconds(m_random.inRange(-span, span));
     }
 

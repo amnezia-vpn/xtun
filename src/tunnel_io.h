@@ -7,8 +7,8 @@
 namespace libxtun
 {
 
-    inline constexpr int kReadWake = 0;
-    inline constexpr int kIoFatal = -1;
+    inline constexpr int READ_WAKE = 0;
+    inline constexpr int IO_FATAL = -1;
 
     class TunnelIo
     {

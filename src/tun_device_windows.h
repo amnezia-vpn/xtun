@@ -50,7 +50,7 @@ namespace libxtun
         WINTUN_SESSION_HANDLE m_session = nullptr;
         HANDLE m_readWait = nullptr;
         std::atomic<bool> m_closing { false };
-        std::atomic<bool> m_inject_pending { false };
+        std::atomic<bool> m_injectPending { false };
         std::atomic<int> m_running { 0 };
         int m_forcedMtu = 1420;
         std::string m_name;

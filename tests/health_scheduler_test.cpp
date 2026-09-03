@@ -121,12 +121,12 @@ TEST(HealthScheduler, StopFromAnotherThreadJoinsAndIsIdempotent)
     ASSERT_TRUE(waitUntil([&] { return ticks.load() >= 1; }));
 
     scheduler.stop();
-    const int after_stop = ticks.load();
+    const int afterStop = ticks.load();
     scheduler.stop();
 
     EXPECT_FALSE(scheduler.running());
     std::this_thread::sleep_for(20ms);
-    EXPECT_EQ(ticks.load(), after_stop) << "the tick ran after the scheduler was stopped";
+    EXPECT_EQ(ticks.load(), afterStop) << "the tick ran after the scheduler was stopped";
 }
 
 TEST(HealthScheduler, WakeEvaluatesImmediatelyInsteadOfWaitingOutThePeriod)

@@ -10,18 +10,18 @@ namespace libxtun::health
     namespace
     {
 
-        constexpr std::size_t kDnsHeaderLen = 12;
+        constexpr std::size_t DNS_HEADER_LEN = 12;
 
-        constexpr std::string_view kProbeDomain = "example.com";
-        constexpr std::uint16_t kDnsTypeA = 1;
-        constexpr std::uint16_t kDnsClassIn = 1;
-        constexpr int kNonceHexDigits = 8;
-        constexpr std::string_view kHexDigits = "0123456789abcdef";
+        constexpr std::string_view PROBE_DOMAIN = "example.com";
+        constexpr std::uint16_t DNS_TYPE_A = 1;
+        constexpr std::uint16_t DNS_CLASS_IN = 1;
+        constexpr int NONCE_HEX_DIGITS = 8;
+        constexpr std::string_view HEX_DIGITS = "0123456789abcdef";
 
         class DnsFlags
         {
         public:
-            static constexpr std::uint16_t kStandardQuery = 0x0100;
+            static constexpr std::uint16_t STANDARD_QUERY = 0x0100;
 
             explicit DnsFlags(std::uint16_t raw) noexcept : m_raw(raw)
             {
@@ -44,16 +44,16 @@ namespace libxtun::health
             std::uint16_t m_raw;
         };
 
-        constexpr unsigned kOpcodeQuery = 0;
-        constexpr unsigned kRcodeNoError = 0;
-        constexpr unsigned kRcodeNxDomain = 3;
+        constexpr unsigned OPCODE_QUERY = 0;
+        constexpr unsigned RCODE_NO_ERROR = 0;
+        constexpr unsigned RCODE_NX_DOMAIN = 3;
 
         void appendNonceLabel(std::vector<std::byte> &out, std::uint32_t nonce)
         {
-            out.push_back(static_cast<std::byte>(kNonceHexDigits));
-            for (int digit = kNonceHexDigits - 1; digit >= 0; --digit) {
+            out.push_back(static_cast<std::byte>(NONCE_HEX_DIGITS));
+            for (int digit = NONCE_HEX_DIGITS - 1; digit >= 0; --digit) {
                 const auto nibble = (nonce >> (digit * 4)) & 0xfu;
-                out.push_back(static_cast<std::byte>(kHexDigits[nibble]));
+                out.push_back(static_cast<std::byte>(HEX_DIGITS[nibble]));
             }
         }
 
@@ -76,13 +76,13 @@ namespace libxtun::health
 
     }
 
-    DnsQuery::DnsQuery(std::uint16_t transaction_id, std::uint32_t nonce, std::uint16_t source_port)
-        : m_transaction_id(transaction_id), m_source_port(source_port)
+    DnsQuery::DnsQuery(std::uint16_t transactionId, std::uint32_t nonce, std::uint16_t sourcePort)
+        : m_transactionId(transactionId), m_sourcePort(sourcePort)
     {
-        m_bytes.reserve(kDnsHeaderLen + kNonceHexDigits + kProbeDomain.size() + 8);
+        m_bytes.reserve(DNS_HEADER_LEN + NONCE_HEX_DIGITS + PROBE_DOMAIN.size() + 8);
 
-        net::appendBigEndian16(m_bytes, transaction_id);
-        net::appendBigEndian16(m_bytes, DnsFlags::kStandardQuery);
+        net::appendBigEndian16(m_bytes, transactionId);
+        net::appendBigEndian16(m_bytes, DnsFlags::STANDARD_QUERY);
         // QDCOUNT
         net::appendBigEndian16(m_bytes, 1);
         // ANCOUNT
@@ -93,35 +93,35 @@ namespace libxtun::health
         net::appendBigEndian16(m_bytes, 0);
 
         appendNonceLabel(m_bytes, nonce);
-        appendLabels(m_bytes, kProbeDomain);
+        appendLabels(m_bytes, PROBE_DOMAIN);
         m_bytes.push_back(std::byte { 0 });
 
-        net::appendBigEndian16(m_bytes, kDnsTypeA);
-        net::appendBigEndian16(m_bytes, kDnsClassIn);
+        net::appendBigEndian16(m_bytes, DNS_TYPE_A);
+        net::appendBigEndian16(m_bytes, DNS_CLASS_IN);
     }
 
     bool DnsQuery::matchesResponse(std::span<const std::byte> response) const noexcept
     {
-        if (m_bytes.size() <= kDnsHeaderLen || response.size() < m_bytes.size()) {
+        if (m_bytes.size() <= DNS_HEADER_LEN || response.size() < m_bytes.size()) {
             return false;
         }
-        if (net::readBigEndian16(response, 0) != m_transaction_id) {
+        if (net::readBigEndian16(response, 0) != m_transactionId) {
             return false;
         }
 
         const DnsFlags flags(net::readBigEndian16(response, 2));
-        if (!flags.isResponse() || flags.opcode() != kOpcodeQuery) {
+        if (!flags.isResponse() || flags.opcode() != OPCODE_QUERY) {
             return false;
         }
-        if (flags.rcode() != kRcodeNoError && flags.rcode() != kRcodeNxDomain) {
+        if (flags.rcode() != RCODE_NO_ERROR && flags.rcode() != RCODE_NX_DOMAIN) {
             return false;
         }
         if (net::readBigEndian16(response, 4) != 1) {
             return false;
         }
 
-        const std::size_t question_len = m_bytes.size() - kDnsHeaderLen;
-        return std::memcmp(response.data() + kDnsHeaderLen, m_bytes.data() + kDnsHeaderLen, question_len) == 0;
+        const std::size_t questionLen = m_bytes.size() - DNS_HEADER_LEN;
+        return std::memcmp(response.data() + DNS_HEADER_LEN, m_bytes.data() + DNS_HEADER_LEN, questionLen) == 0;
     }
 
     DnsQueryFactory::DnsQueryFactory(RandomSource &random) noexcept : m_random(random)
@@ -130,10 +130,10 @@ namespace libxtun::health
 
     DnsQuery DnsQueryFactory::next()
     {
-        const std::uint16_t transaction_id = m_random.next16();
+        const std::uint16_t transactionId = m_random.next16();
         const std::uint32_t nonce = m_random.next32();
-        const auto source_port = static_cast<std::uint16_t>(m_random.inRange(kEphemeralPortFirst, kEphemeralPortLast));
-        return DnsQuery(transaction_id, nonce, source_port);
+        const auto sourcePort = static_cast<std::uint16_t>(m_random.inRange(EPHEMERAL_PORT_FIRST, EPHEMERAL_PORT_LAST));
+        return DnsQuery(transactionId, nonce, sourcePort);
     }
 
 }

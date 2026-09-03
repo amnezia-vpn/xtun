@@ -21,17 +21,17 @@
 namespace
 {
 
-    constexpr bool kVerbose = false;
+    constexpr bool VERBOSE = false;
 
-    constexpr const char *kPrivA = "YHJIKcg6kMlHqmHvpdetXH9300wKO4NxqX1L+v9h20A=";
-    constexpr const char *kPubA = "dpY/lgMy5OZPe6EVFl25AYL8hCsNEPxzO2uZZdzLnlo=";
-    constexpr const char *kPrivB = "CPbRqDXAuXNShMCXDVQ6d7mKeVAk2isLmqSNOnVWGWs=";
-    constexpr const char *kPubB = "sB1wCAUCSBg8mrN8n4mPMAs4Z2C9QUCu3i6Emfb9omo=";
+    constexpr const char *PRIV_KEY_A = "YHJIKcg6kMlHqmHvpdetXH9300wKO4NxqX1L+v9h20A=";
+    constexpr const char *PUB_KEY_A = "dpY/lgMy5OZPe6EVFl25AYL8hCsNEPxzO2uZZdzLnlo=";
+    constexpr const char *PRIV_KEY_B = "CPbRqDXAuXNShMCXDVQ6d7mKeVAk2isLmqSNOnVWGWs=";
+    constexpr const char *PUB_KEY_B = "sB1wCAUCSBg8mrN8n4mPMAs4Z2C9QUCu3i6Emfb9omo=";
 
-    constexpr int kPortA = 56811;
-    constexpr int kPortB = 56812;
+    constexpr int PORT_A = 56811;
+    constexpr int PORT_B = 56812;
 
-    constexpr const char *kAwgParams = "Jc = 2\n"
+    constexpr const char *AWG_PARAMS = "Jc = 2\n"
                                        "Jmin = 8\n"
                                        "Jmax = 16\n"
                                        "S1 = 4\n"
@@ -43,14 +43,14 @@ namespace
 
     void logA(const char *str, void *)
     {
-        if (kVerbose) {
+        if (VERBOSE) {
             std::fprintf(stderr, "[A] %s\n", str);
         }
     }
 
     void logB(const char *str, void *)
     {
-        if (kVerbose) {
+        if (VERBOSE) {
             std::fprintf(stderr, "[B] %s\n", str);
         }
     }
@@ -97,11 +97,11 @@ namespace
     libxtun::proto::awg::Config confA()
     {
         ;
-        const std::string str = std::string("[Interface]\n") + "PrivateKey = " + kPrivA + "\n"
-                + "ListenPort = " + std::to_string(kPortA) + "\n" + kAwgParams
+        const std::string str = std::string("[Interface]\n") + "PrivateKey = " + PRIV_KEY_A + "\n"
+                + "ListenPort = " + std::to_string(PORT_A) + "\n" + AWG_PARAMS
                 + "\n"
                   "[Peer]\n"
-                + "PublicKey = " + kPubB + "\n" + "Endpoint = 127.0.0.1:" + std::to_string(kPortB)
+                + "PublicKey = " + PUB_KEY_B + "\n" + "Endpoint = 127.0.0.1:" + std::to_string(PORT_B)
                 + "\n"
                   "AllowedIPs = 10.9.9.2/32\n"
                   "PersistentKeepalive = 5\n";
@@ -112,11 +112,11 @@ namespace
 
     libxtun::proto::awg::Config confB()
     {
-        const std::string str = std::string("[Interface]\n") + "PrivateKey = " + kPrivB + "\n"
-                + "ListenPort = " + std::to_string(kPortB) + "\n" + kAwgParams
+        const std::string str = std::string("[Interface]\n") + "PrivateKey = " + PRIV_KEY_B + "\n"
+                + "ListenPort = " + std::to_string(PORT_B) + "\n" + AWG_PARAMS
                 + "\n"
                   "[Peer]\n"
-                + "PublicKey = " + kPubA + "\n" + "Endpoint = 127.0.0.1:" + std::to_string(kPortA)
+                + "PublicKey = " + PUB_KEY_A + "\n" + "Endpoint = 127.0.0.1:" + std::to_string(PORT_A)
                 + "\n"
                   "AllowedIPs = 10.9.9.1/32\n";
 
@@ -152,8 +152,8 @@ TEST(AwgRoundtrip, DeliversDataBetweenTwoInstances)
 {
     libxtun::ClientCallbacks callbacksA {};
     libxtun::ClientCallbacks callbacksB {};
-    callbacksA.on_log = logA;
-    callbacksB.on_log = logB;
+    callbacksA.onLog = logA;
+    callbacksB.onLog = logB;
 
     MemTun tunA;
     MemTun tunB;
@@ -200,10 +200,10 @@ TEST(AwgRoundtrip, OffersSpawnedSocketsForProtection)
 
     libxtun::ClientCallbacks callbacksA {};
     libxtun::ClientCallbacks callbacksB {};
-    callbacksA.on_log = logA;
-    callbacksB.on_log = logB;
-    callbacksA.on_socket = &SocketRecorder::handler;
-    callbacksA.on_socket_priv = &recorder;
+    callbacksA.onLog = logA;
+    callbacksB.onLog = logB;
+    callbacksA.onSocket = &SocketRecorder::handler;
+    callbacksA.onSocketPriv = &recorder;
 
     MemTun tunA;
     MemTun tunB;

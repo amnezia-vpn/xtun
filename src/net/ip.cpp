@@ -9,12 +9,12 @@ namespace libxtun::net
     namespace
     {
 
-        constexpr std::size_t kV4Octets = 4;
-        constexpr std::size_t kV6Octets = 16;
+        constexpr std::size_t V4_OCTETS = 4;
+        constexpr std::size_t V6_OCTETS = 16;
 
         std::size_t octetsFor(int family) noexcept
         {
-            return family == AF_INET6 ? kV6Octets : kV4Octets;
+            return family == AF_INET6 ? V6_OCTETS : V4_OCTETS;
         }
 
         unsigned octetAt(std::span<const std::byte> octets, std::size_t index) noexcept
@@ -42,7 +42,7 @@ namespace libxtun::net
         bool routableV6(std::span<const std::byte> o) noexcept
         {
             in6_addr addr {};
-            std::memcpy(&addr, o.data(), kV6Octets);
+            std::memcpy(&addr, o.data(), V6_OCTETS);
 
             if (IN6_IS_ADDR_UNSPECIFIED(&addr) || IN6_IS_ADDR_LOOPBACK(&addr) || IN6_IS_ADDR_LINKLOCAL(&addr)
                 || IN6_IS_ADDR_SITELOCAL(&addr) || IN6_IS_ADDR_MULTICAST(&addr) || IN6_IS_ADDR_V4MAPPED(&addr)) {
@@ -71,7 +71,7 @@ namespace libxtun::net
     {
         IpAddress out;
         out.m_family = AF_INET;
-        std::memcpy(out.m_octets.data(), &addr, kV4Octets);
+        std::memcpy(out.m_octets.data(), &addr, V4_OCTETS);
         return out;
     }
 
@@ -79,7 +79,7 @@ namespace libxtun::net
     {
         IpAddress out;
         out.m_family = AF_INET6;
-        std::memcpy(out.m_octets.data(), &addr, kV6Octets);
+        std::memcpy(out.m_octets.data(), &addr, V6_OCTETS);
         return out;
     }
 
@@ -121,16 +121,16 @@ namespace libxtun::net
             return std::nullopt;
         }
 
-        const unsigned host_bits = address->family() == AF_INET6 ? 128u : 32u;
+        const unsigned hostBits = address->family() == AF_INET6 ? 128u : 32u;
         if (slash == std::string_view::npos) {
-            return IpPrefix(*address, host_bits);
+            return IpPrefix(*address, hostBits);
         }
 
         const std::string_view text = cidr.substr(slash + 1);
         unsigned bits = 0;
         const auto *end = text.data() + text.size();
         const auto [stopped, ec] = std::from_chars(text.data(), end, bits);
-        if (ec != std::errc {} || stopped != end || bits > host_bits) {
+        if (ec != std::errc {} || stopped != end || bits > hostBits) {
             return std::nullopt;
         }
         return IpPrefix(*address, bits);

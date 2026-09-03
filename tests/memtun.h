@@ -20,7 +20,7 @@ public:
         std::unique_lock<std::mutex> lock(m_mutex);
         m_cond.wait(lock, [this] { return m_cancelled || !m_in.empty(); });
         if (m_cancelled) {
-            return libxtun::kIoFatal;
+            return libxtun::IO_FATAL;
         }
         std::vector<unsigned char> pkt = std::move(m_in.front());
         m_in.pop_front();

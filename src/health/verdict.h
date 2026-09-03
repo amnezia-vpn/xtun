@@ -16,10 +16,10 @@ namespace libxtun::health
 
     struct Observation
     {
-        bool inbound_fresh = false;
+        bool inboundFresh = false;
         ProbeOutcome tunnel = ProbeOutcome::NotRun;
         ProbeOutcome control = ProbeOutcome::NotRun;
-        bool fail_streak_reached = false;
+        bool failStreakReached = false;
     };
 
     template<typename T> struct Match
@@ -34,33 +34,33 @@ namespace libxtun::health
 
     struct VerdictRule
     {
-        Match<bool> inbound_fresh;
+        Match<bool> inboundFresh;
         Match<ProbeOutcome> tunnel;
         Match<ProbeOutcome> control;
-        Match<bool> fail_streak_reached;
+        Match<bool> failStreakReached;
         ConnectionState next;
     };
 
-    inline constexpr std::array<VerdictRule, 4> kVerdictRules { {
-            { .inbound_fresh = { true }, .next = ConnectionState::Connected },
+    inline constexpr std::array<VerdictRule, 4> VERDICT_RULES { {
+            { .inboundFresh = { true }, .next = ConnectionState::Connected },
             { .tunnel = { ProbeOutcome::Answered }, .next = ConnectionState::Connected },
             { .tunnel = { ProbeOutcome::Failed },
               .control = { ProbeOutcome::Answered },
-              .fail_streak_reached = { true },
+              .failStreakReached = { true },
               .next = ConnectionState::Disconnected },
             { .tunnel = { ProbeOutcome::Failed },
               .control = { ProbeOutcome::Failed },
-              .fail_streak_reached = { true },
+              .failStreakReached = { true },
               .next = ConnectionState::NoNetwork },
     } };
 
     [[nodiscard]] constexpr std::optional<ConnectionState> resolveVerdict(const Observation &obs)
     {
-        const auto hit = std::ranges::find_if(kVerdictRules, [&obs](const VerdictRule &rule) {
-            return rule.inbound_fresh(obs.inbound_fresh) && rule.tunnel(obs.tunnel) && rule.control(obs.control)
-                    && rule.fail_streak_reached(obs.fail_streak_reached);
+        const auto hit = std::ranges::find_if(VERDICT_RULES, [&obs](const VerdictRule &rule) {
+            return rule.inboundFresh(obs.inboundFresh) && rule.tunnel(obs.tunnel) && rule.control(obs.control)
+                    && rule.failStreakReached(obs.failStreakReached);
         });
-        return hit == kVerdictRules.end() ? std::nullopt : std::optional { hit->next };
+        return hit == VERDICT_RULES.end() ? std::nullopt : std::optional { hit->next };
     }
 
     class FailureStreak
@@ -102,8 +102,8 @@ namespace libxtun::health
     private:
         const Clock &m_clock;
         std::chrono::seconds m_tolerance;
-        std::chrono::steady_clock::time_point m_last_steady;
-        std::chrono::system_clock::time_point m_last_wall;
+        std::chrono::steady_clock::time_point m_lastSteady;
+        std::chrono::system_clock::time_point m_lastWall;
     };
 
 }

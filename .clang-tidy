@@ -9,10 +9,16 @@ CheckOptions:
   # class Foo {
   #   int m_memberVariable = 123;
   # };
-  - key: readability-identifier-naming.MemberCase
+  - key: readability-identifier-naming.PrivateMemberCase
     value: 'camelBack'
-  - key: readability-identifier-naming.MemberPrefix
+  - key: readability-identifier-naming.PrivateMemberPrefix
     value: 'm_'
+  - key: readability-identifier-naming.ProtectedMemberCase
+    value: 'camelBack'
+  - key: readability-identifier-naming.ProtectedMemberPrefix
+    value: 'm_'
+  - key: readability-identifier-naming.PublicMemberCase
+    value: 'camelBack'
   # int g_globalVariable = 123;
   - key: readability-identifier-naming.GlobalVariableCase
     value: 'camelBack'
