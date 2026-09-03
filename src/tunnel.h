@@ -1,155 +1,111 @@
+#ifndef LIBXTUN_TUNNEL_H
+#define LIBXTUN_TUNNEL_H
+
 #include "health/monitor.h"
 #include "proxy.h"
 #include "router.h"
-#include "tunnel_io.h"
+#include "tun_device.h"
 #include "xtun.h"
 
-#include <atomic>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
-#include <thread>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
-#if defined(_WIN32)
-#include <wintun.h>
-#include <iphlpapi.h>
-#endif
+namespace libxtun
+{
 
-#ifndef TUNNEL_H
-#define TUNNEL_H
+    class Tunnel : private TunDeviceListener
+    {
+    public:
+        enum class Event {
+            Up,
+            Down,
+            MtuUpdate
+        };
 
-namespace libxtun {
+        explicit Tunnel(const libxtun_tunnel_opts &opts);
+        Tunnel(const libxtun_tunnel_opts &opts, std::unique_ptr<TunDevice> device);
+        ~Tunnel();
 
+        int openTun();
+        int adoptTun(int fd);
+        int adoptTunByName(const char *name);
 
-class Tunnel {
-  public:
-    enum class Event { Up, Down, MtuUpdate };
+        const std::string &name() const
+        {
+            return m_device->name();
+        }
 
-    Tunnel(const libxtun_tunnel_opts &opts);
-    ~Tunnel();
+        bool up() const;
+        void onEvent(std::function<void(Event)> cb)
+        {
+            m_onEvent = std::move(cb);
+        }
 
-    int openTun();
-    int adoptTun(int fd);
-    int adoptTunByName(const char *name);
+        int attachProxy(Proxy *proxy);
+        int start();
 
-    int read(void *buf, size_t len);
-    int write(const void *buf, size_t len);
+    private:
+        friend class Proxy;
 
-    int mtu() const;
-    const std::string &name() const { return m_name; }
+        class BypassSocketRegistry
+        {
+        public:
+            void add(Router &router, int fd, int family);
+            void rebind(Router &router);
+            void clear();
 
-    bool up() const { return m_up; }
-    int currentMtu() const { return m_mtu; }
-    void onEvent(std::function<void(Event)> cb) { m_onEvent = std::move(cb); }
+        private:
+            mutable std::mutex m_mtx;
+            std::unordered_map<int, int> m_sockets;
+        };
 
-    int attachProxy(Proxy *proxy);
-    int start();
+        int completeDeviceSetup();
 
-    void cancelRead() { signalRead(true); }
-    void registerBypassSocket(int fd, int family);
-    void bypassSocket(int fd, int family);
-    void detachProxy(Proxy *proxy) noexcept;
+        void registerBypassSocket(int fd, int family);
+        void bypassSocket(int fd, int family);
+        void detachProxy(Proxy *proxy) noexcept;
 
-  private:
-    class DeviceIo final : public TunnelIo {
-      public:
-        explicit DeviceIo(Tunnel &tunnel) noexcept : m_tunnel(tunnel) {}
+        void shutdownProxy(Proxy *expected) noexcept;
+        [[nodiscard]] Proxy *takeProxy(Proxy *expected = nullptr) noexcept;
+        health::HealthConfig healthConfigFor(const ProxyProfile &profile);
+        void cancelRead()
+        {
+            m_device->cancelRead();
+        }
+        void wakeRead()
+        {
+            m_device->wakeRead();
+        }
 
-        int read(std::span<std::byte> buf) noexcept override;
-        int write(std::span<const std::byte> packet) noexcept override;
-        int mtu() const noexcept override { return m_tunnel.currentMtu(); }
+        void emit(Event ev);
 
-      private:
-        Tunnel &m_tunnel;
+        void onRouteChange();
+
+        void onLinkStateChanged(bool up) override;
+        void onMtuChanged(int) override;
+        void onRouteChanged() override;
+
+        std::vector<std::string> m_dns;
+        std::vector<std::string> m_dnsExceptions;
+        libxtun_killswitch_mode m_killswitchMode;
+        std::vector<std::string> m_ifAddrs;
+        int m_confMtu;
+        std::unique_ptr<Router> m_router;
+        std::unique_ptr<TunDevice> m_device;
+        bool m_started = false;
+
+        BypassSocketRegistry m_bypass_sockets;
+        health::HealthSettings m_health_settings;
+
+        std::function<void(Event)> m_onEvent;
+        std::mutex m_proxyMtx;
+        Proxy *m_proxy = nullptr;
     };
-
-    class BypassSocketRegistry {
-      public:
-        void add(Router &router, int fd, int family);
-        void rebind(Router &router);
-        void clear();
-
-      private:
-        mutable std::mutex m_mtx;
-        std::unordered_map<int, int> m_sockets;
-    };
-
-    void shutdownProxy(Proxy *expected) noexcept;
-    [[nodiscard]] Proxy *takeProxy(Proxy *expected = nullptr) noexcept;
-    health::HealthConfig healthConfigFor(const ProxyProfile &profile);
-    void signalRead(bool terminal);
-    void wakeRead() { signalRead(false); }
-    int finishOpen();
-    void emit(Event ev);
-#if defined(_WIN32)
-    int loadWintun(WINTUN_CREATE_ADAPTER_FUNC *&createAdapter,
-                   WINTUN_OPEN_ADAPTER_FUNC *&openAdapter,
-                   WINTUN_START_SESSION_FUNC *&startSession,
-                   WINTUN_GET_READ_WAIT_EVENT_FUNC *&getReadWaitEvent);
-    int startWintunSession(WINTUN_START_SESSION_FUNC *startSession,
-                           WINTUN_GET_READ_WAIT_EVENT_FUNC *getReadWaitEvent);
-#endif
-    void startMonitor();
-    void stopMonitor();
-    void monitorLoop();
-#if defined(__APPLE__) || defined(_WIN32)
-    void onRouteChange();
-#endif
-#if defined(_WIN32)
-    static void CALLBACK onRouteChangeCb(void *ctx, MIB_IPFORWARD_ROW2 *row,
-                                         MIB_NOTIFICATION_TYPE type);
-#endif
-
-    std::vector<std::string> m_dns;
-    std::vector<std::string> m_dnsExceptions;
-    libxtun_killswitch_mode m_killswitchMode;
-    std::vector<std::string> m_ifAddrs;
-    int m_confMtu;
-    std::unique_ptr<Router> m_router;
-    bool m_started = false;
-    DeviceIo m_device_io{*this};
-    BypassSocketRegistry m_bypass_sockets;
-    std::atomic<bool> m_read_cancelled{false};
-    std::atomic<bool> m_inject_pending{false};
-    health::HealthSettings m_health_settings;
-
-    int m_tunFd;
-    std::string m_name;
-    int m_ifIndex;
-
-    int m_monitorFd;
-    int m_cancelFd;
-    int m_readCancelRd;
-    int m_readCancelWr;
-    std::thread m_monitor;
-    std::atomic<bool> m_up;
-    std::atomic<int> m_mtu;
-    std::function<void(Event)> m_onEvent;
-    std::mutex m_proxyMtx;
-    Proxy *m_proxy = nullptr;
-
-#if defined(_WIN32)
-    HMODULE m_wintun = nullptr;
-    WINTUN_ADAPTER_HANDLE m_adapter = nullptr;
-    WINTUN_SESSION_HANDLE m_session = nullptr;
-    HANDLE m_readWait = nullptr;
-    std::atomic<bool> m_closing{false};
-    std::atomic<int> m_running{0};
-    int m_forcedMtu = 1420;
-
-    WINTUN_CLOSE_ADAPTER_FUNC *m_closeAdapter = nullptr;
-    WINTUN_END_SESSION_FUNC *m_endSession = nullptr;
-    WINTUN_RECEIVE_PACKET_FUNC *m_receivePacket = nullptr;
-    WINTUN_RELEASE_RECEIVE_PACKET_FUNC *m_releaseReceivePacket = nullptr;
-    WINTUN_ALLOCATE_SEND_PACKET_FUNC *m_allocateSendPacket = nullptr;
-    WINTUN_SEND_PACKET_FUNC *m_sendPacket = nullptr;
-    WINTUN_GET_ADAPTER_LUID_FUNC *m_getAdapterLuid = nullptr;
-    HANDLE m_routeNotify = nullptr;
-#endif
-};
-
 
 }
 

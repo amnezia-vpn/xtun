@@ -28,7 +28,7 @@ target_link_libraries(xtun_tests PRIVATE xtun GTest::gtest GTest::gtest_main)
 target_include_directories(xtun_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
 if(WIN32)
-    target_link_libraries(xtun_tests PRIVATE advapi32 iphlpapi)
+    target_link_libraries(xtun_tests PRIVATE amnezia::wintun advapi32 iphlpapi)
 
     add_custom_command(TARGET xtun_tests POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
