@@ -2,10 +2,12 @@
 #define LIBXTUN_TUN_DEVICE_WINDOWS_H
 
 #include "tun_device.h"
-#include <iphlpapi.h>
 #include <winsock2.h>
 #include <wintun.h>
 #include <ws2tcpip.h>
+
+// iphlpapi.h MUST NOT be included before winsock2.h to avoid redefinition errors.
+#include <iphlpapi.h>
 
 #include <atomic>
 
