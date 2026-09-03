@@ -1,0 +1,40 @@
+name: Build and test
+
+on: push
+jobs:
+    test:
+      strategy:
+        fail-fast: false
+        matrix:
+            os: [windows-latest, ubuntu-latest, macos-latest]
+      runs-on: ${{ matrix.os }}
+      steps:
+        - name: Obtain sources
+          uses: actions/checkout@v7
+          with:
+            submodules: true
+        - name: Install conan
+          run:  pip install conan
+        - name: Load conan cache
+          uses: actions/cache@v4
+          with:
+            path: conan_cache_save.tgz
+            key: conan-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
+            restore-keys: |
+              conan-${{ runner.os }}-
+        - name: Restore conan cache
+          run:  conan cache restore conan_cache_save.tgz
+          continue-on-error: true
+        - name: Configure project
+          run:  cmake -DCMAKE_BUILD_TYPE=Release -S . -B build
+        - name: Build project
+          run:  cmake --build build --config Release --parallel
+        - name: Run tests
+          run:  ctest --test-dir build -C Release --output-on-failure
+        - name: Save conan cache
+          shell: bash
+          run: |
+            conan list "goxtun/*:*" --format=json --out-file goxtun.json
+            conan list "wintun/*:*" --format=json --out-file wintun.json
+            conan pkglist merge -l goxtun.json -l wintun.json --format=json --out-file pkglist.json
+            conan cache save -l pkglist.json --file=conan_cache_save.tgz --no-source
