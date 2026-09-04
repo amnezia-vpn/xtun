@@ -49,6 +49,8 @@ CheckOptions:
   # #define LIBXTUN_VER 1.0.0
   - key: readability-identifier-naming.MacroDefinitionCase
     value: 'UPPER_CASE'
+  - key: readability-identifier-naming.MacroDefinitionIgnoredRegexp
+    value: '^_.*'
   # template<typename T>
   - key: readability-identifier-naming.TemplateParameterCase
     value: 'UPPER_CASE'
