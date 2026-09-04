@@ -15,7 +15,7 @@ namespace libxtun
     namespace proto
     {
 
-        class Awg : public Proxy, private NonCopyable
+        class Awg final : public Proxy, private NonCopyable
         {
         public:
             static ResultXtun<std::unique_ptr<Awg>> create(const std::string &str);
