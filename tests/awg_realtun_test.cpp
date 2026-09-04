@@ -764,23 +764,6 @@ TEST(AwgRealTun, RoamRemarkFollowsDefaultRouteChange)
 
 namespace
 {
-
-    constexpr bool VERBOSE = false;
-
-    void logA(const char *str, void *)
-    {
-        if (VERBOSE) {
-            std::fprintf(stderr, "[A] %s\n", str);
-        }
-    }
-
-    void logB(const char *str, void *)
-    {
-        if (VERBOSE) {
-            std::fprintf(stderr, "[B] %s\n", str);
-        }
-    }
-
     unsigned boundIfindex(SOCKET s)
     {
         DWORD scope = 0;
@@ -994,10 +977,8 @@ TEST(AwgRealTun, DeliversThroughWintunAdapter)
     }
 
     MemTun tunB;
-    libxtun::ClientCallbacks callbacksB {};
-    callbacksB.onLog = logB;
     libxtun::proto::Awg b(confB(host));
-    b.bind(callbacksB);
+    b.bind({ .onLog = +[](const char *message, void *priv) { std::cout << "[B]" << message << std::endl; } });
     b.setInterface("xtunrtb");
     ASSERT_EQ(b.start(tunB), LIBXTUN_OK);
 
@@ -1005,10 +986,8 @@ TEST(AwgRealTun, DeliversThroughWintunAdapter)
     libxtun::Tunnel tunnel(opts);
     ASSERT_EQ(tunnel.openTun(), LIBXTUN_OK);
 
-    libxtun::ClientCallbacks callbacksA {};
-    callbacksA.onLog = logA;
     libxtun::proto::Awg a(confA("10.9.9.2/32", host));
-    a.bind(callbacksA);
+    a.bind({ .onLog = +[](const char *message, void *priv) { std::cout << "[A]" << message << std::endl; } });
     a.setInterface("xtunrta");
     ASSERT_EQ(tunnel.attachProxy(&a), LIBXTUN_OK);
     ASSERT_EQ(tunnel.start(), LIBXTUN_OK);

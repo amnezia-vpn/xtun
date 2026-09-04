@@ -20,9 +20,6 @@
 
 namespace
 {
-
-    constexpr bool VERBOSE = false;
-
     constexpr const char *PRIV_KEY_A = "YHJIKcg6kMlHqmHvpdetXH9300wKO4NxqX1L+v9h20A=";
     constexpr const char *PUB_KEY_A = "dpY/lgMy5OZPe6EVFl25AYL8hCsNEPxzO2uZZdzLnlo=";
     constexpr const char *PRIV_KEY_B = "CPbRqDXAuXNShMCXDVQ6d7mKeVAk2isLmqSNOnVWGWs=";
@@ -40,20 +37,6 @@ namespace
                                        "H2 = 1234567892\n"
                                        "H3 = 1234567893\n"
                                        "H4 = 1234567894\n";
-
-    void logA(const char *str, void *)
-    {
-        if (VERBOSE) {
-            std::fprintf(stderr, "[A] %s\n", str);
-        }
-    }
-
-    void logB(const char *str, void *)
-    {
-        if (VERBOSE) {
-            std::fprintf(stderr, "[B] %s\n", str);
-        }
-    }
 
     bool liveSocket(int fd)
     {
@@ -150,19 +133,14 @@ namespace
 
 TEST(AwgRoundtrip, DeliversDataBetweenTwoInstances)
 {
-    libxtun::ClientCallbacks callbacksA {};
-    libxtun::ClientCallbacks callbacksB {};
-    callbacksA.onLog = logA;
-    callbacksB.onLog = logB;
-
     MemTun tunA;
     MemTun tunB;
 
     libxtun::proto::Awg a(confA());
     libxtun::proto::Awg b(confB());
 
-    a.bind(callbacksA);
-    b.bind(callbacksB);
+    a.bind({ .onLog = +[](const char *message, void *priv) { std::cout << "[A]" << message << std::endl; } });
+    b.bind({ .onLog = +[](const char *message, void *priv) { std::cout << "[B]" << message << std::endl; } });
 
     a.setInterface("xtuna");
     b.setInterface("xtunb");
@@ -198,21 +176,18 @@ TEST(AwgRoundtrip, OffersSpawnedSocketsForProtection)
 {
     SocketRecorder recorder;
 
-    libxtun::ClientCallbacks callbacksA {};
-    libxtun::ClientCallbacks callbacksB {};
-    callbacksA.onLog = logA;
-    callbacksB.onLog = logB;
-    callbacksA.onSocket = &SocketRecorder::handler;
-    callbacksA.onSocketPriv = &recorder;
-
     MemTun tunA;
     MemTun tunB;
 
     libxtun::proto::Awg a(confA());
     libxtun::proto::Awg b(confB());
 
-    a.bind(callbacksA);
-    b.bind(callbacksB);
+    a.bind({
+            .onSocket = &SocketRecorder::handler,
+            .onSocketPriv = &recorder,
+            .onLog = +[](const char *message, void *priv) { std::cout << "[A]" << message << std::endl; },
+    });
+    b.bind({ .onLog = +[](const char *message, void *priv) { std::cout << "[B]" << message << std::endl; } });
 
     a.setInterface("xtuna");
     b.setInterface("xtunb");
@@ -254,6 +229,7 @@ TEST(AwgRoundtrip, StopUnblocksParkedReader)
     MemTun tun;
 
     libxtun::proto::Awg a(confA());
+    a.bind({ .onLog = +[](const char *message, void *priv) { std::cout << message << std::endl; } });
     a.setInterface("xtuna");
     ASSERT_EQ(a.start(tun), LIBXTUN_OK);
 
