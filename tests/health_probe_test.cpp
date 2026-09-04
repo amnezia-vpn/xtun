@@ -23,9 +23,9 @@ namespace
     using libxtun::RandomSource;
     using libxtun::health::ControlProbe;
     using libxtun::health::DatagramProbe;
+    using libxtun::health::DNS_PORT;
     using libxtun::health::DnsQuery;
     using libxtun::health::DnsQueryFactory;
-    using libxtun::health::DNS_PORT;
     using libxtun::health::EPHEMERAL_PORT_FIRST;
     using libxtun::health::EPHEMERAL_PORT_LAST;
     using libxtun::health::ProbeOutcome;

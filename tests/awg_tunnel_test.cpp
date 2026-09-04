@@ -29,15 +29,15 @@ namespace
     }
 
     constexpr const char *CONF = "[Interface]\n"
-                                  "PrivateKey = YHJIKcg6kMlHqmHvpdetXH9300wKO4NxqX1L+v9h20A=\n"
-                                  "Jc = 2\n"
-                                  "Jmin = 8\n"
-                                  "Jmax = 16\n"
-                                  "\n"
-                                  "[Peer]\n"
-                                  "PublicKey = sB1wCAUCSBg8mrN8n4mPMAs4Z2C9QUCu3i6Emfb9omo=\n"
-                                  "Endpoint = 127.0.0.1:57777\n"
-                                  "AllowedIPs = 10.99.0.2/32\n";
+                                 "PrivateKey = YHJIKcg6kMlHqmHvpdetXH9300wKO4NxqX1L+v9h20A=\n"
+                                 "Jc = 2\n"
+                                 "Jmin = 8\n"
+                                 "Jmax = 16\n"
+                                 "\n"
+                                 "[Peer]\n"
+                                 "PublicKey = sB1wCAUCSBg8mrN8n4mPMAs4Z2C9QUCu3i6Emfb9omo=\n"
+                                 "Endpoint = 127.0.0.1:57777\n"
+                                 "AllowedIPs = 10.99.0.2/32\n";
 
     libxtun_tunnel_opts defaultOpts()
     {

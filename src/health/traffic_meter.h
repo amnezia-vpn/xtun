@@ -34,8 +34,7 @@ namespace libxtun::health
 
         Counters counters() const noexcept
         {
-            return { m_outboundPackets.load(std::memory_order_relaxed),
-                     m_inboundPackets.load(std::memory_order_relaxed),
+            return { m_outboundPackets.load(std::memory_order_relaxed), m_inboundPackets.load(std::memory_order_relaxed),
                      m_outboundBytes.load(std::memory_order_relaxed), m_inboundBytes.load(std::memory_order_relaxed) };
         }
 

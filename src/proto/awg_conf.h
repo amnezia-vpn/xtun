@@ -134,8 +134,8 @@ namespace libxtun
                     std::optional<Uint32Field> h1, h2, h3, h4;
                     std::optional<StringField> i1, i2, i3, i4, i5;
                     std::optional<KeyField> headerProtectionKey;
-                    std::optional<Uint16Range> contentPaddingAddition, rekeyAfterTime, rekeyTimeout,
-                            rejectAfterTime, keepaliveTimeout, maxHandshakeAttempts;
+                    std::optional<Uint16Range> contentPaddingAddition, rekeyAfterTime, rekeyTimeout, rejectAfterTime,
+                            keepaliveTimeout, maxHandshakeAttempts;
                     std::optional<BoolField> randomTrailers;
                     std::optional<BoolField> disableCookies;
 

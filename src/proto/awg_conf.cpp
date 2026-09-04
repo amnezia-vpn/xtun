@@ -372,8 +372,7 @@ namespace libxtun
                     item<&Config::Peer::publicKey, "PublicKey", "public_key">(),
                     item<&Config::Peer::endpoint, "Endpoint", "endpoint">(),
                     item<&Config::Peer::presharedKey, "PresharedKey", "preshared_key">(),
-                    item<&Config::Peer::persistentKeepaliveInterval, "PersistentKeepalive",
-                         "persistent_keepalive_interval">(),
+                    item<&Config::Peer::persistentKeepaliveInterval, "PersistentKeepalive", "persistent_keepalive_interval">(),
                     item<&Config::Peer::allowedIps, "AllowedIPs", "allowed_ip">(),
                 };
 

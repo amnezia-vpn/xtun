@@ -48,9 +48,7 @@ TEST(HealthVerdict, AnsweredTunnelProbeIsConnectedRegardlessOfTheRest)
 
 TEST(HealthVerdict, OnlineHostWithADeadTunnelIsDisconnected)
 {
-    const Observation obs { .tunnel = ProbeOutcome::Failed,
-                            .control = ProbeOutcome::Answered,
-                            .failStreakReached = true };
+    const Observation obs { .tunnel = ProbeOutcome::Failed, .control = ProbeOutcome::Answered, .failStreakReached = true };
 
     EXPECT_EQ(resolveVerdict(obs), ConnectionState::Disconnected);
 }
@@ -76,13 +74,13 @@ TEST(HealthVerdict, NoEvidenceYieldsNoVerdict)
     EXPECT_FALSE(resolveVerdict(Observation {}).has_value());
 
     const Observation noTarget { .tunnel = ProbeOutcome::NotRun,
-                                  .control = ProbeOutcome::NotRun,
-                                  .failStreakReached = true };
+                                 .control = ProbeOutcome::NotRun,
+                                 .failStreakReached = true };
     EXPECT_FALSE(resolveVerdict(noTarget).has_value()) << "a probe that could not run must never decide anything";
 
     const Observation unbindableControl { .tunnel = ProbeOutcome::Failed,
-                                           .control = ProbeOutcome::NotRun,
-                                           .failStreakReached = true };
+                                          .control = ProbeOutcome::NotRun,
+                                          .failStreakReached = true };
     EXPECT_FALSE(resolveVerdict(unbindableControl).has_value())
             << "a failed tunnel probe with no control evidence must hold, not tear down";
 }
