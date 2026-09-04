@@ -19,8 +19,7 @@ namespace libxtun::health
         m_lastSteady = steady;
         m_lastWall = wall;
 
-        const auto divergence =
-                wallElapsed > steadyElapsed ? wallElapsed - steadyElapsed : steadyElapsed - wallElapsed;
+        const auto divergence = wallElapsed > steadyElapsed ? wallElapsed - steadyElapsed : steadyElapsed - wallElapsed;
         return divergence > std::chrono::duration_cast<std::chrono::milliseconds>(m_tolerance);
     }
 
