@@ -12,7 +12,6 @@
 
 namespace libxtun::health
 {
-
     class MonitoredIo final : public TunnelIo, private NonCopyable
     {
     public:
@@ -23,6 +22,10 @@ namespace libxtun::health
         int mtu() const noexcept override
         {
             return m_device.mtu();
+        }
+        void protectSocket(int fd) noexcept override
+        {
+            m_device.protectSocket(fd);
         }
 
         void halt() noexcept
@@ -40,7 +43,6 @@ namespace libxtun::health
         PacketInterceptor &m_interceptor;
         std::atomic<bool> m_halted { false };
     };
-
 }
 
 #endif // HEALTH_MONITORED_IO_H

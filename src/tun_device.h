@@ -1,7 +1,8 @@
 #ifndef LIBXTUN_TUN_DEVICE_H
 #define LIBXTUN_TUN_DEVICE_H
 
-#include "tunnel_io.h"
+#include "tunnel_io.h" // IWYU pragma: keep
+#include "xtun.h"
 
 #include <cstddef>
 #include <memory>
@@ -20,18 +21,18 @@ namespace libxtun
         virtual void onRouteChanged() = 0;
     };
 
-    class TunDevice : public TunnelIo
+    class TunDevice
     {
     public:
         virtual ~TunDevice() = default;
 
-        virtual int open() = 0;
-        virtual int adoptFd(int fd) = 0;
-        virtual int adoptName(const char *name) = 0;
+        virtual libxtun_error open() = 0;
+        virtual libxtun_error adoptFd(int fd) = 0;
+        virtual libxtun_error adoptName(const char *name) = 0;
 
-        int read(std::span<std::byte> buf) noexcept override = 0;
-        int write(std::span<const std::byte> buf) noexcept override = 0;
-        int mtu() const noexcept override = 0;
+        virtual int read(std::span<std::byte> buf) noexcept = 0;
+        virtual int write(std::span<const std::byte> buf) noexcept = 0;
+        virtual int mtu() const noexcept = 0;
 
         virtual const std::string &name() const noexcept = 0;
         virtual int ifIndex() const noexcept = 0;
@@ -46,7 +47,6 @@ namespace libxtun
     };
 
     std::unique_ptr<TunDevice> createTunDevice();
-
 }
 
 #endif // LIBXTUN_TUN_DEVICE_H

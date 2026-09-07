@@ -5,23 +5,14 @@
 
 #include "health/probe.h"
 #include "health/state.h"
+#include "health/subsystem.h"
 #include "tunnel_io.h"
 
-#include <atomic>
-#include <memory>
 #include <string>
 #include <vector>
 
 namespace libxtun
 {
-
-    class Tunnel;
-
-    namespace health
-    {
-        struct HealthConfig;
-    }
-
     enum class ProxyEvent {
         Up,
         Down,
@@ -49,53 +40,53 @@ namespace libxtun
     class Proxy : private health::HealthListener
     {
     public:
-        Proxy();
+        Proxy(ClientCallbacks callbacks);
         ~Proxy() override = 0;
 
         virtual const char *name() = 0;
 
-        virtual int start(TunnelIo &io) = 0;
+        virtual void attachIo(TunnelIo *io);
         virtual void event(ProxyEvent ev) = 0;
-        virtual void stop() = 0;
-
         virtual ProxyProfile profile() const = 0;
 
-        void bind(const ClientCallbacks &callbacks)
-        {
-            m_callbacks = callbacks;
-        }
-        void setInterface(const std::string &ifname)
-        {
-            m_ifname = ifname;
-        }
-
     protected:
-        void cancelIo();
-        void emitLog(const char *message) noexcept;
-        void emitStatus(int status) noexcept;
-        void registerBypassSocket(int fd, int family);
-        void bypassSocket(int fd, int family);
+        static int cTunRead(void *b, int len, void *priv)
+        {
+            return reinterpret_cast<Proxy *>(priv)->tunRead(b, len);
+        }
+        int tunRead(void *b, int len);
 
-        std::string m_ifname;
+        static int cTunWrite(void *b, int len, void *priv)
+        {
+            return reinterpret_cast<Proxy *>(priv)->tunWrite(b, len);
+        }
+        int tunWrite(void *b, int len);
+
+        static int cTunMtu(void *priv)
+        {
+            return reinterpret_cast<Proxy *>(priv)->tunMtu();
+        }
+        int tunMtu();
+
+        static void cSockCb(int fd, void *priv)
+        {
+            return reinterpret_cast<Proxy *>(priv)->sockCb(fd);
+        }
+        void sockCb(int fd);
+
+        static void cEmitLog(char *str, void *priv)
+        {
+            return reinterpret_cast<Proxy *>(priv)->emitLog(str);
+        }
+        void emitLog(char *str);
 
     private:
-        friend class Tunnel;
-
         void onConnectionState(health::ConnectionState state) noexcept override;
 
-        [[nodiscard]] TunnelIo &attach(Tunnel &tunnel, health::HealthConfig config, TunnelIo &device);
-        void detach() noexcept;
-
-        health::HealthSubsystem *health() noexcept
-        {
-            return m_health.get();
-        }
-
+        TunnelIo *m_io = nullptr;
         ClientCallbacks m_callbacks;
-        std::atomic<Tunnel *> m_tunnel { nullptr };
         std::unique_ptr<health::HealthSubsystem> m_health;
     };
-
 }
 
 #endif // PROXY_H

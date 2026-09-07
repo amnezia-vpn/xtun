@@ -14,33 +14,26 @@ namespace libxtun
 {
     namespace proto
     {
-
         class Awg final : public Proxy, private NonCopyable
         {
         public:
-            static ResultXtun<std::unique_ptr<Awg>> create(const std::string &str);
-            Awg(awg::Config conf);
+            static ResultXtun<std::unique_ptr<Awg>> create(const std::string &str, ClientCallbacks callbacks);
             ~Awg();
+
+            void event(ProxyEvent ev) override;
+            ProxyProfile profile() const override;
 
             const char *name() override
             {
                 return "awg";
             }
 
-            int start(TunnelIo &io) override;
-            void event(ProxyEvent ev) override;
-            void stop() override;
-            ProxyProfile profile() const override;
-
         private:
-            static void sockCb(int fd, void *priv);
-            static void forwardLog(char *str, void *priv);
+            Awg(ClientCallbacks callbacks, awg::Config conf);
 
             awg::Config m_conf;
-            TunnelIo *m_io = nullptr;
-            void *m_ctx = nullptr;
+            void *m_handle = nullptr;
         };
-
     }
 }
 

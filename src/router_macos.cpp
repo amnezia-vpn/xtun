@@ -1,4 +1,5 @@
 #include "router_macos.h"
+#include "xtun.h"
 
 #include <cerrno>
 #include <cstddef>
@@ -74,58 +75,57 @@ namespace
 namespace libxtun
 {
 
-    int MacosRouter::setMtu(int mtu)
+    libxtun_error MacosRouter::setMtu(int mtu)
     {
         int fd = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
         if (fd < 0) {
-            return -errno;
+            return LIBXTUN_ERR_SYSTEM;
         }
         struct ifreq ifr;
         std::memset(&ifr, 0, sizeof(ifr));
         std::strncpy(ifr.ifr_name, m_ifname.c_str(), IFNAMSIZ - 1);
         ifr.ifr_mtu = mtu;
-        int rc = ::ioctl(fd, SIOCSIFMTU, &ifr) < 0 ? -errno : 0;
+        int rc = ::ioctl(fd, SIOCSIFMTU, &ifr);
         ::close(fd);
-        return rc;
+        return rc < 0 ? LIBXTUN_ERR_SYSTEM : LIBXTUN_OK;
     }
 
-    int MacosRouter::setUp()
+    libxtun_error MacosRouter::setUp()
     {
         int fd = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
         if (fd < 0) {
-            return -errno;
+            return LIBXTUN_ERR_SYSTEM;
         }
         struct ifreq ifr;
         std::memset(&ifr, 0, sizeof(ifr));
         std::strncpy(ifr.ifr_name, m_ifname.c_str(), IFNAMSIZ - 1);
         if (::ioctl(fd, SIOCGIFFLAGS, &ifr) < 0) {
-            int e = -errno;
             ::close(fd);
-            return e;
+            return LIBXTUN_ERR_SYSTEM;
         }
         ifr.ifr_flags |= IFF_UP | IFF_RUNNING;
-        int rc = ::ioctl(fd, SIOCSIFFLAGS, &ifr) < 0 ? -errno : 0;
+        int rc = ::ioctl(fd, SIOCSIFFLAGS, &ifr);
         ::close(fd);
-        return rc;
+        return rc < 0 ? LIBXTUN_ERR_SYSTEM : LIBXTUN_OK;
     }
 
-    int MacosRouter::addAddress(const std::string &cidr)
+    libxtun_error MacosRouter::addAddress(const std::string &cidr)
     {
         std::string ip;
         int prefix;
         if (!splitCidr(cidr, ip, prefix)) {
-            return -EINVAL;
+            return LIBXTUN_ERR_INVALID_ARGS;
         }
         int family;
         unsigned char raw[16];
         if (parseIp(ip, family, raw) < 0) {
-            return -EINVAL;
+            return LIBXTUN_ERR_INVALID_ARGS;
         }
 
         if (family == AF_INET) {
             int fd = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
             if (fd < 0) {
-                return -errno;
+                return LIBXTUN_ERR_SYSTEM;
             }
             struct ifaliasreq ifra;
             std::memset(&ifra, 0, sizeof(ifra));
@@ -138,14 +138,14 @@ namespace libxtun
             std::memcpy(&addr->sin_addr, raw, 4);
             std::memcpy(&dst->sin_addr, raw, 4);
             std::memset(&mask->sin_addr, 0xff, sizeof(mask->sin_addr));
-            int rc = ::ioctl(fd, SIOCAIFADDR, &ifra) < 0 ? -errno : 0;
+            int rc = ::ioctl(fd, SIOCAIFADDR, &ifra);
             ::close(fd);
-            return rc;
+            return rc < 0 ? LIBXTUN_ERR_SYSTEM : LIBXTUN_OK;
         }
 
         int fd = ::socket(AF_INET6, SOCK_DGRAM, IPPROTO_IP);
         if (fd < 0) {
-            return -errno;
+            return LIBXTUN_ERR_SYSTEM;
         }
         struct in6_aliasreq ifra;
         std::memset(&ifra, 0, sizeof(ifra));
@@ -158,13 +158,13 @@ namespace libxtun
         std::memset(&ifra.ifra_prefixmask.sin6_addr, 0xff, 16);
         ifra.ifra_lifetime.ia6t_vltime = 0xffffffff;
         ifra.ifra_lifetime.ia6t_pltime = 0xffffffff;
-        int rc = ::ioctl(fd, SIOCAIFADDR_IN6, &ifra) < 0 ? -errno : 0;
+        int rc = ::ioctl(fd, SIOCAIFADDR_IN6, &ifra);
         ::close(fd);
-        return rc;
+        return rc < 0 ? LIBXTUN_ERR_SYSTEM : LIBXTUN_OK;
     }
 
-    int MacosRouter::rtSend(int family, const unsigned char *dst, int prefix, const void *gw, unsigned gwLen, int flags,
-                            unsigned index, bool add)
+    libxtun_error MacosRouter::rtSend(int family, const unsigned char *dst, int prefix, const void *gw, unsigned gwLen,
+                                      int flags, unsigned index, bool add)
     {
         char buf[512];
         std::memset(buf, 0, sizeof(buf));
@@ -220,7 +220,7 @@ namespace libxtun
 
         int fd = ::socket(PF_ROUTE, SOCK_RAW, 0);
         if (fd < 0) {
-            return -errno;
+            return LIBXTUN_ERR_SYSTEM;
         }
         ::shutdown(fd, SHUT_RD);
         ssize_t n = ::write(fd, rtm, len);
@@ -228,18 +228,18 @@ namespace libxtun
         ::close(fd);
 
         if (n >= 0) {
-            return 0;
+            return LIBXTUN_OK;
         }
         if (add && e == EEXIST) {
-            return 0;
+            return LIBXTUN_OK;
         }
         if (!add && e == ESRCH) {
-            return 0;
+            return LIBXTUN_OK;
         }
-        return -e;
+        return LIBXTUN_ERR_SYSTEM;
     }
 
-    int MacosRouter::updateRoute(int family, const unsigned char *dst, int prefix, bool add)
+    libxtun_error MacosRouter::updateRoute(int family, const unsigned char *dst, int prefix, bool add)
     {
         struct sockaddr_dl sdl;
         std::memset(&sdl, 0, sizeof(sdl));
@@ -252,8 +252,8 @@ namespace libxtun
         return rtSend(family, dst, prefix, &sdl, sdl.sdl_len, RTF_STATIC | RTF_UP, static_cast<unsigned>(m_ifindex), add);
     }
 
-    int MacosRouter::updateScopedRoute(int family, const unsigned char *dst, int prefix, const unsigned char *gw,
-                                       unsigned scope, bool add)
+    libxtun_error MacosRouter::updateScopedRoute(int family, const unsigned char *dst, int prefix,
+                                                 const unsigned char *gw, unsigned scope, bool add)
     {
         int flags = RTF_STATIC | RTF_UP | RTF_GATEWAY | RTF_IFSCOPE;
         if (family == AF_INET) {
@@ -272,22 +272,22 @@ namespace libxtun
         return rtSend(family, dst, prefix, &sin6, sin6.sin6_len, flags, scope, add);
     }
 
-    int MacosRouter::updateRouteFor(const std::string &cidr, bool add)
+    libxtun_error MacosRouter::updateRouteFor(const std::string &cidr, bool add)
     {
         std::string ip;
         int prefix;
         if (!splitCidr(cidr, ip, prefix)) {
-            return -EINVAL;
+            return LIBXTUN_ERR_INVALID_ARGS;
         }
         int family;
         unsigned char raw[16];
         if (parseIp(ip, family, raw) < 0) {
-            return -EINVAL;
+            return LIBXTUN_ERR_INVALID_ARGS;
         }
         return updateRoute(family, raw, prefix, add);
     }
 
-    int MacosRouter::updateFullTunnelRoutes(int family, bool add)
+    libxtun_error MacosRouter::updateFullTunnelRoutes(int family, bool add)
     {
         unsigned char lo[16];
         unsigned char hi[16];
@@ -295,13 +295,11 @@ namespace libxtun
         std::memset(hi, 0, sizeof(hi));
         hi[0] = 0x80;
 
-        int rc = updateRoute(family, lo, 1, add);
-        if (add && rc < 0) {
-            return rc;
+        if (libxtun_error err = updateRoute(family, lo, 1, add); add && err != LIBXTUN_OK) {
+            return err;
         }
-        rc = updateRoute(family, hi, 1, add);
-        if (add && rc < 0) {
-            return rc;
+        if (libxtun_error err = updateRoute(family, hi, 1, add); add && err != LIBXTUN_OK) {
+            return err;
         }
 
         ScopedBypass &sb = family == AF_INET ? m_bypassV4 : m_bypassV6;
@@ -309,13 +307,13 @@ namespace libxtun
             int idx = 0;
             unsigned char gw[16] = { 0 };
             if (getGatewayAndIface(family, idx, gw)) {
-                rc = updateScopedRoute(family, lo, 1, gw, static_cast<unsigned>(idx), true);
-                if (rc < 0) {
-                    return rc;
+                if (libxtun_error err = updateScopedRoute(family, lo, 1, gw, static_cast<unsigned>(idx), true);
+                    err != LIBXTUN_OK) {
+                    return err;
                 }
-                rc = updateScopedRoute(family, hi, 1, gw, static_cast<unsigned>(idx), true);
-                if (rc < 0) {
-                    return rc;
+                if (libxtun_error err = updateScopedRoute(family, hi, 1, gw, static_cast<unsigned>(idx), true);
+                    err != LIBXTUN_OK) {
+                    return err;
                 }
                 sb.active = true;
                 sb.scope = static_cast<unsigned>(idx);
@@ -326,71 +324,65 @@ namespace libxtun
             updateScopedRoute(family, hi, 1, sb.gw, sb.scope, false);
             sb.active = false;
         }
-        return 0;
+        return LIBXTUN_OK;
     }
 
-    int MacosRouter::configureInterface(const std::string &ifname, int ifindex,
-                                        const std::vector<std::string> &addresses, int mtu)
+    libxtun_error MacosRouter::configureInterface(const std::string &ifname, int ifindex,
+                                                  const std::vector<std::string> &addresses, int mtu)
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
         m_ifname = ifname;
         m_ifindex = ifindex;
 
         if (mtu > 0) {
-            int rc = setMtu(mtu);
-            if (rc < 0) {
-                return rc;
+            if (libxtun_error err = setMtu(mtu); err != LIBXTUN_OK) {
+                return err;
             }
         }
 
-        int rc = setUp();
-        if (rc < 0) {
-            return rc;
+        if (libxtun_error err = setUp(); err != LIBXTUN_OK) {
+            return err;
         }
 
         for (const auto &addr : addresses) {
-            rc = addAddress(addr);
-            if (rc < 0) {
+            if (libxtun_error err = addAddress(addr); err != LIBXTUN_OK) {
                 revert();
-                return rc;
+                return err;
             }
             m_addresses.push_back(addr);
         }
-        return 0;
+        return LIBXTUN_OK;
     }
 
-    int MacosRouter::setProxyRoutes(const std::vector<std::string> &routes)
+    libxtun_error MacosRouter::setProxyRoutes(const std::vector<std::string> &routes)
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
         for (const auto &route : routes) {
             if (route == "0.0.0.0/0") {
                 if (!m_fullV4) {
-                    int rc = updateFullTunnelRoutes(AF_INET, true);
-                    if (rc < 0) {
+                    if (libxtun_error err = updateFullTunnelRoutes(AF_INET, true); err != LIBXTUN_OK) {
                         clearProxyRoutes();
-                        return rc;
+                        return err;
                     }
                     m_fullV4 = true;
                 }
             } else if (route == "::/0") {
                 if (!m_fullV6) {
-                    int rc = updateFullTunnelRoutes(AF_INET6, true);
-                    if (rc < 0) {
+                    if (libxtun_error err = updateFullTunnelRoutes(AF_INET6, true); err != LIBXTUN_OK) {
                         clearProxyRoutes();
-                        return rc;
+                        return err;
                     }
                     m_fullV6 = true;
                 }
             } else {
-                int rc = updateRouteFor(route, true);
-                if (rc < 0) {
+                if (libxtun_error err = updateRouteFor(route, true); err != LIBXTUN_OK) {
                     clearProxyRoutes();
-                    return rc;
+                    return err;
                 }
                 m_routes.push_back(route);
             }
         }
-        return 0;
+        return LIBXTUN_OK;
     }
 
     void MacosRouter::clearProxyRoutes()
@@ -495,30 +487,15 @@ namespace libxtun
         return static_cast<unsigned>(idx);
     }
 
-    int MacosRouter::bypassSocket(int fd, int family)
+    void MacosRouter::protectSocket(int fd)
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
         unsigned idx = physicalIfindex();
         if (idx == 0) {
-            return -1;
+            return;
         }
-        m_bypassIfindex = idx;
 
-        if (family == AF_INET6) {
-            return ::setsockopt(fd, IPPROTO_IPV6, IPV6_BOUND_IF, &idx, sizeof(idx)) == 0 ? 0 : -1;
-        }
-        return ::setsockopt(fd, IPPROTO_IP, IP_BOUND_IF, &idx, sizeof(idx)) == 0 ? 0 : -1;
+        ::setsockopt(fd, IPPROTO_IPV6, IPV6_BOUND_IF, &idx, sizeof(idx));
+        ::setsockopt(fd, IPPROTO_IP, IP_BOUND_IF, &idx, sizeof(idx));
     }
-
-    bool MacosRouter::bypassChanged()
-    {
-        std::lock_guard<std::recursive_mutex> lock(m_mtx);
-        const unsigned idx = physicalIfindex();
-        if (idx == 0 || idx == m_bypassIfindex) {
-            return false;
-        }
-        m_bypassIfindex = idx;
-        return true;
-    }
-
 }
