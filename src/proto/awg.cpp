@@ -1,10 +1,11 @@
 #include "awg.h"
+#include "awg_conf.h"
+#include "proxy.h"
+#include "xtun.h"
 
 #include <libgoxtun.h>
 
-#include <cstdlib>
 #include <memory>
-#include <variant>
 
 #if defined(_WIN32)
     #include <winsock2.h>
@@ -16,132 +17,64 @@
 
 namespace
 {
-
     enum TunEvent {
         TunEventUp = 1,
         TunEventDown = 2,
         TunEventMtuUpdate = 4,
     };
-
-    int tunRead(void *b, int len, void *priv)
-    {
-        if (b == nullptr || len <= 0) {
-            return libxtun::IO_FATAL;
-        }
-        auto *io = static_cast<libxtun::TunnelIo *>(priv);
-        return io->read({ static_cast<std::byte *>(b), static_cast<std::size_t>(len) });
-    }
-
-    int tunWrite(void *b, int len, void *priv)
-    {
-        if (b == nullptr || len <= 0) {
-            return libxtun::IO_FATAL;
-        }
-        auto *io = static_cast<libxtun::TunnelIo *>(priv);
-        return io->write({ static_cast<const std::byte *>(b), static_cast<std::size_t>(len) });
-    }
-
-    int tunMtu(void *priv)
-    {
-        auto *io = static_cast<libxtun::TunnelIo *>(priv);
-        return io->mtu();
-    }
-
 }
 
 namespace libxtun
 {
     namespace proto
     {
-
-        Awg::Awg(awg::Config conf) : m_conf(std::move(conf))
+        Awg::Awg(ClientCallbacks callbacks, awg::Config conf) : Proxy(callbacks), m_conf(std::move(conf))
         {
         }
 
         Awg::~Awg()
         {
-            stop();
+            goxtun_awg_free(m_handle);
+            m_handle = nullptr;
         }
 
-        ResultXtun<std::unique_ptr<Awg>> Awg::create(const std::string &str)
+        ResultXtun<std::unique_ptr<Awg>> Awg::create(const std::string &str, ClientCallbacks callbacks)
         {
             auto res = awg::Config::fromConf(str);
             if (!res)
                 return fail(res.error());
-            return std::make_unique<Awg>(std::move(res).value());
-        }
 
-        int Awg::start(TunnelIo &io)
-        {
-            if (m_ctx != nullptr) {
-                return LIBXTUN_ERR_INVALID_ARGS;
+            auto awg = std::unique_ptr<Awg>(new Awg(callbacks, std::move(res).value()));
+            Proxy *proxy = awg.get();
+
+            void *handle = goxtun_awg_new(Proxy::cTunRead, Proxy::cTunWrite, Proxy::cTunMtu, proxy, Proxy::cEmitLog,
+                                          Proxy::cEmitLog, proxy, Proxy::cSockCb, proxy);
+            if (handle == nullptr) {
+                return fail(LIBXTUN_ERR_SYSTEM);
             }
+            awg->m_handle = handle;
 
-            m_io = &io;
-
-            m_ctx = goxtun_awg_new(tunRead, tunWrite, tunMtu, m_io, &Awg::forwardLog, &Awg::forwardLog, this,
-                                   &Awg::sockCb, this);
-            if (m_ctx == nullptr) {
-                return LIBXTUN_ERR_SYSTEM;
-            }
-
-            auto uapi = m_conf.toUapi();
-            if (char *err = goxtun_awg_setconf(m_ctx, &uapi[0]); err != nullptr) {
-                emitLog(err);
+            auto uapi = awg->m_conf.toUapi();
+            if (char *err = goxtun_awg_setconf(handle, &uapi[0]); err != nullptr) {
+                awg->emitLog(err);
                 goxtun_free(err);
-                return LIBXTUN_ERR_INVALID_ARGS;
+                return fail(LIBXTUN_ERR_INVALID_ARGS);
             }
 
-            return LIBXTUN_OK;
+            return awg;
         }
 
         void Awg::event(ProxyEvent ev)
         {
-            if (m_ctx == nullptr) {
+            if (m_handle == nullptr) {
                 return;
             }
 
             switch (ev) {
-            case ProxyEvent::Up: goxtun_awg_event(m_ctx, TunEventUp); break;
-            case ProxyEvent::Down: goxtun_awg_event(m_ctx, TunEventDown); break;
-            case ProxyEvent::MtuUpdate: goxtun_awg_event(m_ctx, TunEventMtuUpdate); break;
+            case ProxyEvent::Up: goxtun_awg_event(m_handle, TunEventUp); break;
+            case ProxyEvent::Down: goxtun_awg_event(m_handle, TunEventDown); break;
+            case ProxyEvent::MtuUpdate: goxtun_awg_event(m_handle, TunEventMtuUpdate); break;
             }
-        }
-
-        void Awg::stop()
-        {
-            if (m_ctx == nullptr) {
-                return;
-            }
-
-            cancelIo();
-            goxtun_awg_free(m_ctx);
-            m_ctx = nullptr;
-        }
-
-        void Awg::forwardLog(char *str, void *priv)
-        {
-            static_cast<Awg *>(priv)->emitLog(str);
-        }
-
-        void Awg::sockCb(int fd, void *priv)
-        {
-            auto *self = static_cast<Awg *>(priv);
-
-            sockaddr_storage ss {};
-#if defined(_WIN32)
-            int len = sizeof(ss);
-            if (::getsockname(static_cast<SOCKET>(fd), reinterpret_cast<sockaddr *>(&ss), &len) != 0) {
-                return;
-            }
-#else
-            socklen_t len = sizeof(ss);
-            if (::getsockname(fd, reinterpret_cast<sockaddr *>(&ss), &len) != 0) {
-                return;
-            }
-#endif
-
-            self->registerBypassSocket(fd, ss.ss_family);
         }
 
         ProxyProfile Awg::profile() const
@@ -162,6 +95,5 @@ namespace libxtun
             }
             return out;
         }
-
     }
 }

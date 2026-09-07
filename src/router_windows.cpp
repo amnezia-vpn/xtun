@@ -1,4 +1,5 @@
 #include "router_windows.h"
+#include "xtun.h"
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -12,7 +13,6 @@
 
 namespace
 {
-
     bool splitCidr(const std::string &cidr, std::string &ip, int &prefix)
     {
         auto slash = cidr.find('/');
@@ -50,23 +50,21 @@ namespace
             std::memcpy(&out.Ipv6.sin6_addr, raw, 16);
         }
     }
-
 } // namespace
 
 namespace libxtun
 {
-
-    int WindowsRouter::addAddress(const std::string &cidr)
+    libxtun_error WindowsRouter::addAddress(const std::string &cidr)
     {
         std::string ip;
         int prefix;
         if (!splitCidr(cidr, ip, prefix)) {
-            return -1;
+            return LIBXTUN_ERR_INVALID_ARGS;
         }
         int family;
         unsigned char raw[16];
         if (parseIp(ip, family, raw) < 0) {
-            return -1;
+            return LIBXTUN_ERR_INVALID_ARGS;
         }
 
         MIB_UNICASTIPADDRESS_ROW row;
@@ -79,22 +77,22 @@ namespace libxtun
 
         DWORD rc = CreateUnicastIpAddressEntry(&row);
         if (rc == NO_ERROR || rc == ERROR_OBJECT_ALREADY_EXISTS) {
-            return 0;
+            return LIBXTUN_OK;
         }
-        return -static_cast<int>(rc);
+        return LIBXTUN_ERR_SYSTEM;
     }
 
-    int WindowsRouter::removeAddress(const std::string &cidr)
+    libxtun_error WindowsRouter::removeAddress(const std::string &cidr)
     {
         std::string ip;
         int prefix;
         if (!splitCidr(cidr, ip, prefix)) {
-            return -1;
+            return LIBXTUN_ERR_INVALID_ARGS;
         }
         int family;
         unsigned char raw[16];
         if (parseIp(ip, family, raw) < 0) {
-            return -1;
+            return LIBXTUN_ERR_INVALID_ARGS;
         }
 
         MIB_UNICASTIPADDRESS_ROW row;
@@ -104,12 +102,12 @@ namespace libxtun
 
         DWORD rc = DeleteUnicastIpAddressEntry(&row);
         if (rc == NO_ERROR || rc == ERROR_NOT_FOUND) {
-            return 0;
+            return LIBXTUN_OK;
         }
-        return -static_cast<int>(rc);
+        return LIBXTUN_ERR_SYSTEM;
     }
 
-    int WindowsRouter::setMtuAndMetric(int family, int mtu)
+    libxtun_error WindowsRouter::setMtuAndMetric(int family, int mtu)
     {
         MIB_IPINTERFACE_ROW row;
         std::memset(&row, 0, sizeof(row));
@@ -117,7 +115,7 @@ namespace libxtun
         row.InterfaceIndex = static_cast<NET_IFINDEX>(m_ifindex);
         DWORD rc = GetIpInterfaceEntry(&row);
         if (rc != NO_ERROR) {
-            return -static_cast<int>(rc);
+            return LIBXTUN_ERR_SYSTEM;
         }
 
         if (mtu > 0) {
@@ -134,22 +132,22 @@ namespace libxtun
 
         rc = SetIpInterfaceEntry(&row);
         if (rc != NO_ERROR) {
-            return -static_cast<int>(rc);
+            return LIBXTUN_ERR_SYSTEM;
         }
-        return 0;
+        return LIBXTUN_OK;
     }
 
-    int WindowsRouter::updateRouteFor(const std::string &cidr, bool add)
+    libxtun_error WindowsRouter::updateRouteFor(const std::string &cidr, bool add)
     {
         std::string ip;
         int prefix;
         if (!splitCidr(cidr, ip, prefix)) {
-            return -1;
+            return LIBXTUN_ERR_INVALID_ARGS;
         }
         int family;
         unsigned char raw[16];
         if (parseIp(ip, family, raw) < 0) {
-            return -1;
+            return LIBXTUN_ERR_INVALID_ARGS;
         }
 
         MIB_IPFORWARD_ROW2 row;
@@ -166,26 +164,26 @@ namespace libxtun
         if (add) {
             rc = CreateIpForwardEntry2(&row);
             if (rc == NO_ERROR || rc == ERROR_OBJECT_ALREADY_EXISTS) {
-                return 0;
+                return LIBXTUN_OK;
             }
         } else {
             rc = DeleteIpForwardEntry2(&row);
             if (rc == NO_ERROR || rc == ERROR_NOT_FOUND) {
-                return 0;
+                return LIBXTUN_OK;
             }
         }
-        return -static_cast<int>(rc);
+        return LIBXTUN_ERR_SYSTEM;
     }
 
-    int WindowsRouter::configureInterface(const std::string &ifname, int ifindex,
-                                          const std::vector<std::string> &addresses, int mtu)
+    libxtun_error WindowsRouter::configureInterface(const std::string &ifname, int ifindex,
+                                                    const std::vector<std::string> &addresses, int mtu)
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
         (void)ifname; // Windows keys everything on the interface index.
         m_ifindex = static_cast<unsigned long>(ifindex);
 
         for (const auto &addr : addresses) {
-            int rc = addAddress(addr);
+            auto rc = addAddress(addr);
             if (rc < 0) {
                 revert();
                 return rc;
@@ -194,16 +192,16 @@ namespace libxtun
         }
 
         for (int family : { AF_INET, AF_INET6 }) {
-            int rc = setMtuAndMetric(family, mtu);
+            auto rc = setMtuAndMetric(family, mtu);
             if (rc < 0) {
                 revert();
                 return rc;
             }
         }
-        return 0;
+        return LIBXTUN_OK;
     }
 
-    int WindowsRouter::setProxyRoutes(const std::vector<std::string> &routes)
+    libxtun_error WindowsRouter::setProxyRoutes(const std::vector<std::string> &routes)
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
         // A full tunnel is just 0.0.0.0/0 (and ::/0) via the adapter; the low
@@ -211,14 +209,14 @@ namespace libxtun
         // split routes are handled identically, and the bypass keeps the proxy's
         // own socket off the tun.
         for (const auto &route : routes) {
-            int rc = updateRouteFor(route, true);
+            auto rc = updateRouteFor(route, true);
             if (rc < 0) {
                 clearProxyRoutes();
                 return rc;
             }
             m_routes.push_back(route);
         }
-        return 0;
+        return LIBXTUN_OK;
     }
 
     void WindowsRouter::clearProxyRoutes()
@@ -275,38 +273,20 @@ namespace libxtun
         return best;
     }
 
-    int WindowsRouter::bypassSocket(int fd, int family)
+    void WindowsRouter::protectSocket(int fd)
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
         const unsigned idx = physicalDefaultIfindex();
         if (idx == 0) {
-            return -1;
+            return;
         }
-        m_bypassIfindex = idx;
 
         SOCKET s = static_cast<SOCKET>(fd);
-        if (family == AF_INET6) {
-            DWORD scope = idx;
-            return ::setsockopt(s, IPPROTO_IPV6, IPV6_UNICAST_IF, reinterpret_cast<const char *>(&scope), sizeof(scope))
-                            == 0
-                    ? 0
-                    : -1;
-        }
-        DWORD scope = ::htonl(idx);
-        return ::setsockopt(s, IPPROTO_IP, IP_UNICAST_IF, reinterpret_cast<const char *>(&scope), sizeof(scope)) == 0
-                ? 0
-                : -1;
-    }
+        
+        DWORD val = idx;
+        ::setsockopt(s, IPPROTO_IPV6, IPV6_UNICAST_IF, reinterpret_cast<const char *>(&val), sizeof(val));
 
-    bool WindowsRouter::bypassChanged()
-    {
-        std::lock_guard<std::recursive_mutex> lock(m_mtx);
-        const unsigned idx = physicalDefaultIfindex();
-        if (idx == 0 || idx == m_bypassIfindex) {
-            return false;
-        }
-        m_bypassIfindex = idx;
-        return true;
+        val = ::htonl(idx); // IP_UNICAST_IF expects index in network byte order
+        ::setsockopt(s, IPPROTO_IP, IP_UNICAST_IF, reinterpret_cast<const char *>(&val), sizeof(val));
     }
-
 }

@@ -2,7 +2,6 @@
 #include "xtun.h"
 
 #include <cstring>
-#include <memory>
 #include <thread>
 
 namespace libxtun
@@ -27,14 +26,13 @@ namespace libxtun
         };
     }
 
-    int WindowsTunDevice::open()
+    libxtun_error WindowsTunDevice::open()
     {
         WINTUN_CREATE_ADAPTER_FUNC *createAdapter;
         WINTUN_OPEN_ADAPTER_FUNC *openAdapter;
         WINTUN_START_SESSION_FUNC *startSession;
         WINTUN_GET_READ_WAIT_EVENT_FUNC *getReadWaitEvent;
-        int rc = loadWintun(createAdapter, openAdapter, startSession, getReadWaitEvent);
-        if (rc != LIBXTUN_OK) {
+        if (auto rc = loadWintun(createAdapter, openAdapter, startSession, getReadWaitEvent); rc != LIBXTUN_OK) {
             return rc;
         }
         (void)openAdapter;
@@ -47,28 +45,26 @@ namespace libxtun
         }
 
         m_name = "xtun";
-        rc = startWintunSession(startSession, getReadWaitEvent);
-        if (rc != LIBXTUN_OK) {
+        if (auto rc = startWintunSession(startSession, getReadWaitEvent); rc != LIBXTUN_OK) {
             return rc;
         }
 
         return finishOpen();
     }
 
-    int WindowsTunDevice::adoptFd(int fd)
+    libxtun_error WindowsTunDevice::adoptFd(int fd)
     {
         (void)fd;
-        return LIBXTUN_ERR_DRIVER_UNAVAILABLE;
+        return LIBXTUN_ERR_UNSUPPORTED;
     }
 
-    int WindowsTunDevice::adoptName(const char *name)
+    libxtun_error WindowsTunDevice::adoptName(const char *name)
     {
         WINTUN_CREATE_ADAPTER_FUNC *createAdapter;
         WINTUN_OPEN_ADAPTER_FUNC *openAdapter;
         WINTUN_START_SESSION_FUNC *startSession;
         WINTUN_GET_READ_WAIT_EVENT_FUNC *getReadWaitEvent;
-        int rc = loadWintun(createAdapter, openAdapter, startSession, getReadWaitEvent);
-        if (rc != LIBXTUN_OK) {
+        if (auto rc = loadWintun(createAdapter, openAdapter, startSession, getReadWaitEvent); rc != LIBXTUN_OK) {
             return rc;
         }
         (void)createAdapter;
@@ -88,8 +84,7 @@ namespace libxtun
         }
 
         m_name = name;
-        rc = startWintunSession(startSession, getReadWaitEvent);
-        if (rc != LIBXTUN_OK) {
+        if (auto rc = startWintunSession(startSession, getReadWaitEvent); rc != LIBXTUN_OK) {
             return rc;
         }
 
@@ -219,9 +214,10 @@ namespace libxtun
         }
     }
 
-    int WindowsTunDevice::loadWintun(WINTUN_CREATE_ADAPTER_FUNC *&createAdapter, WINTUN_OPEN_ADAPTER_FUNC *&openAdapter,
-                                     WINTUN_START_SESSION_FUNC *&startSession,
-                                     WINTUN_GET_READ_WAIT_EVENT_FUNC *&getReadWaitEvent)
+    libxtun_error WindowsTunDevice::loadWintun(WINTUN_CREATE_ADAPTER_FUNC *&createAdapter,
+                                               WINTUN_OPEN_ADAPTER_FUNC *&openAdapter,
+                                               WINTUN_START_SESSION_FUNC *&startSession,
+                                               WINTUN_GET_READ_WAIT_EVENT_FUNC *&getReadWaitEvent)
     {
         m_wintun = LoadLibraryExW(L"wintun.dll", nullptr,
                                   LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -258,8 +254,8 @@ namespace libxtun
         return LIBXTUN_OK;
     }
 
-    int WindowsTunDevice::startWintunSession(WINTUN_START_SESSION_FUNC *startSession,
-                                             WINTUN_GET_READ_WAIT_EVENT_FUNC *getReadWaitEvent)
+    libxtun_error WindowsTunDevice::startWintunSession(WINTUN_START_SESSION_FUNC *startSession,
+                                                       WINTUN_GET_READ_WAIT_EVENT_FUNC *getReadWaitEvent)
     {
         m_session = startSession(m_adapter, 0x800000); // 8 MiB ring
         if (m_session == nullptr) {
@@ -274,7 +270,7 @@ namespace libxtun
         return LIBXTUN_OK;
     }
 
-    int WindowsTunDevice::finishOpen()
+    libxtun_error WindowsTunDevice::finishOpen()
     {
         NET_LUID luid;
         m_getAdapterLuid(m_adapter, &luid);
@@ -295,5 +291,4 @@ namespace libxtun
             device->m_listener->onRouteChanged();
         }
     }
-
 }

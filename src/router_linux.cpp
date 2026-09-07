@@ -1,6 +1,7 @@
 #include "router_linux.h"
 
 #include "fwmark.h"
+#include "xtun.h"
 
 #include <cerrno>
 #include <cstdint>
@@ -22,7 +23,6 @@
 
 namespace
 {
-
     bool splitCidr(const std::string &cidr, std::string &ip, int &prefix)
     {
         auto slash = cidr.find('/');
@@ -115,59 +115,56 @@ namespace
         }
         return 0;
     }
-
 }
 
 namespace libxtun
 {
-
-    int LinuxRouter::setMtu(int mtu)
+    libxtun_error LinuxRouter::setMtu(int mtu)
     {
         int fd = ::socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
         if (fd < 0) {
-            return -errno;
+            return LIBXTUN_ERR_SYSTEM;
         }
         struct ifreq ifr;
         std::memset(&ifr, 0, sizeof(ifr));
         std::strncpy(ifr.ifr_name, m_ifname.c_str(), IFNAMSIZ - 1);
         ifr.ifr_mtu = mtu;
-        int rc = ::ioctl(fd, SIOCSIFMTU, &ifr) < 0 ? -errno : 0;
+        int rc = ::ioctl(fd, SIOCSIFMTU, &ifr);
         ::close(fd);
-        return rc;
+        return rc < 0 ? LIBXTUN_ERR_SYSTEM : LIBXTUN_OK;
     }
 
-    int LinuxRouter::setUp()
+    libxtun_error LinuxRouter::setUp()
     {
         int fd = ::socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
         if (fd < 0) {
-            return -errno;
+            return LIBXTUN_ERR_SYSTEM;
         }
         struct ifreq ifr;
         std::memset(&ifr, 0, sizeof(ifr));
         std::strncpy(ifr.ifr_name, m_ifname.c_str(), IFNAMSIZ - 1);
         if (::ioctl(fd, SIOCGIFFLAGS, &ifr) < 0) {
-            int e = -errno;
             ::close(fd);
-            return e;
+            return LIBXTUN_ERR_SYSTEM;
         }
         ifr.ifr_flags |= IFF_UP | IFF_RUNNING;
-        int rc = ::ioctl(fd, SIOCSIFFLAGS, &ifr) < 0 ? -errno : 0;
+        int rc = ::ioctl(fd, SIOCSIFFLAGS, &ifr);
         ::close(fd);
-        return rc;
+        return rc < 0 ? LIBXTUN_ERR_SYSTEM : LIBXTUN_OK;
     }
 
-    int LinuxRouter::updateAddress(const std::string &cidr, bool add)
+    libxtun_error LinuxRouter::updateAddress(const std::string &cidr, bool add)
     {
         std::string ip;
         int prefix;
         if (!splitCidr(cidr, ip, prefix)) {
-            return -EINVAL;
+            return LIBXTUN_ERR_INVALID_ARGS;
         }
         int family;
         unsigned char raw[16];
         int len = parseIp(ip, family, raw);
         if (len < 0) {
-            return -EINVAL;
+            return LIBXTUN_ERR_INVALID_ARGS;
         }
 
         struct
@@ -190,21 +187,25 @@ namespace libxtun
 
         addAttr(&req.nlh, IFA_LOCAL, raw, len);
         addAttr(&req.nlh, IFA_ADDRESS, raw, len);
-        return nlSend(&req.nlh);
+        
+        if (int rc = nlSend(&req.nlh); rc != 0) {
+            return LIBXTUN_ERR_SYSTEM;
+        }
+        return LIBXTUN_OK;
     }
 
-    int LinuxRouter::updateRouteFor(const std::string &cidr, bool add)
+    libxtun_error LinuxRouter::updateRouteFor(const std::string &cidr, bool add)
     {
         std::string ip;
         int prefix;
         if (!splitCidr(cidr, ip, prefix)) {
-            return -EINVAL;
+            return LIBXTUN_ERR_INVALID_ARGS;
         }
         int family;
         unsigned char raw[16];
         int len = parseIp(ip, family, raw);
         if (len < 0) {
-            return -EINVAL;
+            return LIBXTUN_ERR_INVALID_ARGS;
         }
 
         struct
@@ -230,11 +231,15 @@ namespace libxtun
         addAttr(&req.nlh, RTA_DST, raw, len);
         uint32_t oif = static_cast<uint32_t>(m_ifindex);
         addAttr(&req.nlh, RTA_OIF, &oif, sizeof(oif));
-        return nlSend(&req.nlh);
+
+        if (int rc = nlSend(&req.nlh); rc != 0) {
+            return LIBXTUN_ERR_SYSTEM;
+        }
+        return LIBXTUN_OK;
     }
 
-    int LinuxRouter::updateRule(bool add, int family, bool invert, uint32_t fwmark, uint32_t table,
-                                int suppressPrefixLen, uint32_t priority)
+    libxtun_error LinuxRouter::updateRule(bool add, int family, bool invert, uint32_t fwmark, uint32_t table,
+                                          int suppressPrefixLen, uint32_t priority)
     {
         struct
         {
@@ -267,10 +272,14 @@ namespace libxtun
             uint32_t spl = static_cast<uint32_t>(suppressPrefixLen);
             addAttr(&req.nlh, FRA_SUPPRESS_PREFIXLEN, &spl, sizeof(spl));
         }
-        return nlSend(&req.nlh);
+
+        if (int rc = nlSend(&req.nlh); rc != 0) {
+            return LIBXTUN_ERR_SYSTEM;
+        }
+        return LIBXTUN_OK;
     }
 
-    int LinuxRouter::updateFullTunnelRoutes(int family, bool add)
+    libxtun_error LinuxRouter::updateFullTunnelRoutes(int family, bool add)
     {
         struct
         {
@@ -296,35 +305,34 @@ namespace libxtun
         uint32_t oif = static_cast<uint32_t>(m_ifindex);
         addAttr(&req.nlh, RTA_OIF, &oif, sizeof(oif));
 
-        int rc = nlSend(&req.nlh);
-        if (add && rc < 0) {
-            return rc;
+        if (int rc = nlSend(&req.nlh); add && rc != 0) {
+            return LIBXTUN_ERR_SYSTEM;
         }
 
         // Unmarked traffic uses the private table (the tun); the proxy's own marked
         // packets fall through to the main table and reach the physical link.
-        rc = updateRule(add, family, true, PROXY_FWMARK, PROXY_TABLE, -1, 32765);
-        if (add && rc < 0) {
-            return rc;
+        if (auto err = updateRule(add, family, true, PROXY_FWMARK, PROXY_TABLE, -1, 32765); add && err != LIBXTUN_OK) {
+            return err;
         }
+
         // Ignore the main table's default route so more-specific routes (LAN) still win.
-        rc = updateRule(add, family, false, 0, RT_TABLE_MAIN, 0, 32764);
-        if (add && rc < 0) {
-            return rc;
+        if (auto err = updateRule(add, family, false, 0, RT_TABLE_MAIN, 0, 32764); add && err != LIBXTUN_OK) {
+            return err;
         }
-        return 0;
+
+        return LIBXTUN_OK;
     }
 
-    int LinuxRouter::setDns(const std::vector<std::string> &servers)
+    libxtun_error LinuxRouter::setDns(const std::vector<std::string> &servers)
     {
         if (servers.empty()) {
-            return 0;
+            return LIBXTUN_OK;
         }
 
         sd_bus *bus = nullptr;
         int r = sd_bus_open_system(&bus);
         if (r < 0) {
-            return r;
+            return LIBXTUN_ERR_SYSTEM;
         }
 
         sd_bus_message *msg = nullptr;
@@ -378,7 +386,7 @@ namespace libxtun
         sd_bus_error_free(&err);
         sd_bus_message_unref(msg);
         sd_bus_unref(bus);
-        return r < 0 ? r : 0;
+        return r < 0 ? LIBXTUN_ERR_SYSTEM : LIBXTUN_OK;
     }
 
     void LinuxRouter::revertDns()
@@ -399,68 +407,62 @@ namespace libxtun
         m_dnsApplied = false;
     }
 
-    int LinuxRouter::configureInterface(const std::string &ifname, int ifindex,
-                                        const std::vector<std::string> &addresses, int mtu)
+    libxtun_error LinuxRouter::configureInterface(const std::string &ifname, int ifindex,
+                                                  const std::vector<std::string> &addresses, int mtu)
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
         m_ifname = ifname;
         m_ifindex = ifindex;
 
         if (mtu > 0) {
-            int rc = setMtu(mtu);
-            if (rc < 0) {
-                return rc;
+            if (libxtun_error err = setMtu(mtu); err != LIBXTUN_OK) {
+                return err;
             }
         }
 
-        int rc = setUp();
-        if (rc < 0) {
-            return rc;
+        if (libxtun_error err = setUp(); err != LIBXTUN_OK) {
+            return err;
         }
 
         for (const auto &addr : addresses) {
-            rc = updateAddress(addr, true);
-            if (rc < 0) {
+            if (libxtun_error err = updateAddress(addr, true); err != LIBXTUN_OK) {
                 revert();
-                return rc;
+                return err;
             }
             m_addresses.push_back(addr);
         }
-        return 0;
+        return LIBXTUN_OK;
     }
 
-    int LinuxRouter::setProxyRoutes(const std::vector<std::string> &routes)
+    libxtun_error LinuxRouter::setProxyRoutes(const std::vector<std::string> &routes)
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
         for (const auto &route : routes) {
             if (route == "0.0.0.0/0") {
                 if (!m_fullV4) {
-                    int rc = updateFullTunnelRoutes(AF_INET, true);
-                    if (rc < 0) {
+                    if (libxtun_error err = updateFullTunnelRoutes(AF_INET, true); err != LIBXTUN_OK) {
                         clearProxyRoutes();
-                        return rc;
+                        return err;
                     }
                     m_fullV4 = true;
                 }
             } else if (route == "::/0") {
                 if (!m_fullV6) {
-                    int rc = updateFullTunnelRoutes(AF_INET6, true);
-                    if (rc < 0) {
+                    if (libxtun_error err = updateFullTunnelRoutes(AF_INET6, true); err != LIBXTUN_OK) {
                         clearProxyRoutes();
-                        return rc;
+                        return err;
                     }
                     m_fullV6 = true;
                 }
             } else {
-                int rc = updateRouteFor(route, true);
-                if (rc < 0) {
+                if (libxtun_error err = updateRouteFor(route, true); err != LIBXTUN_OK) {
                     clearProxyRoutes();
-                    return rc;
+                    return err;
                 }
                 m_routes.push_back(route);
             }
         }
-        return 0;
+        return LIBXTUN_OK;
     }
 
     void LinuxRouter::clearProxyRoutes()
@@ -491,19 +493,9 @@ namespace libxtun
         m_addresses.clear();
     }
 
-    int LinuxRouter::bypassSocket(int fd, int family)
+    void LinuxRouter::protectSocket(int fd)
     {
-        (void)family;
         unsigned mark = PROXY_FWMARK;
-        if (::setsockopt(fd, SOL_SOCKET, SO_MARK, &mark, sizeof(mark)) != 0) {
-            return -1;
-        }
-        return 0;
+        ::setsockopt(fd, SOL_SOCKET, SO_MARK, &mark, sizeof(mark));
     }
-
-    bool LinuxRouter::bypassChanged()
-    {
-        return false;
-    }
-
 }

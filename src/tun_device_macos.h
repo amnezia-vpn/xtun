@@ -11,9 +11,9 @@ namespace libxtun
     class MacosTunDevice final : public TunDevice
     {
     public:
-        int open() override;
-        int adoptFd(int fd) override;
-        int adoptName(const char *name) override;
+        libxtun_error open() override;
+        libxtun_error adoptFd(int fd) override;
+        libxtun_error adoptName(const char *name) override;
 
         int read(std::span<std::byte> buf) noexcept override;
         int write(std::span<const std::byte> buf) noexcept override;
@@ -32,7 +32,7 @@ namespace libxtun
         ~MacosTunDevice() override;
 
     private:
-        int finishOpen();
+        libxtun_error finishOpen();
         void closeTun() noexcept;
         void monitorLoop() noexcept;
 

@@ -16,9 +16,9 @@ namespace libxtun
     class WindowsTunDevice final : public TunDevice
     {
     public:
-        int open() override;
-        int adoptFd(int fd) override;
-        int adoptName(const char *name) override;
+        libxtun_error open() override;
+        libxtun_error adoptFd(int fd) override;
+        libxtun_error adoptName(const char *name) override;
 
         int read(std::span<std::byte> buf) noexcept override;
         int write(std::span<const std::byte> buf) noexcept override;
@@ -37,11 +37,11 @@ namespace libxtun
         ~WindowsTunDevice() override;
 
     private:
-        int loadWintun(WINTUN_CREATE_ADAPTER_FUNC *&createAdapter, WINTUN_OPEN_ADAPTER_FUNC *&openAdapter,
+        libxtun_error loadWintun(WINTUN_CREATE_ADAPTER_FUNC *&createAdapter, WINTUN_OPEN_ADAPTER_FUNC *&openAdapter,
                        WINTUN_START_SESSION_FUNC *&startSession, WINTUN_GET_READ_WAIT_EVENT_FUNC *&getReadWaitEvent);
-        int startWintunSession(WINTUN_START_SESSION_FUNC *startSession,
+        libxtun_error startWintunSession(WINTUN_START_SESSION_FUNC *startSession,
                                WINTUN_GET_READ_WAIT_EVENT_FUNC *getReadWaitEvent);
-        int finishOpen();
+        libxtun_error finishOpen();
 
         static void CALLBACK onRouteChangeCb(void *ctx, MIB_IPFORWARD_ROW2 *row, MIB_NOTIFICATION_TYPE type);
 

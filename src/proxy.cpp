@@ -1,120 +1,107 @@
 #include "proxy.h"
+#include "health/state.h"
 #include "health/subsystem.h"
 #include "proto/awg.h"
-#include "tunnel.h"
+#include "xtun.h"
+
 #include <memory>
 #include <optional>
 #include <utility>
 
-using namespace libxtun;
-
-namespace
+namespace libxtun
 {
-
-    [[nodiscard]] std::optional<libxtun_status> statusFor(health::ConnectionState state) noexcept
+    namespace
     {
-        switch (state) {
-        case health::ConnectionState::Connected: return LIBXTUN_STATUS_CONNECTED;
-        case health::ConnectionState::NoNetwork: return LIBXTUN_STATUS_NO_NETWORK;
-        case health::ConnectionState::Disconnected: return LIBXTUN_STATUS_DISCONNECTED;
-        case health::ConnectionState::Unknown: return std::nullopt;
+        [[nodiscard]] std::optional<libxtun_status> statusFor(health::ConnectionState state) noexcept
+        {
+            switch (state) {
+            case health::ConnectionState::Connected: return LIBXTUN_STATUS_CONNECTED;
+            case health::ConnectionState::NoNetwork: return LIBXTUN_STATUS_NO_NETWORK;
+            case health::ConnectionState::Disconnected: return LIBXTUN_STATUS_DISCONNECTED;
+            case health::ConnectionState::Unknown: return std::nullopt;
+            }
+            return std::nullopt;
         }
-        return std::nullopt;
     }
 
-}
-
-ResultXtun<std::unique_ptr<Proxy>> createProxy(enum libxtun_proxy_proto proto, const char *conf)
-{
-    switch (proto) {
-    case LIBXTUN_PROXY_PROTO_AWG: return libxtun::proto::Awg::create(conf);
-    // case LIBXTUN_PROXY_PROTO_VLESS:
-    default: return libxtun::fail(LIBXTUN_ERR_INVALID_ARGS);
-    }
-}
-
-libxtun::Proxy::Proxy() = default;
-
-libxtun::Proxy::~Proxy()
-{
-    if (Tunnel *tunnel = m_tunnel.load(std::memory_order_acquire)) {
-        tunnel->detachProxy(this);
-    }
-    detach();
-}
-
-void libxtun::Proxy::cancelIo()
-{
-    if (Tunnel *tunnel = m_tunnel.load(std::memory_order_acquire)) {
-        tunnel->cancelRead();
-    }
-}
-
-void libxtun::Proxy::emitLog(const char *message) noexcept
-{
-    if (m_callbacks.onLog != nullptr) {
-        m_callbacks.onLog(message, m_callbacks.onLogPriv);
-    }
-}
-
-void libxtun::Proxy::emitStatus(int status) noexcept
-{
-    if (m_callbacks.onStatus != nullptr) {
-        m_callbacks.onStatus(status, m_callbacks.onStatusPriv);
-    }
-}
-
-void libxtun::Proxy::registerBypassSocket(int fd, int family)
-{
-    if (Tunnel *tunnel = m_tunnel.load(std::memory_order_acquire)) {
-        tunnel->registerBypassSocket(fd, family);
-    }
-    if (m_callbacks.onSocket != nullptr) {
-        m_callbacks.onSocket(fd, m_callbacks.onSocketPriv);
-    }
-}
-
-void libxtun::Proxy::bypassSocket(int fd, int family)
-{
-    if (Tunnel *tunnel = m_tunnel.load(std::memory_order_acquire)) {
-        tunnel->bypassSocket(fd, family);
-    }
-    if (m_callbacks.onSocket != nullptr) {
-        m_callbacks.onSocket(fd, m_callbacks.onSocketPriv);
-    }
-}
-
-void libxtun::Proxy::onConnectionState(health::ConnectionState state) noexcept
-{
-    if (const auto status = statusFor(state)) {
-        emitStatus(*status);
-    }
-    if (state != health::ConnectionState::Disconnected) {
-        return;
+    ResultXtun<std::unique_ptr<Proxy>> createProxy(enum libxtun_proxy_proto proto, const char *conf,
+                                                   ClientCallbacks callbacks)
+    {
+        switch (proto) {
+        case LIBXTUN_PROXY_PROTO_AWG: return proto::Awg::create(conf, callbacks);
+        case LIBXTUN_PROXY_PROTO_VLESS: return fail(LIBXTUN_ERR_UNSUPPORTED);
+        default: return fail(LIBXTUN_ERR_INVALID_ARGS);
+        }
     }
 
-    m_health->halt();
-    cancelIo();
-    if (Tunnel *tunnel = m_tunnel.exchange(nullptr, std::memory_order_acq_rel)) {
-        tunnel->detachProxy(this);
+    Proxy::Proxy(ClientCallbacks callbacks) : m_callbacks(callbacks) {};
+
+    void Proxy::attachIo(TunnelIo *io)
+    {
+        auto prof = profile();
+        health::HealthConfig conf { .dnsServers = std::move(prof.dnsServers),
+                                    .tunnelAddresses = std::move(prof.addresses),
+                                    .tunnelRoutes = std::move(prof.routes),
+                                    .probeStyle = prof.probeStyle };
+
+        health::HealthListener *listener = this;
+        m_health = std::make_unique<health::HealthSubsystem>(*listener, conf);
+        m_io = &m_health->decorate(*io);
     }
-}
 
-libxtun::TunnelIo &libxtun::Proxy::attach(Tunnel &tunnel, health::HealthConfig config, TunnelIo &device)
-{
-    m_tunnel.store(&tunnel, std::memory_order_release);
-    config.bindSocket = [this](int fd, int family) { bypassSocket(fd, family); };
-    config.log = [this](const char *message) { emitLog(message); };
+    void Proxy::onConnectionState(health::ConnectionState state) noexcept
+    {
+        if (const auto status = statusFor(state)) {
+            if (m_callbacks.onStatus != nullptr) {
+                m_callbacks.onStatus(*status, m_callbacks.onStatusPriv);
+            }
+        }
+    }
 
-    health::HealthListener &listener = *this;
-    m_health = std::make_unique<health::HealthSubsystem>(listener, std::move(config));
-    return m_health->decorate(device);
-}
+    int Proxy::tunRead(void *b, int len)
+    {
+        if (m_io == nullptr) [[unlikely]] {
+            // TODO: wait until IO is attached
+            return -1;
+        }
+        return m_io->read({ static_cast<std::byte *>(b), static_cast<std::size_t>(len) });
+    }
 
-void libxtun::Proxy::detach() noexcept
-{
-    m_tunnel.store(nullptr, std::memory_order_release);
-    m_health.reset();
+    int Proxy::tunWrite(void *b, int len)
+    {
+        if (m_io == nullptr) [[unlikely]] {
+            // TODO: wait until IO is attached
+            return -1;
+        }
+        return m_io->write({ static_cast<std::byte *>(b), static_cast<std::size_t>(len) });
+    }
+
+    int Proxy::tunMtu()
+    {
+        if (m_io == nullptr) [[unlikely]] {
+            // TODO: wait until IO is attached
+            return -1;
+        }
+        return m_io->mtu();
+    }
+
+    void Proxy::emitLog(char *str)
+    {
+        if (m_callbacks.onLog != nullptr) {
+            m_callbacks.onLog(str, m_callbacks.onLogPriv);
+        }
+    }
+
+    void Proxy::sockCb(int fd)
+    {
+        if (m_io != nullptr) [[likely]] {
+            m_io->protectSocket(fd);
+        }
+
+        if (m_callbacks.onSocket != nullptr) {
+            m_callbacks.onSocket(fd, m_callbacks.onSocketPriv);
+        }
+    }
 }
 
 int libxtun_proxy_new(struct libxtun_proxy *proxy, enum libxtun_proxy_proto proto, const char *conf)
@@ -125,19 +112,18 @@ int libxtun_proxy_new(struct libxtun_proxy *proxy, enum libxtun_proxy_proto prot
 
     proxy->handle = nullptr;
 
-    auto res = createProxy(proto, conf);
+    libxtun::ClientCallbacks callbacks { .onSocket = proxy->onsockspawn,
+                                         .onSocketPriv = proxy->onsockspawn_priv,
+                                         .onLog = proxy->loghandler,
+                                         .onLogPriv = proxy->loghandler_priv,
+                                         .onStatus = proxy->statushandler,
+                                         .onStatusPriv = proxy->statushandler_priv };
+
+    auto res = createProxy(proto, conf, callbacks);
     if (!res)
         return res.error();
 
-    auto obj = std::move(res.value());
-    obj->bind(ClientCallbacks { .onSocket = proxy->onsockspawn,
-                                .onSocketPriv = proxy->onsockspawn_priv,
-                                .onLog = proxy->loghandler,
-                                .onLogPriv = proxy->loghandler_priv,
-                                .onStatus = proxy->statushandler,
-                                .onStatusPriv = proxy->statushandler_priv });
-
-    proxy->handle = obj.release();
+    proxy->handle = res.value().release();
     return LIBXTUN_OK;
 }
 

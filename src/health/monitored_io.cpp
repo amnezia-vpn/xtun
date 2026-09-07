@@ -2,7 +2,6 @@
 
 namespace libxtun::health
 {
-
     MonitoredIo::MonitoredIo(TunnelIo &device, TrafficMeter &meter, PacketInterceptor &interceptor) noexcept
         : m_device(device), m_meter(meter), m_interceptor(interceptor)
     {
@@ -41,5 +40,4 @@ namespace libxtun::health
         }
         return n;
     }
-
 }

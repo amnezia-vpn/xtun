@@ -1,8 +1,7 @@
 #include "tunnel.h"
-#include "health/subsystem.h"
-
-#include <atomic>
-#include <cstring>
+#include "proxy.h"
+#include "tun_device.h"
+#include "xtun.h"
 
 namespace
 {
@@ -18,219 +17,117 @@ namespace
         }
         return out;
     }
-
 }
 
 namespace libxtun
 {
-
-    Tunnel::Tunnel(const libxtun_tunnel_opts &opts) : Tunnel(opts, createTunDevice())
-    {
-    }
-
-    Tunnel::Tunnel(const libxtun_tunnel_opts &opts, std::unique_ptr<TunDevice> device)
-        : m_dns(parseStrList(opts.dns)),
-          m_dnsExceptions(parseStrList(opts.dns_exceptions)),
-          m_killswitchMode(opts.killswitch_mode),
-          m_ifAddrs(parseStrList(opts.if_addrs)),
-          m_confMtu(opts.mtu),
-          m_router(Router::create()),
-          m_device(std::move(device)),
-          m_healthSettings(health::HealthSettings::fromSeconds(opts.health_seconds))
-    {
-    }
-
     Tunnel::~Tunnel()
     {
         m_device->stopMonitor();
         m_device->cancelRead();
-        shutdownProxy(nullptr);
         if (m_router != nullptr) {
             m_router->revert();
         }
     }
 
-    int Tunnel::openTun()
+    ResultXtun<std::unique_ptr<Tunnel>> Tunnel::fromOpts(const libxtun_tunnel_opts &opts)
     {
-        int rc = m_device->open();
-        if (rc != LIBXTUN_OK) {
-            return rc;
+        auto dev = createTunDevice();
+        auto router = Router::create();
+
+        if (auto rc = dev->open(); rc != LIBXTUN_OK) {
+            return fail(rc);
         }
-        return completeDeviceSetup();
+
+        const auto ifAddrs = parseStrList(opts.if_addrs);
+        if (auto rc = router->configureInterface(dev->name(), dev->ifIndex(), ifAddrs, opts.mtu); rc != LIBXTUN_OK) {
+            return fail(rc);
+        }
+
+        auto tun = std::unique_ptr<Tunnel>(new Tunnel());
+        tun->m_device = std::move(dev);
+        tun->m_router = std::move(router);
+        tun->m_device->startMonitor(*tun);
+        return tun;
     }
 
-    int Tunnel::adoptTun(int fd)
+    ResultXtun<std::unique_ptr<Tunnel>> Tunnel::fromFd(int fd)
     {
-        int rc = m_device->adoptFd(fd);
-        if (rc != LIBXTUN_OK) {
-            return rc;
+        auto dev = createTunDevice();
+        if (auto rc = dev->adoptFd(fd); rc != LIBXTUN_OK) {
+            return fail(rc);
         }
-        return completeDeviceSetup();
+
+        auto tun = std::unique_ptr<Tunnel>(new Tunnel());
+        tun->m_device = std::move(dev);
+        return tun;
     }
 
-    int Tunnel::adoptTunByName(const char *name)
+    ResultXtun<std::unique_ptr<Tunnel>> Tunnel::fromName(const char *name)
     {
-        int rc = m_device->adoptName(name);
-        if (rc != LIBXTUN_OK) {
-            return rc;
-        }
-        return completeDeviceSetup();
-    }
-
-    int Tunnel::completeDeviceSetup()
-    {
-        // On Windows "ifIndex = -1" here means that Tunnel::adoptTunByName() was called and
-        // we don't need to call m_router->configureInterface(),
-        // otherwise it will reset mtu and metric for the previously configured interface
-        const int ifIndex = m_device->ifIndex();
-        if (ifIndex < 0) {
-            return LIBXTUN_OK;
+        auto dev = createTunDevice();
+        if (auto rc = dev->adoptName(name); rc != LIBXTUN_OK) {
+            return fail(rc);
         }
 
-        if (m_router != nullptr && m_router->configureInterface(m_device->name(), ifIndex, m_ifAddrs, m_confMtu) != 0) {
-            return LIBXTUN_ERR_SYSTEM;
-        }
-
-        m_device->startMonitor(*this);
-
-        return LIBXTUN_OK;
-    }
-
-    bool Tunnel::up() const
-    {
-        return m_device->up();
+        auto tun = std::unique_ptr<Tunnel>(new Tunnel());
+        tun->m_device = std::move(dev);
+        return tun;
     }
 
     int Tunnel::attachProxy(Proxy *proxy)
     {
-        if (proxy == nullptr || proxy->m_tunnel.load(std::memory_order_acquire) != nullptr) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+
+        if (proxy == nullptr) {
             return LIBXTUN_ERR_INVALID_ARGS;
         }
 
-        shutdownProxy(nullptr);
+        if (m_proxy) {
+            m_proxy->attachIo(nullptr);
+            m_proxy = nullptr;
+        }
+
+        ProxyProfile profile = proxy->profile();
+
+        if (m_router != nullptr) {
+            m_router->clearProxyRoutes();
+            if (auto rc = m_router->setProxyRoutes(profile.routes); rc != LIBXTUN_OK) {
+                // FIXME: we are reverting too much in here. Should be rollback() or similar
+                m_router->revert();
+                return LIBXTUN_ERR_SYSTEM;
+            }
+        }
+
+        // TODO(cd-amn): write DNS (if Tunnel is created via fromOpts)
+        void(profile.dnsServers);
 
         m_device->resetReadCancellation();
 
-        const ProxyProfile profile = proxy->profile();
-        proxy->setInterface(m_device->name());
-        TunnelIo &io = proxy->attach(*this, healthConfigFor(profile), *m_device);
+        proxy->attachIo(this);
+        m_proxy = proxy;
 
-        if (const int rc = proxy->start(io); rc != LIBXTUN_OK) {
-            proxy->detach();
-            return rc;
-        }
-
-        {
-            std::lock_guard<std::mutex> lock(m_proxyMtx);
-            m_proxy = proxy;
-        }
-
-        if (m_started && m_router != nullptr && m_router->setProxyRoutes(profile.routes) != 0) {
-            shutdownProxy(proxy);
-            return LIBXTUN_ERR_SYSTEM;
-        }
-
-        proxy->health()->start();
         return LIBXTUN_OK;
     }
 
     int Tunnel::start()
     {
+        std::lock_guard<std::mutex> lock(m_mutex);
         m_started = true;
-        if (m_proxy != nullptr && m_router != nullptr) {
-            if (m_router->setProxyRoutes(m_proxy->profile().routes) != 0) {
-                m_router->revert();
-                m_started = false;
-                return LIBXTUN_ERR_SYSTEM;
-            }
-        }
+        // TODO(cd-amn): implement kick-off and suspend/shutdown based on metrics for the routes
+        // The idea:
+        // - All routes initialize with high metrics (system never use them until the raise)
+        // - Calling start() sets all routes' metrics to the lower value
+        // - So the traffic starts flowing
+        //
+        // This makes start() to respond almost instantly: interface is ready, and everything
+        // is established, no further change required
         return LIBXTUN_OK;
-    }
-
-    void Tunnel::shutdownProxy(Proxy *expected) noexcept
-    {
-        Proxy *taken = takeProxy(expected);
-        if (taken == nullptr) {
-            return;
-        }
-        if (m_router != nullptr) {
-            m_router->clearProxyRoutes();
-        }
-        taken->stop();
-        taken->detach();
-    }
-
-    void Tunnel::detachProxy(Proxy *proxy) noexcept
-    {
-        if (takeProxy(proxy) != nullptr && m_router != nullptr) {
-            m_router->clearProxyRoutes();
-        }
-    }
-
-    Proxy *Tunnel::takeProxy(Proxy *expected) noexcept
-    {
-        std::lock_guard<std::mutex> lock(m_proxyMtx);
-        if (m_proxy == nullptr || (expected != nullptr && m_proxy != expected)) {
-            return nullptr;
-        }
-        m_bypassSockets.clear();
-        return std::exchange(m_proxy, nullptr);
-    }
-
-    health::HealthConfig Tunnel::healthConfigFor(const ProxyProfile &profile)
-    {
-        health::HealthConfig config;
-        config.dnsServers = m_dns.empty() ? profile.dnsServers : m_dns;
-        config.tunnelAddresses = m_ifAddrs.empty() ? profile.addresses : m_ifAddrs;
-        config.tunnelRoutes = profile.routes;
-        config.probeStyle = profile.probeStyle;
-        config.settings = m_healthSettings;
-        config.wakeRead = [this] { wakeRead(); };
-        return config;
-    }
-
-    void Tunnel::BypassSocketRegistry::add(Router &router, int fd, int family)
-    {
-        std::lock_guard<std::mutex> lock(m_mtx);
-        m_sockets[fd] = family;
-        router.bypassSocket(fd, family);
-    }
-
-    void Tunnel::BypassSocketRegistry::rebind(Router &router)
-    {
-        std::lock_guard<std::mutex> lock(m_mtx);
-        for (const auto &[fd, family] : m_sockets) {
-            router.bypassSocket(fd, family);
-        }
-    }
-
-    void Tunnel::BypassSocketRegistry::clear()
-    {
-        std::lock_guard<std::mutex> lock(m_mtx);
-        m_sockets.clear();
-    }
-
-    void Tunnel::registerBypassSocket(int fd, int family)
-    {
-        if (m_router != nullptr) {
-            m_bypassSockets.add(*m_router, fd, family);
-        }
-    }
-
-    void Tunnel::bypassSocket(int fd, int family)
-    {
-        if (m_router != nullptr) {
-            m_router->bypassSocket(fd, family);
-        }
     }
 
     void Tunnel::emit(Event ev)
     {
-        if (m_onEvent) {
-            m_onEvent(ev);
-        }
-
-        std::lock_guard<std::mutex> lock(m_proxyMtx);
+        std::lock_guard<std::mutex> lock(m_mutex);
         if (m_proxy == nullptr) {
             return;
         }
@@ -242,15 +139,25 @@ namespace libxtun
         }
     }
 
-    void Tunnel::onRouteChange()
+    int Tunnel::read(std::span<std::byte> buf) noexcept
     {
-        if (m_router != nullptr && m_router->bypassChanged()) {
-            m_bypassSockets.rebind(*m_router);
-        }
+        return m_device->read(buf);
+    }
 
-        std::lock_guard<std::mutex> lock(m_proxyMtx);
-        if (m_proxy != nullptr) {
-            m_proxy->health()->onNetworkChanged();
+    int Tunnel::write(std::span<const std::byte> packet) noexcept
+    {
+        return m_device->write(packet);
+    }
+
+    int Tunnel::mtu() const noexcept
+    {
+        return m_device->mtu();
+    }
+
+    void Tunnel::protectSocket(int fd) noexcept
+    {
+        if (m_router != nullptr) {
+            m_router->protectSocket(fd);
         }
     }
 
@@ -266,9 +173,7 @@ namespace libxtun
 
     void Tunnel::onRouteChanged()
     {
-        onRouteChange();
     }
-
 }
 
 int libxtun_tunnel_new(struct libxtun_tunnel *tun, struct libxtun_tunnel_opts *opts)
@@ -287,24 +192,13 @@ int libxtun_tunnel_new(struct libxtun_tunnel *tun, struct libxtun_tunnel_opts *o
         return LIBXTUN_ERR_INVALID_ARGS;
     }
 
-    auto *obj = new libxtun::Tunnel(*opts);
-
-    int rc = obj->openTun();
-    if (rc != LIBXTUN_OK) {
-        delete obj;
-        return rc;
+    auto res = libxtun::Tunnel::fromOpts(*opts);
+    if (!res) {
+        return res.error();
     }
 
-    tun->handle = obj;
+    tun->handle = res.value().release();
     return LIBXTUN_OK;
-}
-
-int libxtun_tunnel_start(struct libxtun_tunnel *tun)
-{
-    if (tun == nullptr || tun->handle == nullptr) {
-        return LIBXTUN_ERR_INVALID_ARGS;
-    }
-    return reinterpret_cast<libxtun::Tunnel *>(tun->handle)->start();
 }
 
 int libxtun_tunnel_new_from_tunfile(struct libxtun_tunnel *tun, int fd)
@@ -315,22 +209,12 @@ int libxtun_tunnel_new_from_tunfile(struct libxtun_tunnel *tun, int fd)
 
     tun->handle = nullptr;
 
-    // The device was created and configured elsewhere, so no tunnel options
-    // accompany it: empty DNS lists, killswitch disabled.
-    struct libxtun_tunnel_opts opts;
-    std::memset(&opts, 0, sizeof(opts));
-    opts.size = sizeof(opts);
-    opts.killswitch_mode = LIBXTUN_KILLSWITCH_MODE_DISABLED;
-
-    auto *obj = new libxtun::Tunnel(opts);
-
-    int rc = obj->adoptTun(fd);
-    if (rc != LIBXTUN_OK) {
-        delete obj;
-        return rc;
+    auto res = libxtun::Tunnel::fromFd(fd);
+    if (!res) {
+        return res.error();
     }
 
-    tun->handle = obj;
+    tun->handle = res.value().release();
     return LIBXTUN_OK;
 }
 
@@ -342,20 +226,12 @@ int libxtun_tunnel_new_from_name(struct libxtun_tunnel *tun, const char *name)
 
     tun->handle = nullptr;
 
-    struct libxtun_tunnel_opts opts;
-    std::memset(&opts, 0, sizeof(opts));
-    opts.size = sizeof(opts);
-    opts.killswitch_mode = LIBXTUN_KILLSWITCH_MODE_DISABLED;
-
-    auto *obj = new libxtun::Tunnel(opts);
-
-    int rc = obj->adoptTunByName(name);
-    if (rc != LIBXTUN_OK) {
-        delete obj;
-        return rc;
+    auto res = libxtun::Tunnel::fromName(name);
+    if (!res) {
+        return res.error();
     }
 
-    tun->handle = obj;
+    tun->handle = res.value().release();
     return LIBXTUN_OK;
 }
 
@@ -366,6 +242,14 @@ void libxtun_tunnel_free(struct libxtun_tunnel *tun)
     }
     delete reinterpret_cast<libxtun::Tunnel *>(tun->handle);
     tun->handle = nullptr;
+}
+
+int libxtun_tunnel_start(struct libxtun_tunnel *tun)
+{
+    if (tun == nullptr || tun->handle == nullptr) {
+        return LIBXTUN_ERR_INVALID_ARGS;
+    }
+    return reinterpret_cast<libxtun::Tunnel *>(tun->handle)->start();
 }
 
 int libxtun_tunnel_attach_proxy(struct libxtun_tunnel *tun, struct libxtun_proxy *proxy)

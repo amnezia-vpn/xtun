@@ -10,12 +10,13 @@ extern "C" {
 enum libxtun_error {
     LIBXTUN_OK = 0,
     LIBXTUN_ERR_INVALID_ARGS = -1,
+    LIBXTUN_ERR_UNSUPPORTED = -2,
     /* The tun backend could not be loaded or is not present. */
-    LIBXTUN_ERR_DRIVER_UNAVAILABLE = -2,
+    LIBXTUN_ERR_DRIVER_UNAVAILABLE = -3,
     /* The backend is present but refused to create the device. */
-    LIBXTUN_ERR_DEVICE_CREATE = -3,
+    LIBXTUN_ERR_DEVICE_CREATE = -4,
     /* An ancillary system call failed. */
-    LIBXTUN_ERR_SYSTEM = -4,
+    LIBXTUN_ERR_SYSTEM = -5,
 
     LIBXTUN_ERR_RESERVED_0 = -10000,
     LIBXTUN_ERR_RESERVED_1 = -10001,
@@ -82,7 +83,7 @@ struct libxtun_tunnel_opts
     int health_seconds;
 };
 
-int libxtun_tunnel_new(struct libxtun_tunnel *tun, struct libxtun_tunnel_opts *opts);
+int libxtun_tunnel_new(struct libxtun_tunnel *tun, const struct libxtun_tunnel_opts *opts);
 int libxtun_tunnel_new_from_tunfile(struct libxtun_tunnel *tun, int fd);
 int libxtun_tunnel_new_from_name(struct libxtun_tunnel *tun, const char *name);
 int libxtun_tunnel_start(struct libxtun_tunnel *tun);

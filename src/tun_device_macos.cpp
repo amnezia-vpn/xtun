@@ -4,7 +4,6 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
-#include <memory>
 
 #include <fcntl.h>
 #include <net/if.h>
@@ -22,8 +21,7 @@
 
 namespace libxtun
 {
-
-    int MacosTunDevice::open()
+    libxtun_error MacosTunDevice::open()
     {
         int fd = ::socket(AF_SYSTEM, SOCK_DGRAM, SYSPROTO_CONTROL);
         if (fd < 0) {
@@ -68,7 +66,7 @@ namespace libxtun
         return finishOpen();
     }
 
-    int MacosTunDevice::adoptFd(int fd)
+    libxtun_error MacosTunDevice::adoptFd(int fd)
     {
         fd = ::fcntl(fd, F_DUPFD_CLOEXEC, 0);
         if (fd < 0) {
@@ -87,10 +85,10 @@ namespace libxtun
         return finishOpen();
     }
 
-    int MacosTunDevice::adoptName(const char *name)
+    libxtun_error MacosTunDevice::adoptName(const char *name)
     {
         (void)name;
-        return LIBXTUN_ERR_DRIVER_UNAVAILABLE;
+        return LIBXTUN_ERR_UNSUPPORTED;
     }
 
     int MacosTunDevice::read(std::span<std::byte> buf) noexcept
@@ -291,7 +289,7 @@ namespace libxtun
         }
     }
 
-    int MacosTunDevice::finishOpen()
+    libxtun_error MacosTunDevice::finishOpen()
     {
         m_ifIndex = static_cast<int>(::if_nametoindex(m_name.c_str()));
         if (m_ifIndex == 0) {
@@ -367,5 +365,4 @@ namespace libxtun
             }
         }
     }
-
 }

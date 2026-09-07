@@ -20,8 +20,7 @@
 
 namespace libxtun
 {
-
-    int LinuxTunDevice::open()
+    libxtun_error LinuxTunDevice::open()
     {
         int fd = ::open("/dev/net/tun", O_RDWR | O_CLOEXEC);
         if (fd < 0) {
@@ -43,7 +42,7 @@ namespace libxtun
         return finishOpen();
     }
 
-    int LinuxTunDevice::adoptFd(int fd)
+    libxtun_error LinuxTunDevice::adoptFd(int fd)
     {
         fd = ::fcntl(fd, F_DUPFD_CLOEXEC, 0);
         if (fd < 0) {
@@ -65,7 +64,7 @@ namespace libxtun
         return finishOpen();
     }
 
-    int LinuxTunDevice::adoptName(const char *name)
+    libxtun_error LinuxTunDevice::adoptName(const char *name)
     {
         if (std::strlen(name) >= IFNAMSIZ) {
             return LIBXTUN_ERR_INVALID_ARGS;
@@ -282,7 +281,7 @@ namespace libxtun
         }
     }
 
-    int LinuxTunDevice::finishOpen()
+    libxtun_error LinuxTunDevice::finishOpen()
     {
         // SIOCGIFINDEX is a socket ioctl, not a tun-device one, so it must go
         // through an AF_INET socket rather than the tun fd. The interface is
@@ -383,5 +382,4 @@ namespace libxtun
             }
         }
     }
-
 }
