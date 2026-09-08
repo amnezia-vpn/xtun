@@ -32,10 +32,11 @@ namespace libxtun
         int attachProxy(Proxy *proxy);
         int start();
 
-        int read(std::span<std::byte> buf) noexcept override;
-        int write(std::span<const std::byte> packet) noexcept override;
-        int mtu() const noexcept override;
-        void protectSocket(int fd) noexcept override;
+        int read(std::span<std::byte> buf) override;
+        int write(std::span<const std::byte> packet) override;
+        int mtu() const override;
+        void protectSocket(int fd) override;
+        void halt() override;
 
         const std::string &name() const
         {

@@ -139,26 +139,32 @@ namespace libxtun
         }
     }
 
-    int Tunnel::read(std::span<std::byte> buf) noexcept
+    int Tunnel::read(std::span<std::byte> buf)
     {
         return m_device->read(buf);
     }
 
-    int Tunnel::write(std::span<const std::byte> packet) noexcept
+    int Tunnel::write(std::span<const std::byte> packet)
     {
         return m_device->write(packet);
     }
 
-    int Tunnel::mtu() const noexcept
+    int Tunnel::mtu() const
     {
         return m_device->mtu();
     }
 
-    void Tunnel::protectSocket(int fd) noexcept
+    void Tunnel::protectSocket(int fd)
     {
         if (m_router != nullptr) {
             m_router->protectSocket(fd);
         }
+    }
+
+    void Tunnel::halt()
+    {
+        // TODO(cd-amn): rework as halt: fire once, non-recoverable
+        m_device->cancelRead();
     }
 
     void Tunnel::onLinkStateChanged(bool up)
@@ -176,7 +182,7 @@ namespace libxtun
     }
 }
 
-int libxtun_tunnel_new(struct libxtun_tunnel *tun, struct libxtun_tunnel_opts *opts)
+int libxtun_tunnel_new(struct libxtun_tunnel *tun, const struct libxtun_tunnel_opts *opts)
 {
     if (tun == nullptr || opts == nullptr) {
         return LIBXTUN_ERR_INVALID_ARGS;
@@ -184,6 +190,9 @@ int libxtun_tunnel_new(struct libxtun_tunnel *tun, struct libxtun_tunnel_opts *o
 
     tun->handle = nullptr;
 
+    // TODO(cd-amn): handle all opts up to the specified size
+    // If a newer xtun .dll/.so is used in already compiled application - it
+    // should not break anything, just handle all available opts
     if (opts->size < sizeof(*opts)) {
         return LIBXTUN_ERR_INVALID_ARGS;
     }

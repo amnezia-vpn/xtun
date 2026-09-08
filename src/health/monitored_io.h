@@ -28,9 +28,10 @@ namespace libxtun::health
             m_device.protectSocket(fd);
         }
 
-        void halt() noexcept
+        void halt() override
         {
             m_halted.store(true, std::memory_order_release);
+            m_device.halt();
         }
         bool halted() const noexcept
         {

@@ -80,10 +80,14 @@ namespace libxtun
         }
         void emitLog(char *str);
 
+        void haltIo() {
+            m_io.halt();
+        }
+
     private:
         void onConnectionState(health::ConnectionState state) noexcept override;
 
-        TunnelIo *m_io = nullptr;
+        WrappedIo m_io;
         ClientCallbacks m_callbacks;
         std::unique_ptr<health::HealthSubsystem> m_health;
     };
