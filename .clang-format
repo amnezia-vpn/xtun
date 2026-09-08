@@ -36,4 +36,5 @@ PenaltyExcessCharacter: '10'
 PointerAlignment: Right
 SortIncludes: 'true'
 SpaceAfterTemplateKeyword: 'false'
+SpaceInEmptyBraces: Never
 Standard: Auto
