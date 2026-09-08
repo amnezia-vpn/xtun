@@ -34,10 +34,15 @@ namespace libxtun
         }
     }
 
-    Proxy::Proxy(ClientCallbacks callbacks) : m_callbacks(callbacks) {};
+    Proxy::Proxy(ClientCallbacks callbacks) : m_callbacks(callbacks) { };
 
     void Proxy::attachIo(TunnelIo *io)
     {
+        if (io == nullptr) {
+            m_io.assign(io);
+            return;
+        }
+
         auto prof = profile();
         health::HealthConfig conf { .dnsServers = std::move(prof.dnsServers),
                                     .tunnelAddresses = std::move(prof.addresses),
@@ -46,7 +51,7 @@ namespace libxtun
 
         health::HealthListener *listener = this;
         m_health = std::make_unique<health::HealthSubsystem>(*listener, conf);
-        m_io = &m_health->decorate(*io);
+        m_io.assign(&m_health->decorate(*io));
     }
 
     void Proxy::onConnectionState(health::ConnectionState state) noexcept
@@ -60,46 +65,32 @@ namespace libxtun
 
     int Proxy::tunRead(void *b, int len)
     {
-        if (m_io == nullptr) [[unlikely]] {
-            // TODO: wait until IO is attached
-            return -1;
-        }
-        return m_io->read({ static_cast<std::byte *>(b), static_cast<std::size_t>(len) });
+        return m_io.read({ static_cast<std::byte *>(b), static_cast<std::size_t>(len) });
     }
 
     int Proxy::tunWrite(void *b, int len)
     {
-        if (m_io == nullptr) [[unlikely]] {
-            // TODO: wait until IO is attached
-            return -1;
-        }
-        return m_io->write({ static_cast<std::byte *>(b), static_cast<std::size_t>(len) });
+        return m_io.write({ static_cast<std::byte *>(b), static_cast<std::size_t>(len) });
     }
 
     int Proxy::tunMtu()
     {
-        if (m_io == nullptr) [[unlikely]] {
-            // TODO: wait until IO is attached
-            return -1;
+        return m_io.mtu();
+    }
+
+    void Proxy::sockCb(int fd)
+    {
+        m_io.protectSocket(fd);
+
+        if (m_callbacks.onSocket != nullptr) {
+            m_callbacks.onSocket(fd, m_callbacks.onSocketPriv);
         }
-        return m_io->mtu();
     }
 
     void Proxy::emitLog(char *str)
     {
         if (m_callbacks.onLog != nullptr) {
             m_callbacks.onLog(str, m_callbacks.onLogPriv);
-        }
-    }
-
-    void Proxy::sockCb(int fd)
-    {
-        if (m_io != nullptr) [[likely]] {
-            m_io->protectSocket(fd);
-        }
-
-        if (m_callbacks.onSocket != nullptr) {
-            m_callbacks.onSocket(fd, m_callbacks.onSocketPriv);
         }
     }
 }

@@ -34,6 +34,7 @@ namespace libxtun
 
         Awg::~Awg()
         {
+            haltIo();
             goxtun_awg_free(m_handle);
             m_handle = nullptr;
         }
