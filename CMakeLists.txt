@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.25.0)
 
+get_property(is_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(NOT CMAKE_BUILD_TYPE AND NOT is_multi_config)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
+endif()
+
 # We compile against c++20, but remain runnable against c++17
 # Do NOT use any runtime-based features like:
 #   <format>, <jthread>, <latch>, <barrier>, <syncstream>,
