@@ -10,11 +10,9 @@
 
 #include <gtest/gtest.h>
 
-#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
-#include <mutex>
 #include <string>
 #include <vector>
 
@@ -59,27 +57,6 @@ extern char **environ;
 
 namespace
 {
-
-#if defined(__linux__) || defined(__APPLE__)
-    bool privileged()
-    {
-        return ::geteuid() == 0;
-    }
-#elif defined(_WIN32)
-    bool privileged()
-    {
-        BOOL isAdmin = FALSE;
-        PSID adminGroup = nullptr;
-        SID_IDENTIFIER_AUTHORITY ntAuthority = SECURITY_NT_AUTHORITY;
-        if (::AllocateAndInitializeSid(&ntAuthority, 2, SECURITY_BUILTIN_DOMAIN_RID, DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0,
-                                       0, 0, 0, &adminGroup)) {
-            ::CheckTokenMembership(nullptr, adminGroup, &isAdmin);
-            ::FreeSid(adminGroup);
-        }
-        return isAdmin != FALSE;
-    }
-#endif
-
     libxtun_tunnel_opts realtunOpts()
     {
         static const char *ifAddrs[] = { "10.9.9.1/24", nullptr };

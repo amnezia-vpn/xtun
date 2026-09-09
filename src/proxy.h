@@ -7,6 +7,8 @@
 #include "health/state.h"
 #include "health/subsystem.h"
 #include "tunnel_io.h"
+#include "util/noncopyable.h"
+#include "util/result.h"
 
 #include <string>
 #include <vector>
@@ -37,11 +39,14 @@ namespace libxtun
         void *onStatusPriv = nullptr;
     };
 
-    class Proxy : private health::HealthListener
+    class Proxy : private health::HealthListener, private NonCopyable
     {
     public:
+        static ResultXtun<std::unique_ptr<Proxy>> create(libxtun_proxy_proto proto, const char *conf,
+                                                         ClientCallbacks callbacks);
+
         Proxy(ClientCallbacks callbacks);
-        ~Proxy() override = 0;
+        ~Proxy() override {};
 
         virtual const char *name() = 0;
 

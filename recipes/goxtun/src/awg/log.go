@@ -20,7 +20,7 @@ func NewLogger(verbosef func(format string, args ...any), debugf func(format str
 			return
 		}
 		defer l.wg.Done()
-		verbosef(format, args)
+		verbosef(format, args...)
 	}
 	l.Logger.Errorf = func(format string, args ...any) {
 		if l.closed.Load() {
@@ -32,7 +32,7 @@ func NewLogger(verbosef func(format string, args ...any), debugf func(format str
 			return
 		}
 		defer l.wg.Done()
-		verbosef(format, args)
+		verbosef(format, args...)
 	}
 
 	return l
