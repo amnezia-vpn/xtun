@@ -1,7 +1,8 @@
-#include "tunnel.h"
+#include "killswitch.h"
 #include "net/ip.h"
 #include "proxy.h"
 #include "tun_device.h"
+#include "tunnel.h"
 #include "xtun.h"
 #include <utility>
 
@@ -40,9 +41,11 @@ namespace libxtun
         auto tun = std::unique_ptr<Tunnel>(new Tunnel());
         tun->m_device = createTunDevice();
         tun->m_router = Router::create();
+        tun->m_killswitch = Killswitch::create(opts.killswitch_mode);
 
         auto &dev = tun->m_device;
         auto &router = tun->m_router;
+        auto &killswitch = tun->m_killswitch;
 
         if (auto rc = dev->open(); rc != LIBXTUN_OK) {
             return fail(rc);
@@ -52,6 +55,10 @@ namespace libxtun
 
         const auto ifAddrs = parseStrList(opts.if_addrs);
         if (auto rc = router->configureInterface(dev->name(), dev->ifIndex(), ifAddrs, opts.mtu); rc != LIBXTUN_OK) {
+            return fail(rc);
+        }
+
+        if (auto rc = killswitch->update(dev->ifIndex(), dev->name())) {
             return fail(rc);
         }
 
@@ -68,24 +75,28 @@ namespace libxtun
     ResultXtun<std::unique_ptr<Tunnel>> Tunnel::fromFd(int fd)
     {
         auto dev = createTunDevice();
+        auto killswitch = Killswitch::create(LIBXTUN_KILLSWITCH_MODE_DISABLED);
         if (auto rc = dev->adoptFd(fd); rc != LIBXTUN_OK) {
             return fail(rc);
         }
 
         auto tun = std::unique_ptr<Tunnel>(new Tunnel());
         tun->m_device = std::move(dev);
+        tun->m_killswitch = std::move(killswitch);
         return tun;
     }
 
     ResultXtun<std::unique_ptr<Tunnel>> Tunnel::fromName(const char *name)
     {
         auto dev = createTunDevice();
+        auto killswitch = Killswitch::create(LIBXTUN_KILLSWITCH_MODE_DISABLED);
         if (auto rc = dev->adoptName(name); rc != LIBXTUN_OK) {
             return fail(rc);
         }
 
         auto tun = std::unique_ptr<Tunnel>(new Tunnel());
         tun->m_device = std::move(dev);
+        tun->m_killswitch = std::move(killswitch);
         return tun;
     }
 

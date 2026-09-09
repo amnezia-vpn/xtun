@@ -1,3 +1,4 @@
+#include "killswitch.h"
 #include "router.h"
 #include "tun_device.h"
 
@@ -19,6 +20,8 @@
     #include "router_linux.h"
     #include "tun_device_linux.cpp"
     #include "tun_device_linux.h"
+    #include "killswitch_linux.cpp"
+    #include "killswitch_linux.h"
 #else
     #error Unsupported platform
 #endif
@@ -47,6 +50,20 @@ namespace libxtun
         return std::make_unique<MacosTunDevice>();
 #elif defined(__linux__) || defined(__ANDROID__)
         return std::make_unique<LinuxTunDevice>();
+#endif
+    }
+
+    std::unique_ptr<Killswitch> Killswitch::create(libxtun_killswitch_mode mode)
+    {
+#if defined(_WIN32)
+        return std::make_unique<WindowsKillswitch>();
+#elif defined(__APPLE__)
+        return std::make_unique<MacosKillswitch>();
+#elif defined(__linux__) && !defined(__ANDROID__)
+        return std::make_unique<LinuxKillswitch>(mode);
+#else
+        (void)mode;
+        return nullptr;
 #endif
     }
 

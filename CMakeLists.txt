@@ -52,6 +52,7 @@ add_library(${PROJECT_NAME}
     ${CMAKE_CURRENT_LIST_DIR}/src/platform.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/proxy.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/tunnel.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/killswitch.cpp
 )
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/src

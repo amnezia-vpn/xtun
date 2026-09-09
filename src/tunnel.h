@@ -1,6 +1,7 @@
 #ifndef LIBXTUN_TUNNEL_H
 #define LIBXTUN_TUNNEL_H
 
+#include "killswitch.h"
 #include "net/ip.h"
 #include "proxy.h"
 #include "router.h"
@@ -60,6 +61,7 @@ namespace libxtun
 
         std::unique_ptr<TunDevice> m_device;
         std::unique_ptr<Router> m_router;
+        std::unique_ptr<Killswitch> m_killswitch;
 
         std::mutex m_mutex;
         bool m_started = false;
