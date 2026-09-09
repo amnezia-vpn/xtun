@@ -46,6 +46,14 @@ namespace
         {
             return 1280;
         }
+
+        void protectSocket(int fd) override
+        {
+        }
+
+        void halt() override
+        {
+        }
     };
 
     class FakeInterceptor final : public libxtun::health::PacketInterceptor

@@ -24,8 +24,8 @@ namespace libxtun
         }
     }
 
-    ResultXtun<std::unique_ptr<Proxy>> createProxy(enum libxtun_proxy_proto proto, const char *conf,
-                                                   ClientCallbacks callbacks)
+    ResultXtun<std::unique_ptr<Proxy>> Proxy::create(libxtun_proxy_proto proto, const char *conf,
+                                                     ClientCallbacks callbacks)
     {
         switch (proto) {
         case LIBXTUN_PROXY_PROTO_AWG: return proto::Awg::create(conf, callbacks);
@@ -110,7 +110,7 @@ int libxtun_proxy_new(struct libxtun_proxy *proxy, enum libxtun_proxy_proto prot
                                          .onStatus = proxy->statushandler,
                                          .onStatusPriv = proxy->statushandler_priv };
 
-    auto res = createProxy(proto, conf, callbacks);
+    auto res = libxtun::Proxy::create(proto, conf, callbacks);
     if (!res)
         return res.error();
 

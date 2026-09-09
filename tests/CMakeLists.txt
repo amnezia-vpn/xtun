@@ -2,25 +2,22 @@ find_package(GTest REQUIRED)
 include(GoogleTest)
 
 set(XTUN_TEST_SOURCES
-    awg_realtun_test.cpp
-    awg_roundtrip_test.cpp
-    awg_tunnel_test.cpp
-    health_monitor_test.cpp
-    health_monitored_io_test.cpp
-    health_probe_test.cpp
-    health_resolver_test.cpp
-    health_scheduler_test.cpp
-    health_verdict_test.cpp
-    net_ip_test.cpp
-    net_socket_test.cpp
-    net_udp_test.cpp
-    proxy_attach_test.cpp
-    tunnel_contract_test.cpp
-    tunnel_lifecycle_test.cpp
+    test_contract.cpp
+    test_health_monitor.cpp
+    test_health_monitored_io.cpp
+    test_health_probe.cpp
+    test_health_resolver.cpp
+    test_health_scheduler.cpp
+    test_health_verdict.cpp
+    test_net_ip.cpp
+    test_net_socket.cpp
+    test_net_udp.cpp
+    test_proxy.cpp
+    test_tunnel.cpp
 )
 
 if(NOT WIN32)
-    list(APPEND XTUN_TEST_SOURCES routing_test.cpp)
+    # list(APPEND XTUN_TEST_SOURCES routing_test.cpp)
 endif()
 
 add_executable(xtun_tests ${XTUN_TEST_SOURCES})

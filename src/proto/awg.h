@@ -4,7 +4,6 @@
 #include "../proxy.h"
 
 #include "awg_conf.h"
-#include "util/noncopyable.h"
 #include "util/result.h"
 
 #include <memory>
@@ -14,11 +13,11 @@ namespace libxtun
 {
     namespace proto
     {
-        class Awg final : public Proxy, private NonCopyable
+        class Awg final : public Proxy
         {
         public:
             static ResultXtun<std::unique_ptr<Awg>> create(const std::string &str, ClientCallbacks callbacks);
-            ~Awg();
+            ~Awg() override;
 
             void event(ProxyEvent ev) override;
             ProxyProfile profile() const override;
