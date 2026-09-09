@@ -15,8 +15,10 @@ enum libxtun_error {
     LIBXTUN_ERR_DRIVER_UNAVAILABLE = -3,
     /* The backend is present but refused to create the device. */
     LIBXTUN_ERR_DEVICE_CREATE = -4,
+    /* Killswitch errors */
+    LIBXTUN_ERR_KILLSWITCH = -5,
     /* An ancillary system call failed. */
-    LIBXTUN_ERR_SYSTEM = -5,
+    LIBXTUN_ERR_SYSTEM = -6,
 
     LIBXTUN_ERR_RESERVED_0 = -10000,
     LIBXTUN_ERR_RESERVED_1 = -10001,

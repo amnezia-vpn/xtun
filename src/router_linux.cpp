@@ -311,12 +311,12 @@ namespace libxtun
 
         // Unmarked traffic uses the private table (the tun); the proxy's own marked
         // packets fall through to the main table and reach the physical link.
-        if (auto err = updateRule(add, family, true, PROXY_FWMARK, PROXY_TABLE, -1, 32765); add && err != LIBXTUN_OK) {
+        if (auto err = updateRule(add, family, true, PROXY_FWMARK, PROXY_TABLE, -1, RULE_PRIORITY_TUNNEL); add && err != LIBXTUN_OK) {
             return err;
         }
 
         // Ignore the main table's default route so more-specific routes (LAN) still win.
-        if (auto err = updateRule(add, family, false, 0, RT_TABLE_MAIN, 0, 32764); add && err != LIBXTUN_OK) {
+        if (auto err = updateRule(add, family, false, 0, RT_TABLE_MAIN, 0, RULE_PRIORITY_LAN); add && err != LIBXTUN_OK) {
             return err;
         }
 
