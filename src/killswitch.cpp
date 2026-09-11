@@ -10,7 +10,9 @@ namespace libxtun
 
         switch(m_mode) {
         case LIBXTUN_KILLSWITCH_MODE_DISABLED:
+            // clear rules installed by HARD
             remove();
+            m_installed = false;
             return LIBXTUN_OK;
         case LIBXTUN_KILLSWITCH_MODE_SOFT:
         case LIBXTUN_KILLSWITCH_MODE_HARD:
