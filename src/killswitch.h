@@ -5,6 +5,7 @@
 #include "xtun.h"
 
 #include <memory>
+#include <mutex>
 #include <string>
 
 namespace libxtun
