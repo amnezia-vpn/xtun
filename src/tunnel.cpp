@@ -2,6 +2,7 @@
 #include "proxy.h"
 #include "tun_device.h"
 #include "xtun.h"
+#include <utility>
 
 namespace
 {
@@ -23,6 +24,9 @@ namespace libxtun
 {
     Tunnel::~Tunnel()
     {
+        if (m_proxy) {
+            m_proxy->attachIo(nullptr);
+        }
         m_device->stopMonitor();
         m_device->cancelRead();
         if (m_router != nullptr) {
@@ -82,16 +86,13 @@ namespace libxtun
         if (proxy == nullptr) {
             return LIBXTUN_ERR_INVALID_ARGS;
         }
-
         if (m_proxy) {
-            m_proxy->attachIo(nullptr);
-            m_proxy = nullptr;
+            detachProxyLocked(m_proxy);
         }
 
         ProxyProfile profile = proxy->profile();
 
         if (m_router != nullptr) {
-            m_router->clearProxyRoutes();
             if (auto rc = m_router->setProxyRoutes(profile.routes); rc != LIBXTUN_OK) {
                 // FIXME: we are reverting too much in here. Should be rollback() or similar
                 m_router->revert();
@@ -109,6 +110,31 @@ namespace libxtun
         m_proxy = proxy;
 
         return LIBXTUN_OK;
+    }
+
+    void Tunnel::detachProxy(Proxy *proxy)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        detachProxyLocked(proxy);
+    }
+
+    void Tunnel::detachProxyLocked(Proxy *proxy)
+    {
+        if (proxy == nullptr) {
+            return;
+        }
+
+        if (m_router) {
+            // FIXME: clear routes only for particular Proxy
+            m_router->clearProxyRoutes();
+        }
+
+        // FIXME: this abstraction make sense for ONE to MANY model
+        (void)proxy;
+
+        m_proxy->event(ProxyEvent::Down);
+        m_proxy->attachIo(nullptr);
+        m_proxy = nullptr;
     }
 
     int Tunnel::start()
@@ -270,4 +296,14 @@ int libxtun_tunnel_attach_proxy(struct libxtun_tunnel *tun, struct libxtun_proxy
 
     auto *obj = reinterpret_cast<libxtun::Tunnel *>(tun->handle);
     return obj->attachProxy(reinterpret_cast<libxtun::Proxy *>(proxy->handle));
+}
+
+void libxtun_tunnel_detach_proxy(struct libxtun_tunnel *tun, struct libxtun_proxy *proxy)
+{
+    if (tun == nullptr || tun->handle == nullptr || proxy == nullptr || proxy->handle == nullptr) {
+        return;
+    }
+
+    auto *obj = reinterpret_cast<libxtun::Tunnel *>(tun->handle);
+    obj->detachProxy(reinterpret_cast<libxtun::Proxy *>(proxy->handle));
 }
