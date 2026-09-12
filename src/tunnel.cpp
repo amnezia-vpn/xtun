@@ -105,6 +105,7 @@ namespace libxtun
         m_device->resetReadCancellation();
 
         proxy->attachIo(this);
+        proxy->event(m_device->up() ? ProxyEvent::Up : ProxyEvent::Down);
         m_proxy = proxy;
 
         return LIBXTUN_OK;

@@ -155,7 +155,7 @@ namespace libxtun
 
     bool WindowsTunDevice::up() const noexcept
     {
-        return false;
+        return true;
     }
 
     void WindowsTunDevice::resetReadCancellation() noexcept
