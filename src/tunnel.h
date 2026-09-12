@@ -30,6 +30,8 @@ namespace libxtun
         ~Tunnel();
 
         int attachProxy(Proxy *proxy);
+        void detachProxy(Proxy *proxy);
+
         int start();
 
         int read(std::span<std::byte> buf) override;
@@ -51,6 +53,8 @@ namespace libxtun
         void onLinkStateChanged(bool up) override;
         void onMtuChanged(int) override;
         void onRouteChanged() override;
+
+        void detachProxyLocked(Proxy *proxy);
 
         std::unique_ptr<TunDevice> m_device;
         std::unique_ptr<Router> m_router;
