@@ -39,8 +39,6 @@ namespace libxtun
 
     private:
         libxtun_killswitch_mode m_mode = LIBXTUN_KILLSWITCH_MODE_DISABLED;
-        int m_ifIndex = -1;
-        std::string m_ifName;
         std::mutex m_mutex;
         bool m_installed = false;
     };

@@ -102,7 +102,7 @@ namespace libxtun::pf
         const std::string &output = result.value();
         const std::size_t marker = output.find(TOKEN_MARKER);
 
-        if (marker == std::string::npos || (token = std::strtoull(output.c_str() + marker + TOKEN_MARKER.size(), nullptr, 10) == 0)) {
+        if (marker == std::string::npos || (token = std::strtoull(output.c_str() + marker + TOKEN_MARKER.size(), nullptr, 10)) == 0) {
             (void)pfctl({ "-d" }, {});
             return LIBXTUN_ERR_SYSTEM;
         }

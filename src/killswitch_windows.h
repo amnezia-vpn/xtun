@@ -1,0 +1,40 @@
+#ifndef LIBXTUN_KILLSWITCH_WINDOWS_H
+#define LIBXTUN_KILLSWITCH_WINDOWS_H
+
+#include "killswitch.h"
+#include "xtun.h"
+#include "net/wfp.h"
+
+#include <memory>
+#include <string>
+
+namespace libxtun
+{
+    constexpr GUID PROVIDER_KEY = { 0xc8bb0995, 0x14c5, 0x47ec, 0xbb, 0x16, 0xea, 0xbb, 0xde, 0xef, 0x3f, 0xc5 };
+    constexpr GUID SUBLAYER_KEY = { 0x6d0b7874, 0x4f21, 0x4c2a, 0x9d, 0x6a, 0x78, 0x74, 0xa1, 0xb2, 0x00, 0x01 };
+    constexpr UINT16 SUBLAYER_WEIGHT = 0xFFFF;
+
+    wfp::WfpConfig makeWfpConfig(bool persistent) noexcept;
+
+    class WindowsKillswitch final : public Killswitch
+    {
+    public:
+        explicit WindowsKillswitch (libxtun_killswitch_mode mode) noexcept : Killswitch(mode)
+        {
+        }
+        ~WindowsKillswitch() override = default ;
+
+    protected:
+        libxtun_error install(int ifIndex, const std::string &ifName) override;
+        void remove() noexcept override;
+
+    private:
+        libxtun_error installFilters(std::uint64_t luidValue) noexcept;
+        libxtun_error blockAll(const GUID &layer) noexcept;
+        libxtun_error allowTunnel(const GUID &layer, std::uint64_t luidValue) noexcept;
+        libxtun_error allowLoopback(const GUID &layer) noexcept;
+        libxtun_error allowAppTraffic(const GUID &layer) noexcept;
+        std::unique_ptr<wfp::WfpEngine> m_wfp;
+    };
+}
+#endif
