@@ -7,6 +7,9 @@
     #include "router_windows.h"
     #include "tun_device_windows.cpp"
     #include "tun_device_windows.h"
+    #include "killswitch_windows.cpp"
+    #include "killswitch_windows.h"
+    #include "net/wfp.cpp"
 #elif defined(__APPLE__)
     #include "router_macos.cpp"
     #include "router_macos.h"
@@ -58,12 +61,12 @@ namespace libxtun
 
     std::unique_ptr<Killswitch> Killswitch::create(libxtun_killswitch_mode mode)
     {
-#if defined(_WIN32)
-        return std::make_unique<WindowsKillswitch>();
+#if defined(__linux__) && !defined(__ANDROID__)
+        return std::make_unique<LinuxKillswitch>(mode);
 #elif defined(__APPLE__)
         return std::make_unique<MacosKillswitch>(mode);
-#elif defined(__linux__) && !defined(__ANDROID__)
-        return std::make_unique<LinuxKillswitch>(mode);
+#elif defined(_WIN32)
+        return std::make_unique<WindowsKillswitch>(mode);
 #else
         (void)mode;
         return nullptr;
