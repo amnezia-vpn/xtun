@@ -36,22 +36,24 @@ namespace libxtun
 
     ResultXtun<std::unique_ptr<Tunnel>> Tunnel::fromOpts(const libxtun_tunnel_opts &opts)
     {
-        auto dev = createTunDevice();
-        auto router = Router::create();
+        auto tun = std::unique_ptr<Tunnel>(new Tunnel());
+        tun->m_device = createTunDevice();
+        tun->m_router = Router::create();
 
+        auto &dev = tun->m_device;
+        auto &router = tun->m_router;
+        
         if (auto rc = dev->open(); rc != LIBXTUN_OK) {
             return fail(rc);
         }
+
+        dev->startMonitor(*tun);
 
         const auto ifAddrs = parseStrList(opts.if_addrs);
         if (auto rc = router->configureInterface(dev->name(), dev->ifIndex(), ifAddrs, opts.mtu); rc != LIBXTUN_OK) {
             return fail(rc);
         }
 
-        auto tun = std::unique_ptr<Tunnel>(new Tunnel());
-        tun->m_device = std::move(dev);
-        tun->m_router = std::move(router);
-        tun->m_device->startMonitor(*tun);
         return tun;
     }
 
