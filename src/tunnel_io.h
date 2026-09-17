@@ -46,7 +46,7 @@ namespace libxtun
             if (auto *io = op.io()) {
                 return io->read(buf);
             }
-            return 0;
+            return -1;
         }
         int write(std::span<const std::byte> packet) override
         {
@@ -55,7 +55,7 @@ namespace libxtun
             if (auto *io = op.io()) {
                 return io->write(packet);
             }
-            return 0;
+            return -1;
         }
         int mtu() const override
         {
