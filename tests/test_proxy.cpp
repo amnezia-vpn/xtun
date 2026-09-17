@@ -6,8 +6,13 @@
 
 #include <chrono>
 #include <gtest/gtest.h>
-#include <thread>
 #include <vector>
+
+namespace
+{
+    constexpr auto ARRIVE_THRESHOLD = std::chrono::milliseconds(100);
+    constexpr auto SETUP_TIMEOUT = std::chrono::seconds(2);
+}
 
 class ProxyConfig : public testing::TestWithParam<libxtun::test::Confpair>
 {
@@ -81,15 +86,26 @@ TEST_P(ProxyConfig, Roundtrip)
     proxyA->attachIo(&tunA);
     proxyA->event(libxtun::ProxyEvent::Up);
 
-    // FIXME: implement Proxy::awaitUp() and remove this workaround
-    std::this_thread::sleep_for(std::chrono::seconds(2));
+    {
+        const auto sent = libxtun::test::sampleIpv4Packet("ping");
+        std::vector<std::byte> received(sent.size());
 
-    const auto pkt = libxtun::test::sampleIpv4Packet("ping");
-    tunA.injectPacket(pkt);
+        const auto start = std::chrono::steady_clock::now();
+        bool arrived = false;
 
-    std::vector<std::byte> rcvBuf(pkt.size());
-    bool res = tunB.waitForArrival(rcvBuf, std::chrono::milliseconds(500));
-    EXPECT_TRUE(res) << "failed to receive data";
+        while (std::chrono::steady_clock::now() - start < SETUP_TIMEOUT) {
+            tunA.injectPacket(sent);
+
+            int n = tunB.waitForArrival(received, ARRIVE_THRESHOLD);
+            if (n > 0) {
+                arrived = true;
+                received.resize(n);
+                break;
+            }
+        }
+        // FIXME: check the actual IP addresses arrived in IP packet
+        EXPECT_TRUE(arrived && received.size() == sent.size());
+    }
 }
 
 INSTANTIATE_TEST_SUITE_P(Proxy, ProxyConfig, testing::ValuesIn(libxtun::test::ConfpairBuilder().build()),

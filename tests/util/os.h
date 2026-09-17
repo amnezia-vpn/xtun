@@ -3,16 +3,19 @@
 
 #include "util/noncopyable.h"
 
-#include <cstring>
 #include <optional>
 #include <string>
 #include <utility>
 
 #if defined(__linux__) || defined(__APPLE__)
+    #include <arpa/inet.h>
+    #include <cstring>
     #include <fcntl.h>
+    #include <netinet/in.h>
     #include <sys/ioctl.h>
     #include <sys/socket.h>
     #include <unistd.h>
+
 #endif
 
 #if defined(__linux__)
@@ -37,7 +40,7 @@
 
 namespace libxtun::test
 {
-    bool privileged()
+    static bool privileged()
     {
 #if defined(__linux__) || defined(__APPLE__)
         return ::geteuid() == 0;
@@ -107,7 +110,7 @@ namespace libxtun::test
         int m_fd = -1;
     };
 
-    std::optional<std::pair<ScopedFd, std::string>> createTun()
+    static std::optional<std::pair<ScopedFd, std::string>> createTun()
     {
 #if defined(__linux__)
         int fd = ::open("/dev/net/tun", O_RDWR | O_CLOEXEC);
@@ -158,7 +161,7 @@ namespace libxtun::test
     }
 
     // Independent of libxtun: ask the kernel directly whether the interface exists.
-    std::optional<bool> ifaceExists(const std::string name)
+    static std::optional<bool> ifaceExists(const std::string name)
     {
 #if defined(__linux__)
         int sock = ::socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
@@ -177,7 +180,7 @@ namespace libxtun::test
     }
 
 #if defined(__linux__)
-    int createPersistentTun(char *name, size_t len)
+    static int createPersistentTun(char *name, size_t len)
     {
         int fd = ::open("/dev/net/tun", O_RDWR | O_CLOEXEC);
         if (fd < 0) {
@@ -195,7 +198,7 @@ namespace libxtun::test
         return 0;
     }
 
-    void removePersistentTun(const char *name)
+    static void removePersistentTun(const char *name)
     {
         int fd = ::open("/dev/net/tun", O_RDWR | O_CLOEXEC);
         if (fd < 0) {
@@ -211,6 +214,25 @@ namespace libxtun::test
         ::close(fd);
     }
 #endif
+
+    static int udpOpen(std::string host, uint16_t port)
+    {
+        struct sockaddr_in addr;
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(port);
+        inet_pton(AF_INET, host.c_str(), &addr.sin_addr);
+
+        int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (sock < 0) {
+            return sock;
+        }
+
+        if (int res = connect(sock, reinterpret_cast<struct sockaddr *>(&addr), sizeof(addr)); res < 0) {
+            return res;
+        }
+
+        return sock;
+    }
 }
 
 #endif
