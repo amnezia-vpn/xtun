@@ -120,7 +120,7 @@ namespace libxtun
 
     void Tunnel::detachProxyLocked(Proxy *proxy)
     {
-        if (proxy == nullptr) {
+        if (proxy == nullptr || m_proxy != proxy) {
             return;
         }
 
