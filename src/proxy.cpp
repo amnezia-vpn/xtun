@@ -34,7 +34,12 @@ namespace libxtun
         }
     }
 
-    Proxy::Proxy(ClientCallbacks callbacks) : m_callbacks(callbacks) { };
+    Proxy::Proxy(ClientCallbacks callbacks) : m_callbacks(callbacks) {};
+
+    Proxy::~Proxy()
+    {
+        m_destroyed = true;
+    }
 
     void Proxy::attachIo(TunnelIo *io)
     {
@@ -65,12 +70,20 @@ namespace libxtun
 
     int Proxy::tunRead(void *b, int len)
     {
-        return m_io.read({ static_cast<std::byte *>(b), static_cast<std::size_t>(len) });
+        int n = m_io.read({ static_cast<std::byte *>(b), static_cast<std::size_t>(len) });
+        if (n < 0 && !m_destroyed) {
+            return 0;
+        }
+        return n;
     }
 
     int Proxy::tunWrite(void *b, int len)
     {
-        return m_io.write({ static_cast<std::byte *>(b), static_cast<std::size_t>(len) });
+        int n = m_io.write({ static_cast<std::byte *>(b), static_cast<std::size_t>(len) });
+        if (n < 0 && !m_destroyed) {
+            return 0;
+        }
+        return n;
     }
 
     int Proxy::tunMtu()

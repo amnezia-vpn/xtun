@@ -1,6 +1,7 @@
 #ifndef PROXY_H
 #define PROXY_H
 
+#include <atomic>
 #include <xtun.h>
 
 #include "health/probe.h"
@@ -46,7 +47,7 @@ namespace libxtun
                                                          ClientCallbacks callbacks);
 
         Proxy(ClientCallbacks callbacks);
-        ~Proxy() override {};
+        ~Proxy() override;
 
         virtual const char *name() = 0;
 
@@ -85,9 +86,12 @@ namespace libxtun
         }
         void emitLog(char *str);
 
-        void haltIo() {
+        void haltIo()
+        {
             m_io.halt();
         }
+
+        std::atomic<bool> m_destroyed = false;
 
     private:
         void onConnectionState(health::ConnectionState state) noexcept override;
