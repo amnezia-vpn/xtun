@@ -5,7 +5,6 @@
 #include "xtun.h"
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
 #include <numeric>
 #include <string>
 #include <vector>
@@ -39,6 +38,9 @@ namespace libxtun::test
 {
     constexpr const char *DEFAULT_IFADDR = "10.9.9.1";
     constexpr const char *DEFAULT_IFADDR_PREFIX = "10.9.9.1/32";
+    constexpr const char *DEFAULT_ROUTE = "10.9.9.2";
+    constexpr const char *DEFAULT_ROUTE_PREFIX = "10.9.9.2/32";
+    constexpr uint16_t DEFAULT_PORT = 35777;
 
     struct Confpair
     {
@@ -92,9 +94,9 @@ namespace libxtun::test
         }
 
     private:
-        uint16_t m_port = 35777;
+        uint16_t m_port = DEFAULT_PORT;
         std::string m_ifaddr = DEFAULT_IFADDR_PREFIX;
-        std::vector<std::string> m_routes = { "0.0.0.0/0" };
+        std::vector<std::string> m_routes = { DEFAULT_ROUTE_PREFIX };
     };
 
     struct TunOpts : private NonCopyable
@@ -162,6 +164,15 @@ namespace libxtun::test
         std::vector<std::string> m_ifaddrs = { DEFAULT_IFADDR };
         std::vector<const char *> m_dnsPtrs, m_dnsExceptionsPtrs, m_ifaddrsPtrs;
     };
+
+    static std::vector<libxtun_proxy_proto> allProtos()
+    {
+        std::vector<libxtun_proxy_proto> res;
+        for (int i = LIBXTUN_PROXY_PROTO_AWG; i < LIBXTUN_PROXY_PROTO_LAST; i++) {
+            res.push_back(static_cast<libxtun_proxy_proto>(i));
+        }
+        return res;
+    }
 }
 
 #endif
