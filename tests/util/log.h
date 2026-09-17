@@ -2,6 +2,7 @@
 #define TEST_LOG_H
 
 #include "proxy.h"
+#include "xtun.h"
 
 namespace libxtun::test
 {
@@ -22,6 +23,19 @@ namespace libxtun::test
             callbacks.onLog = Logger::clog;
             callbacks.onLogPriv = this;
             return callbacks;
+        }
+
+        libxtun_proxy defaultProxy()
+        {
+            libxtun_proxy proxy;
+            return wrapProxy(proxy);
+        }
+
+        libxtun_proxy &wrapProxy(libxtun_proxy &proxy)
+        {
+            proxy.loghandler = Logger::clog;
+            proxy.loghandler_priv = this;
+            return proxy;
         }
 
         static void clog(const char *message, void *priv)
