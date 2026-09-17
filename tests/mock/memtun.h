@@ -78,7 +78,7 @@ namespace libxtun::test
             size_t n = std::min(buf.size(), vec.size());
             std::memcpy(buf.data(), vec.data(), n);
             m_out.pop_front();
-            return true;
+            return n;
         }
 
     private:

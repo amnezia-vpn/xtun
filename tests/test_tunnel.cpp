@@ -72,10 +72,10 @@ TEST(Tunnel, AttachesProxy)
     libxtun::test::Logger log;
 
     libxtun::test::TunOpts opts;
+    libxtun::test::MemProxy proxy(log.defaultCallbacks());
+
     auto res = libxtun::Tunnel::fromOpts(opts.get());
     EXPECT_TRUE(res) << "Tunnel::fromOpts failed with " << res.error() << " error code";
-
-    libxtun::test::MemProxy proxy(log.defaultCallbacks());
 
     auto &tun = res.value();
     tun->attachProxy(&proxy);
