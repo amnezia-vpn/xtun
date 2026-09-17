@@ -41,23 +41,26 @@ namespace libxtun
 
         int read(std::span<std::byte> buf) override
         {
-            IoOperation op(*this);
+            std::unique_lock lock(m_mutex);
+            IoOperation op(*this, lock);
             if (auto *io = op.io()) {
                 return io->read(buf);
             }
-            return -1;
+            return 0;
         }
         int write(std::span<const std::byte> packet) override
         {
-            IoOperation op(*this);
+            std::unique_lock lock(m_mutex);
+            IoOperation op(*this, lock);
             if (auto *io = op.io()) {
                 return io->write(packet);
             }
-            return -1;
+            return 0;
         }
         int mtu() const override
         {
-            IoOperation op(*this, false);
+            std::unique_lock lock(m_mutex);
+            IoOperation op(*this, lock, false);
             if (auto *io = op.io()) {
                 return io->mtu();
             }
@@ -65,7 +68,8 @@ namespace libxtun
         }
         void protectSocket(int fd) override
         {
-            IoOperation op(*this);
+            std::unique_lock lock(m_mutex);
+            IoOperation op(*this, lock);
             if (auto *io = op.io()) {
                 io->protectSocket(fd);
             }
@@ -73,48 +77,50 @@ namespace libxtun
 
         void assign(TunnelIo *io)
         {
-            std::scoped_lock lock(m_mutex);
+            std::unique_lock lock(m_mutex);
+            haltLocked(lock);
+            m_halted = false;
             m_io = io;
             m_cv.notify_all();
         }
 
         void halt() override
         {
+            std::unique_lock lock(m_mutex);
+            haltLocked(lock);
+        }
+
+    private:
+        void haltLocked(std::unique_lock<std::mutex> &lock)
+        {
             {
-                IoOperation op(*this, false);
+                IoOperation op(*this, lock, false);
                 if (auto *io = op.io()) {
                     io->halt();
                 }
             }
-            haltSelf();
-        }
-
-    protected:
-        void haltSelf()
-        {
-            std::unique_lock lock(m_mutex);
             m_halted = true;
             m_cv.notify_all();
             m_cv.wait(lock, [this]() { return m_users == 0; });
         }
 
-    private:
         class IoOperation
         {
         public:
-            IoOperation(const WrappedIo &self, bool waitForNonNull = true) : m_self(self)
+            IoOperation(const WrappedIo &self, std::unique_lock<std::mutex> &lock, bool waitForNonNull = true)
+                : m_self(self), m_lock(lock)
             {
-                std::unique_lock lock(self.m_mutex);
                 ++self.m_users;
                 if (waitForNonNull) {
                     self.m_cv.wait(lock, [&self]() { return self.m_io != nullptr || self.m_halted; });
                 }
                 m_io = self.m_halted ? nullptr : self.m_io;
+                m_lock.unlock();
             }
 
             ~IoOperation()
             {
-                std::scoped_lock lock(m_self.m_mutex);
+                m_lock.lock();
                 --m_self.m_users;
                 if (m_self.m_halted) {
                     m_self.m_cv.notify_all();
@@ -129,6 +135,7 @@ namespace libxtun
         private:
             const WrappedIo &m_self;
             TunnelIo *m_io = nullptr;
+            std::unique_lock<std::mutex> &m_lock;
         };
 
         TunnelIo *m_io = nullptr;
