@@ -1,4 +1,5 @@
 #include "tunnel.h"
+#include "net/ip.h"
 #include "proxy.h"
 #include "tun_device.h"
 #include "xtun.h"
@@ -42,7 +43,7 @@ namespace libxtun
 
         auto &dev = tun->m_device;
         auto &router = tun->m_router;
-        
+
         if (auto rc = dev->open(); rc != LIBXTUN_OK) {
             return fail(rc);
         }
@@ -52,6 +53,13 @@ namespace libxtun
         const auto ifAddrs = parseStrList(opts.if_addrs);
         if (auto rc = router->configureInterface(dev->name(), dev->ifIndex(), ifAddrs, opts.mtu); rc != LIBXTUN_OK) {
             return fail(rc);
+        }
+
+        // FIXME(cd-amn): add a handle in router to obtain these addrs, and remove this one completely
+        for (const auto &ifAddr : ifAddrs) {
+            if (auto prefix = net::IpPrefix::parse(ifAddr)) {
+                tun->m_addrs.emplace_back(std::move(*prefix));
+            }
         }
 
         return tun;
@@ -95,8 +103,14 @@ namespace libxtun
         ProxyProfile profile = proxy->profile();
 
         if (m_router != nullptr) {
-            if (auto rc = m_router->setProxyRoutes(profile.routes); rc != LIBXTUN_OK) {
-                // FIXME: we are reverting too much in here. Should be rollback() or similar
+            // TODO(cd-amn): use net::IpPrefix in routers
+            std::vector<std::string> strRoutes;
+            strRoutes.reserve(sizeof(profile.routes));
+            for (const auto &route : profile.routes) {
+                strRoutes.push_back(route.toString());
+            }
+            if (auto rc = m_router->setProxyRoutes(strRoutes); rc != LIBXTUN_OK) {
+                // FIXME(cd-amn): we are reverting too much in here. Should be rollback() or similar
                 m_router->revert();
                 return LIBXTUN_ERR_SYSTEM;
             }
@@ -127,7 +141,7 @@ namespace libxtun
         }
 
         if (m_router) {
-            // FIXME: clear routes only for particular Proxy
+            // FIXME(cd-amn): clear routes only for particular Proxy
             m_router->clearProxyRoutes();
         }
 
@@ -178,11 +192,6 @@ namespace libxtun
         return m_device->write(packet);
     }
 
-    int Tunnel::mtu() const
-    {
-        return m_device->mtu();
-    }
-
     void Tunnel::protectSocket(int fd)
     {
         if (m_router != nullptr) {
@@ -192,8 +201,17 @@ namespace libxtun
 
     void Tunnel::halt()
     {
-        // TODO(cd-amn): rework as halt: fire once, non-recoverable
         m_device->cancelRead();
+    }
+
+    int Tunnel::mtu() const
+    {
+        return m_device->mtu();
+    }
+
+    std::vector<net::IpPrefix> Tunnel::addresses()
+    {
+        return m_addrs;
     }
 
     void Tunnel::onLinkStateChanged(bool up)

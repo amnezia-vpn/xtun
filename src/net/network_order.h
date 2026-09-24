@@ -1,7 +1,7 @@
 #ifndef NET_NETWORK_ORDER_H
 #define NET_NETWORK_ORDER_H
 
-#include "net/sys.h"
+#include "net/sys.h" // IWYU pragma: keep
 
 #include <array>
 #include <concepts>

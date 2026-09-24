@@ -38,6 +38,11 @@ namespace libxtun::health
             return m_halted.load(std::memory_order_acquire);
         }
 
+        std::vector<net::IpPrefix> addresses() override
+        {
+            return m_device.addresses();
+        }
+
     private:
         TunnelIo &m_device;
         TrafficMeter &m_meter;

@@ -61,6 +61,11 @@ namespace libxtun::test
             m_cond.notify_all();
         }
 
+        std::vector<net::IpPrefix> addresses() override
+        {
+            return {};
+        }
+
         void injectPacket(std::span<const std::byte> packet)
         {
             std::lock_guard<std::mutex> lock(m_mutex);

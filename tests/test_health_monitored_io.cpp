@@ -54,6 +54,11 @@ namespace
         void halt() override
         {
         }
+
+        std::vector<libxtun::net::IpPrefix> addresses() override
+        {
+            return {};
+        }
     };
 
     class FakeInterceptor final : public libxtun::health::PacketInterceptor

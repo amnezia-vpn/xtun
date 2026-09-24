@@ -2,7 +2,7 @@
 #define NET_SOCKET_H
 
 #include "net/ip.h"
-#include "net/sys.h"
+#include "net/sys.h" // IWYU pragma: keep
 #include "util/noncopyable.h"
 
 #include <chrono>

@@ -3,9 +3,64 @@
 #include <algorithm>
 #include <charconv>
 #include <cstring>
+#include <sstream>
 
 namespace libxtun::net
 {
+    int ipv6L4Offset(const void *b, int n, uint8_t &proto)
+    {
+        auto *p = reinterpret_cast<const uint8_t *>(b);
+        if (n < 40) {
+            return -1;
+        }
+        uint8_t nh = p[6];
+        int off = 40;
+
+        for (;;) {
+            switch (nh) {
+            case 0:     // Hop-by-Hop Options
+            case 43:    // Routing
+            case 60:    // Destination Options
+            case 135:   // Mobility
+            case 139:   // HIP
+            case 140: { // Shim6
+                if (off + 2 > n) {
+                    return -1;
+                }
+                int extLen = (p[off + 1] + 1) * 8;
+                if (off + extLen > n) {
+                    return -1;
+                }
+                nh = p[off];
+                off += extLen;
+            } break;
+            case 44: { // Fragment Header
+                if (off + 8 > n) {
+                    return -1;
+                }
+                nh = p[off];
+                off += 8;
+            } break;
+            case 51: { // IPSec Authentication Header
+                if (off + 12 > n) {
+                    return -1;
+                }
+                int extLen = (p[off + 1] + 2) * 4;
+                if (off + extLen > n) {
+                    return -1;
+                }
+                nh = p[off];
+                off += extLen;
+            } break;
+            case 50: // IPSec Encapsulating Security Payload
+                return -1;
+            case 59: // No Next Header
+                return -1;
+            default: proto = nh; return off;
+            }
+        }
+    }
+
     namespace
     {
 
@@ -156,6 +211,13 @@ namespace libxtun::net
 
         const unsigned mask = (0xffu << (8 - remainder)) & 0xffu;
         return (octetAt(expected, whole) & mask) == (octetAt(actual, whole) & mask);
+    }
+
+    std::string IpPrefix::toString() const
+    {
+        std::ostringstream ss;
+        ss << m_address.toString() << '/' << m_bits;
+        return ss.str();
     }
 
     PrefixSet PrefixSet::parseAll(std::span<const std::string> cidrs)

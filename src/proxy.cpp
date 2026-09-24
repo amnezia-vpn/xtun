@@ -49,10 +49,8 @@ namespace libxtun
         }
 
         auto prof = profile();
-        health::HealthConfig conf { .dnsServers = std::move(prof.dnsServers),
-                                    .tunnelAddresses = std::move(prof.addresses),
-                                    .tunnelRoutes = std::move(prof.routes),
-                                    .probeStyle = prof.probeStyle };
+        // FIXME(ygurov): FIX HEALTH YOU HAVE BROKE!!!
+        health::HealthConfig conf { .probeStyle = prof.probeStyle };
 
         health::HealthListener *listener = this;
         m_health = std::make_unique<health::HealthSubsystem>(*listener, conf);
