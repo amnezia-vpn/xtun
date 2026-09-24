@@ -23,7 +23,6 @@ namespace libxtun
     {
         namespace awg
         {
-
             template<typename T> using ResultParser = ResultGeneric<T, std::errc>;
 
             template<typename T> struct PlainField
@@ -121,7 +120,7 @@ namespace libxtun
                     // System params
                     std::vector<IpAddrField> dns;
                     std::optional<Uint32Field> mtu;
-                    std::optional<PrefixField> address;
+                    std::vector<PrefixField> address;
 
                     // WireGuard params
                     std::optional<KeyField> privateKey;

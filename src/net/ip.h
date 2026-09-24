@@ -1,7 +1,7 @@
 #ifndef NET_IP_H
 #define NET_IP_H
 
-#include "net/sys.h"
+#include "net/sys.h" // IWYU pragma: keep
 
 #include <array>
 #include <cstddef>
@@ -14,6 +14,8 @@
 
 namespace libxtun::net
 {
+    int ipv6L4Offset(const void *b, int n, uint8_t &proto);
+
     class IpAddress
     {
     public:
@@ -63,6 +65,7 @@ namespace libxtun::net
         {
             return m_bits == 0 && m_address.valid();
         }
+        std::string toString() const;
 
     private:
         IpAddress m_address;

@@ -41,6 +41,9 @@ add_library(${PROJECT_NAME}
     ${CMAKE_CURRENT_LIST_DIR}/src/health/scheduler.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/health/subsystem.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/health/verdict.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/io/awaiting_io.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/io/remapping_io.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/net/checksum.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/net/ip.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/net/socket.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/net/udp.cpp

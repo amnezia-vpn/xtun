@@ -1,0 +1,50 @@
+#ifndef REMAPPING_IO_H
+#define REMAPPING_IO_H
+
+#include "net/sys.h" // IWYU pragma: keep
+#include "tunnel_io.h"
+#include "util/noncopyable.h"
+#include <cstring>
+
+namespace libxtun
+{
+    class RemappingIo : public TunnelIo, private NonCopyable
+    {
+    public:
+        explicit RemappingIo(TunnelIo &io, in_addr v4origin, in_addr v4target, in6_addr v6origin, in6_addr v6target);
+
+        int read(std::span<std::byte> buf) override;
+        int write(std::span<const std::byte> packet) override;
+
+        void halt() override
+        {
+            m_inner.halt();
+        }
+
+        void protectSocket(int fd) override
+        {
+            m_inner.protectSocket(fd);
+        }
+
+        int mtu() const override
+        {
+            return m_inner.mtu();
+        }
+
+        std::vector<net::IpPrefix> addresses() override
+        {
+            return m_inner.addresses();
+        }
+
+    private:
+        void fixProtoChecksum(void *p, int n, uint8_t proto, uint32_t delta);
+
+        in_addr m_v4origin {};
+        in_addr m_v4target {};
+        in6_addr m_v6origin {};
+        in6_addr m_v6target {};
+        TunnelIo &m_inner;
+    };
+}
+
+#endif

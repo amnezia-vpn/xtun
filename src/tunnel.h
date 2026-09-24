@@ -1,6 +1,7 @@
 #ifndef LIBXTUN_TUNNEL_H
 #define LIBXTUN_TUNNEL_H
 
+#include "net/ip.h"
 #include "proxy.h"
 #include "router.h"
 #include "tun_device.h"
@@ -36,9 +37,10 @@ namespace libxtun
 
         int read(std::span<std::byte> buf) override;
         int write(std::span<const std::byte> packet) override;
-        int mtu() const override;
         void protectSocket(int fd) override;
         void halt() override;
+        int mtu() const override;
+        std::vector<net::IpPrefix> addresses() override;
 
         const std::string &name() const
         {
@@ -62,6 +64,7 @@ namespace libxtun
         std::mutex m_mutex;
         bool m_started = false;
         Proxy *m_proxy = nullptr;
+        std::vector<net::IpPrefix> m_addrs;
     };
 }
 

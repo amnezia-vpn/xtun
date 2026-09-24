@@ -4,6 +4,7 @@
 #include "../proxy.h"
 
 #include "awg_conf.h"
+#include "io/remapping_io.h"
 #include "util/result.h"
 
 #include <memory>
@@ -21,6 +22,7 @@ namespace libxtun
 
             void event(ProxyEvent ev) override;
             ProxyProfile profile() const override;
+            void attachIo(TunnelIo *io) override;
 
             const char *name() override
             {
@@ -32,6 +34,7 @@ namespace libxtun
 
             awg::Config m_conf;
             void *m_handle = nullptr;
+            std::unique_ptr<RemappingIo> m_remapio;
         };
     }
 }

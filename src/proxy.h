@@ -7,11 +7,12 @@
 #include "health/probe.h"
 #include "health/state.h"
 #include "health/subsystem.h"
+#include "io/awaiting_io.h"
+#include "net/ip.h"
 #include "tunnel_io.h"
 #include "util/noncopyable.h"
 #include "util/result.h"
 
-#include <string>
 #include <vector>
 
 namespace libxtun
@@ -24,9 +25,8 @@ namespace libxtun
 
     struct ProxyProfile
     {
-        std::vector<std::string> routes;
-        std::vector<std::string> dnsServers;
-        std::vector<std::string> addresses;
+        std::vector<net::IpPrefix> routes;
+        std::vector<net::IpAddress> dnsServers;
         health::ProbeStyle probeStyle = health::ProbeStyle::Datagram;
     };
 
@@ -96,7 +96,7 @@ namespace libxtun
     private:
         void onConnectionState(health::ConnectionState state) noexcept override;
 
-        WrappedIo m_io;
+        AwaitingIo m_io;
         ClientCallbacks m_callbacks;
         std::unique_ptr<health::HealthSubsystem> m_health;
     };

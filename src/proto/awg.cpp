@@ -1,8 +1,12 @@
 #include "awg.h"
 #include "awg_conf.h"
+#include "io/remapping_io.h"
+#include "net/ip.h"
 #include "proxy.h"
+#include "tunnel_io.h"
 #include "xtun.h"
 
+#include <cstring>
 #include <libgoxtun.h>
 
 #include <memory>
@@ -66,6 +70,40 @@ namespace libxtun
             return awg;
         }
 
+        void Awg::attachIo(TunnelIo *io)
+        {
+            if (io == nullptr) {
+                Proxy::attachIo(io);
+                return;
+            }
+
+            in_addr v4origin{}, v4target{};
+            in6_addr v6origin{}, v6target{};
+
+            for (const auto &prefix : io->addresses()) {
+                const auto &addr = prefix.address();
+                const auto bytes = addr.octets();
+
+                switch (addr.family()) {
+                case AF_INET: std::memcpy(&v4origin, bytes.data(), sizeof(v4origin)); break;
+                case AF_INET6: std::memcpy(&v6origin, bytes.data(), sizeof(v6origin)); break;
+                }
+            }
+
+            for (const auto &prefix : m_conf.iface().address) {
+                const auto &addr = prefix.addr;
+
+                switch (addr.family) {
+                case AF_INET: v4target = addr.ip4; break;
+                case AF_INET6: v6target = addr.ip6; break;
+                }
+            }
+
+            auto remapio = std::make_unique<RemappingIo>(*io, v4origin, v4target, v6origin, v6target);
+            Proxy::attachIo(remapio.get());
+            m_remapio = std::move(remapio);
+        }
+
         void Awg::event(ProxyEvent ev)
         {
             if (m_handle == nullptr) {
@@ -86,14 +124,15 @@ namespace libxtun
             ProxyProfile out;
             for (const auto &peer : iface.peers) {
                 for (const auto &ip : peer.allowedIps) {
-                    out.routes.push_back(ip.toUapi());
+                    if (auto prefix = net::IpPrefix::parse(ip.toUapi())) {
+                        out.routes.emplace_back(std::move(*prefix));
+                    }
                 }
             }
             for (const auto &server : iface.dns) {
-                out.dnsServers.push_back(server.toUapi());
-            }
-            if (iface.address.has_value()) {
-                out.addresses.push_back(iface.address->toUapi());
+                if (auto addr = net::IpAddress::parse(server.toUapi())) {
+                    out.dnsServers.emplace_back(std::move(*addr));
+                }
             }
             return out;
         }
