@@ -1,6 +1,7 @@
 #ifndef TEST_MEMTUN_H
 #define TEST_MEMTUN_H
 
+#include "net/ip.h"
 #include "tunnel_io.h"
 
 #include <chrono>
@@ -63,7 +64,8 @@ namespace libxtun::test
 
         std::vector<net::IpPrefix> addresses() override
         {
-            return {};
+            auto def = net::IpPrefix::parse("10.9.9.1/32");
+            return { *def };
         }
 
         void injectPacket(std::span<const std::byte> packet)

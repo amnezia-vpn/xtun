@@ -20,7 +20,7 @@ class ProxyConfig : public testing::TestWithParam<libxtun::test::Confpair>
 
 TEST_P(ProxyConfig, DeclinesInvalidConfiguration)
 {
-    const auto &[_a, proto, _b, _c] = GetParam();
+    const auto &[_a, proto, _b, _c, _d] = GetParam();
     libxtun::test::Logger log;
 
     auto res = libxtun::Proxy::create(proto, "0xd34db33f", log.defaultCallbacks());
@@ -29,7 +29,7 @@ TEST_P(ProxyConfig, DeclinesInvalidConfiguration)
 
 TEST_P(ProxyConfig, EatsConfiguration)
 {
-    const auto &[_a, proto, cfg, _b] = GetParam();
+    const auto &[_a, proto, cfg, _b, _c] = GetParam();
     libxtun::test::Logger log;
 
     auto res = libxtun::Proxy::create(proto, cfg.c_str(), log.defaultCallbacks());
@@ -38,7 +38,7 @@ TEST_P(ProxyConfig, EatsConfiguration)
 
 TEST_P(ProxyConfig, AttachesNull)
 {
-    const auto &[_a, proto, cfg, _b] = GetParam();
+    const auto &[_a, proto, cfg, _b, _c] = GetParam();
     libxtun::test::Logger log;
 
     auto res = libxtun::Proxy::create(proto, cfg.c_str(), log.defaultCallbacks());
@@ -50,7 +50,7 @@ TEST_P(ProxyConfig, AttachesNull)
 
 TEST_P(ProxyConfig, AttachesIo)
 {
-    const auto &[_a, proto, cfg, _b] = GetParam();
+    const auto &[_a, proto, cfg, _b, _c] = GetParam();
     libxtun::test::Logger log;
 
     libxtun::test::MemTun tun;
@@ -64,7 +64,7 @@ TEST_P(ProxyConfig, AttachesIo)
 
 TEST_P(ProxyConfig, Roundtrip)
 {
-    auto &[_, proto, cfgA, cfgB] = GetParam();
+    auto &[_, proto, cfgA, _b, cfgB] = GetParam();
 
     libxtun::test::Logger logA("A");
     libxtun::test::Logger logB("B");
