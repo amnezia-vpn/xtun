@@ -30,11 +30,7 @@ jobs:
         - name: Build project
           run:  cmake --build build --config Release --parallel
         - name: Run tests
-          if: runner.os == 'Windows'
-          run: ctest --test-dir build -C Release --output-on-failure
-        - name: Run tests
-          if: runner.os != 'Windows'
-          run: sudo ctest --test-dir build -C Release --output-on-failure
+          run: ${{ case(runner.os == 'Windows', 'ctest', 'sudo ctest') }} --test-dir build -C Release --output-on-failure
         - name: Save conan cache
           shell: bash
           run: |

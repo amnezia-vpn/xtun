@@ -152,14 +152,14 @@ class ContractProxyConfpair : public testing::TestWithParam<libxtun::test::Confp
 
 TEST_P(ContractProxyConfpair, InitsFromConf)
 {
-    const auto &param = GetParam();
+    const auto &[_a, proto, conf, _b, _c] = GetParam();
 
     libxtun::test::Logger log;
 
     libxtun_proxy proxy {};
     log.wrapProxy(proxy);
 
-    int res = libxtun_proxy_new(&proxy, param.proto, param.client.c_str());
+    int res = libxtun_proxy_new(&proxy, proto, conf.c_str());
     EXPECT_EQ(res, 0);
 }
 

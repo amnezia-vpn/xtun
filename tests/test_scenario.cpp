@@ -56,7 +56,7 @@ TEST_P(ScenarioConfpair, CommonUse)
         GTEST_SKIP() << "skipped: test requires root/Administrator";
     }
 
-    const auto &[_a, proto, conf, srvConf] = GetParam();
+    const auto &[_a, proto, conf, _b, srvConf] = GetParam();
 
     libxtun::test::TunOpts opts;
     libxtun::test::Logger log("client");
@@ -87,7 +87,7 @@ TEST_P(ScenarioConfpair, SeamlessSwitch)
         GTEST_SKIP() << "skipped: test requires root/Administrator";
     }
 
-    const auto &[_a, proto, conf, srvConf] = GetParam();
+    const auto &[_a, proto, confA, confB, srvConf] = GetParam();
 
     libxtun::test::TunOpts opts;
     libxtun::test::Logger logA("A");
@@ -102,7 +102,7 @@ TEST_P(ScenarioConfpair, SeamlessSwitch)
     bindRemover.wrapProxy(proxyA);
     logA.wrapProxy(proxyA);
 
-    EXPECT_EQ(libxtun_proxy_new(&proxyA, proto, conf.c_str()), LIBXTUN_OK);
+    EXPECT_EQ(libxtun_proxy_new(&proxyA, proto, confA.c_str()), LIBXTUN_OK);
     EXPECT_EQ(libxtun_tunnel_attach_proxy(&tun, &proxyA), LIBXTUN_OK);
     EXPECT_XMIT(srv);
 
@@ -110,7 +110,7 @@ TEST_P(ScenarioConfpair, SeamlessSwitch)
     bindRemover.wrapProxy(proxyB);
     logB.wrapProxy(proxyB);
 
-    EXPECT_EQ(libxtun_proxy_new(&proxyB, proto, conf.c_str()), LIBXTUN_OK);
+    EXPECT_EQ(libxtun_proxy_new(&proxyB, proto, confB.c_str()), LIBXTUN_OK);
     EXPECT_EQ(libxtun_tunnel_attach_proxy(&tun, &proxyB), LIBXTUN_OK);
 
     libxtun_tunnel_detach_proxy(&tun, &proxyA);
