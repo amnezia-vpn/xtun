@@ -132,16 +132,6 @@ TEST(HealthMonitoredIo, WritesCountAsInboundTraffic)
     ASSERT_EQ(s.device.writes.size(), 1u);
 }
 
-TEST(HealthMonitoredIo, SpuriousWakeReadsAgainInsteadOfReturningZero)
-{
-    TestSetup s;
-    s.device.reads = { READ_WAKE, 20 };
-
-    EXPECT_EQ(s.io.read(s.buf), 20);
-    EXPECT_EQ(s.interceptor.stageCalls, 1);
-    EXPECT_TRUE(s.device.reads.empty());
-}
-
 TEST(HealthMonitoredIo, StagedProbeIsReturnedAndNotMetered)
 {
     TestSetup s;
@@ -163,20 +153,6 @@ TEST(HealthMonitoredIo, CapturedReplyNeverReachesTheDeviceOrTheMeter)
     EXPECT_EQ(s.meter.inboundPackets(), 0u);
     ASSERT_EQ(s.interceptor.captured.size(), 1u);
     EXPECT_EQ(s.interceptor.captured[0].size(), 24u);
-}
-
-TEST(HealthMonitoredIo, HaltLatchesBothDirections)
-{
-    TestSetup s;
-    s.device.reads = { 40 };
-
-    s.io.halt();
-
-    EXPECT_TRUE(s.io.halted());
-    EXPECT_EQ(s.io.read(s.buf), IO_FATAL);
-    EXPECT_EQ(s.io.write(std::span<const std::byte>(s.buf.data(), 24)), IO_FATAL);
-    EXPECT_TRUE(s.device.writes.empty());
-    EXPECT_EQ(s.device.reads.size(), 1u) << "the device was read after the decorator was halted";
 }
 
 TEST(HealthMonitoredIo, FatalDeviceReadPropagates)

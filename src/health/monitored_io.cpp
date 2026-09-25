@@ -9,28 +9,20 @@ namespace libxtun::health
 
     int MonitoredIo::read(std::span<std::byte> buf) noexcept
     {
-        for (;;) {
-            if (halted()) {
-                return IO_FATAL;
-            }
-            const int n = m_device.read(buf);
-            if (n != READ_WAKE) {
-                if (n > 0) {
-                    m_meter.recordOutbound(n);
-                }
-                return n;
-            }
-            if (const int staged = m_interceptor.stage(buf); staged > 0) {
+        int n = m_device.read(buf);
+        if (n == 0) {
+            if (int staged = m_interceptor.stage(buf); staged > 0) {
                 return staged;
             }
         }
+        if (n > 0) {
+            m_meter.recordOutbound(n);
+        }
+        return n;
     }
 
     int MonitoredIo::write(std::span<const std::byte> packet) noexcept
     {
-        if (halted()) {
-            return IO_FATAL;
-        }
         if (m_interceptor.capture(packet)) {
             return static_cast<int>(packet.size());
         }

@@ -1,7 +1,6 @@
 #ifndef PROXY_H
 #define PROXY_H
 
-#include <atomic>
 #include <xtun.h>
 
 #include "health/probe.h"
@@ -86,12 +85,10 @@ namespace libxtun
         }
         void emitLog(char *str);
 
-        void haltIo()
+        void destroyIo()
         {
-            m_io.halt();
+            m_io.destroy();
         }
-
-        std::atomic<bool> m_destroyed = false;
 
     private:
         void onConnectionState(health::ConnectionState state) noexcept override;
