@@ -74,7 +74,7 @@ namespace libxtun::test
             std::scoped_lock lock(m_threadMutex);
 
             m_stopped = true;
-            haltIo();
+            destroyIo();
             m_rcvCv.notify_all();
             m_sendCv.notify_all();
 

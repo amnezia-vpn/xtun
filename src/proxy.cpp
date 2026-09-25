@@ -6,7 +6,6 @@
 
 #include <memory>
 #include <optional>
-#include <utility>
 
 namespace libxtun
 {
@@ -38,7 +37,6 @@ namespace libxtun
 
     Proxy::~Proxy()
     {
-        m_destroyed = true;
     }
 
     void Proxy::attachIo(TunnelIo *io)
@@ -68,20 +66,12 @@ namespace libxtun
 
     int Proxy::tunRead(void *b, int len)
     {
-        int n = m_io.read({ static_cast<std::byte *>(b), static_cast<std::size_t>(len) });
-        if (n < 0 && !m_destroyed) {
-            return 0;
-        }
-        return n;
+        return m_io.read({ static_cast<std::byte *>(b), static_cast<std::size_t>(len) });
     }
 
     int Proxy::tunWrite(void *b, int len)
     {
-        int n = m_io.write({ static_cast<std::byte *>(b), static_cast<std::size_t>(len) });
-        if (n < 0 && !m_destroyed) {
-            return 0;
-        }
-        return n;
+        return m_io.write({ static_cast<std::byte *>(b), static_cast<std::size_t>(len) });
     }
 
     int Proxy::tunMtu()

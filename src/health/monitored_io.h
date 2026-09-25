@@ -6,7 +6,6 @@
 #include "tunnel_io.h"
 #include "util/noncopyable.h"
 
-#include <atomic>
 #include <cstddef>
 #include <span>
 
@@ -27,17 +26,10 @@ namespace libxtun::health
         {
             m_device.protectSocket(fd);
         }
-
         void halt() override
         {
-            m_halted.store(true, std::memory_order_release);
             m_device.halt();
         }
-        bool halted() const noexcept
-        {
-            return m_halted.load(std::memory_order_acquire);
-        }
-
         std::vector<net::IpPrefix> addresses() override
         {
             return m_device.addresses();
@@ -47,7 +39,6 @@ namespace libxtun::health
         TunnelIo &m_device;
         TrafficMeter &m_meter;
         PacketInterceptor &m_interceptor;
-        std::atomic<bool> m_halted { false };
     };
 }
 
