@@ -9,6 +9,7 @@ set(XTUN_TEST_SOURCES
     test_health_resolver.cpp
     test_health_scheduler.cpp
     test_health_verdict.cpp
+    test_killswitch.cpp
     test_net_ip.cpp
     test_net_socket.cpp
     test_net_udp.cpp
