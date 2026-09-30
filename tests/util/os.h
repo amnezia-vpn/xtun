@@ -3,6 +3,7 @@
 
 #include "util/noncopyable.h"
 
+#include <cerrno>
 #include <optional>
 #include <string>
 #include <utility>
@@ -11,6 +12,7 @@
     #include <arpa/inet.h>
     #include <cstring>
     #include <fcntl.h>
+    #include <netdb.h>
     #include <netinet/in.h>
     #include <sys/ioctl.h>
     #include <sys/socket.h>
@@ -100,8 +102,8 @@ namespace libxtun::test
         {
 #if defined(__linux__) || defined(__APPLE__)
             return ::close(fd);
-#elif defined(WIN32)
-            return 0;
+#elif defined(_WIN32)
+            return ::closesocket(static_cast<SOCKET>(fd));
 #else
             return 0;
 #endif
@@ -232,6 +234,48 @@ namespace libxtun::test
         }
 
         return sock;
+    }
+
+    static int lastSocketError()
+    {
+#if defined(_WIN32)
+        return ::WSAGetLastError();
+#else
+        return errno;
+#endif
+    }
+
+    struct UdpProbe
+    {
+        ScopedFd fd;
+        int error = 0;
+    };
+
+    static UdpProbe udpConnect(const std::string &host, uint16_t port, [[maybe_unused]] unsigned mark = 0)
+    {
+        ::addrinfo hints {};
+        hints.ai_socktype = SOCK_DGRAM;
+        hints.ai_protocol = IPPROTO_UDP;
+        hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV;
+
+        ::addrinfo *resolved = nullptr;
+        if (::getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &resolved) != 0) {
+            return { ScopedFd {}, EINVAL };
+        }
+
+        ScopedFd sock(static_cast<int>(::socket(resolved->ai_family, resolved->ai_socktype, resolved->ai_protocol)));
+        int error = sock ? 0 : lastSocketError();
+#if defined(__linux__)
+        if (error == 0 && mark != 0 && ::setsockopt(sock.get(), SOL_SOCKET, SO_MARK, &mark, sizeof(mark)) != 0) {
+            error = errno;
+        }
+#endif
+        if (error == 0 && ::connect(sock.get(), resolved->ai_addr, static_cast<int>(resolved->ai_addrlen)) != 0) {
+            error = lastSocketError();
+        }
+
+        ::freeaddrinfo(resolved);
+        return { std::move(sock), error };
     }
 }
 

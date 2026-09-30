@@ -186,6 +186,15 @@ namespace libxtun::test
         }
         return res;
     }
+
+    static std::vector<libxtun_killswitch_mode> allKillswitchModes()
+    {
+        std::vector<libxtun_killswitch_mode> res;
+        for (int i = LIBXTUN_KILLSWITCH_MODE_DISABLED; i <= LIBXTUN_KILLSWITCH_MODE_LAST; i++) {
+            res.push_back(static_cast<libxtun_killswitch_mode>(i));
+        }
+        return res;
+    }
 }
 
 #endif
