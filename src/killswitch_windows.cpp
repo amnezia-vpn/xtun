@@ -33,6 +33,18 @@ namespace libxtun
             return LIBXTUN_ERR_INVALID_ARGS;
         }
 
+        // filters installed by HARD mode cannot be removed from dynamic WFP session used by SOFT
+        // thus, we have to use an engine with different config
+        if (!persistent()) {
+            auto leftovers = wfp::WfpEngine::open(makeWfpConfig(true));
+            if (!leftovers) {
+                return leftovers.error();
+            }
+            if (const auto result = leftovers.value()->cleanup(); result != LIBXTUN_OK) {
+                return result;
+            }
+        }
+
         auto engine = wfp::WfpEngine::open(makeWfpConfig(persistent()));
         if (!engine) {
             return engine.error();
@@ -56,7 +68,7 @@ namespace libxtun
             return;
         }
 
-        auto engine = wfp::WfpEngine::open(makeWfpConfig(false));
+        auto engine = wfp::WfpEngine::open(makeWfpConfig(true));
         if (engine) {
             engine.value()->cleanup();
         }

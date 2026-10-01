@@ -7,34 +7,18 @@
 #include "xtun.h"
 
 #include <memory>
-#include <optional>
 #include <string>
 
 #include "gtest/gtest.h"
 
-#if defined(__APPLE__)
+#if defined(_WIN32)
+    #include "test_killswitch_windows.cpp"
+#elif defined(__APPLE__)
     #include "test_killswitch_macos.cpp"
 #elif defined(__linux__) && !defined(__ANDROID__)
     #include "test_killswitch_linux.cpp"
 #else
-namespace libxtun::test
-{
-    KillswitchEnv::KillswitchEnv() : m_skipReason("not implemented on this platform yet")
-    {
-    }
-
-    KillswitchEnv::~KillswitchEnv() = default;
-
-    int KillswitchEnv::ruleCount() const
-    {
-        return 0;
-    }
-
-    std::optional<ProbeResult> KillswitchEnv::probe(const std::string &, Bypass) const
-    {
-        return std::nullopt;
-    }
-}
+    #error Unsupported platform
 #endif
 
 namespace libxtun::test
@@ -46,11 +30,16 @@ namespace libxtun::test
             ADD_FAILURE() << "Killswitch::create returned nothing";
             return nullptr;
         }
-        if (const libxtun_error rc = killswitch->update(m_ifIndex, m_ifName); rc != LIBXTUN_OK) {
+        if (const libxtun_error rc = update(*killswitch); rc != LIBXTUN_OK) {
             ADD_FAILURE() << "Killswitch::update failed with " << rc << " error code";
             return nullptr;
         }
         return killswitch;
+    }
+
+    libxtun_error KillswitchEnv::update(Killswitch &killswitch) const
+    {
+        return killswitch.update(m_ifIndex, m_ifName);
     }
 }
 
@@ -108,16 +97,30 @@ TEST_P(KillswitchMode, LoopbackStaysUsable)
     expectProbeResult(LOOPBACK_V4, Bypass::None, ProbeResult::Delivered);
 }
 
-TEST_P(KillswitchMode, ArmingTwiceAddsNothing)
+TEST_P(KillswitchMode, HardLeftoversCleanedUp)
 {
-    auto first = m_env.create(GetParam());
-    ASSERT_NE(first, nullptr);
-    const int afterFirst = m_env.ruleCount();
+    int leftovers = 0;
+    {
+        auto hard = m_env.create(LIBXTUN_KILLSWITCH_MODE_HARD);
+        ASSERT_NE(hard, nullptr);
+        leftovers = m_env.ruleCount();
+        ASSERT_GT(leftovers, 0);
+    }
 
-    auto second = m_env.create(GetParam());
-    ASSERT_NE(second, nullptr);
-    EXPECT_EQ(m_env.ruleCount(), afterFirst) << "arming again added rules";
-    expectProbeResult(TEST_NET_V4, Bypass::None, probeResultFor(GetParam()));
+    auto killswitch = m_env.create(GetParam());
+    ASSERT_NE(killswitch, nullptr);
+    EXPECT_EQ(m_env.ruleCount(), GetParam() == LIBXTUN_KILLSWITCH_MODE_DISABLED ? 0 : leftovers)
+            << "the leftovers piled up";
+}
+
+TEST_P(KillswitchMode, UpdatingTwiceChangesNothing)
+{
+    auto killswitch = m_env.create(GetParam());
+    ASSERT_NE(killswitch, nullptr);
+    const int installed = m_env.ruleCount();
+
+    EXPECT_EQ(m_env.update(*killswitch), LIBXTUN_OK);
+    EXPECT_EQ(m_env.ruleCount(), installed) << "updating again changed the rules";
 }
 
 TEST_P(KillswitchMode, DestructionHonoursPersistence)

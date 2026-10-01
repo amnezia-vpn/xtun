@@ -45,5 +45,5 @@ if(WIN32)
     endif()
 endif()
 
-gtest_discover_tests(xtun_tests TEST_FILTER "Killswitch*" PROPERTIES TIMEOUT 30 RESOURCE_LOCK killswitch)
+gtest_discover_tests(xtun_tests TEST_FILTER "Killswitch*" PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE)
 gtest_discover_tests(xtun_tests TEST_FILTER "-Killswitch*" PROPERTIES TIMEOUT 30)
