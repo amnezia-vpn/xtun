@@ -12,7 +12,9 @@
 
 #include "gtest/gtest.h"
 
-#if defined(__linux__) && !defined(__ANDROID__)
+#if defined(__APPLE__)
+    #include "test_killswitch_macos.cpp"
+#elif defined(__linux__) && !defined(__ANDROID__)
     #include "test_killswitch_linux.cpp"
 #else
 namespace libxtun::test
