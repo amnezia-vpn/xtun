@@ -167,7 +167,7 @@ namespace libxtun::test
 
         int sendDatagram(const std::string &host, const Nonce &nonce)
         {
-            const UdpProbe probe = udpConnect(host, PROBE_PORT);
+            const ConnectedSocket probe = udpConnect(host, PROBE_PORT);
             if (probe.error != 0) {
                 return probe.error;
             }

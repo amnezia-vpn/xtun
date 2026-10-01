@@ -73,7 +73,7 @@ namespace libxtun::test
 
     std::optional<ProbeResult> KillswitchEnv::probe(const std::string &host, Bypass bypass) const
     {
-        const UdpProbe udp = udpConnect(host, PROBE_PORT, bypass == Bypass::Proxy ? PROXY_FWMARK : 0);
+        const ConnectedSocket udp = udpConnect(host, PROBE_PORT, bypass == Bypass::Proxy ? PROXY_FWMARK : 0);
         if (udp.error == 0) {
             return ProbeResult::Delivered;
         }

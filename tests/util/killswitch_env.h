@@ -65,6 +65,7 @@ namespace libxtun::test
             return m_skipReason;
         }
         [[nodiscard]] std::unique_ptr<Killswitch> create(libxtun_killswitch_mode mode) const;
+        [[nodiscard]] libxtun_error update(Killswitch &killswitch) const;
         [[nodiscard]] int ruleCount() const;
         [[nodiscard]] std::optional<ProbeResult> probe(const std::string &host, Bypass bypass) const;
 

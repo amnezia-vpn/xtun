@@ -245,17 +245,17 @@ namespace libxtun::test
 #endif
     }
 
-    struct UdpProbe
+    struct ConnectedSocket
     {
         ScopedFd fd;
         int error = 0;
     };
 
-    static UdpProbe udpConnect(const std::string &host, uint16_t port, [[maybe_unused]] unsigned mark = 0)
+    static ConnectedSocket connectSocket(const std::string &host, uint16_t port, int type, [[maybe_unused]] unsigned mark)
     {
         ::addrinfo hints {};
-        hints.ai_socktype = SOCK_DGRAM;
-        hints.ai_protocol = IPPROTO_UDP;
+        hints.ai_socktype = type;
+        hints.ai_protocol = type == SOCK_STREAM ? IPPROTO_TCP : IPPROTO_UDP;
         hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV;
 
         ::addrinfo *resolved = nullptr;
@@ -270,12 +270,34 @@ namespace libxtun::test
             error = errno;
         }
 #endif
+#if defined(_WIN32)
+        u_long nonBlocking = 1;
+        if (error == 0 && type == SOCK_STREAM
+            && ::ioctlsocket(static_cast<SOCKET>(sock.get()), FIONBIO, &nonBlocking) != 0) {
+            error = lastSocketError();
+        }
+#else
+        if (error == 0 && type == SOCK_STREAM
+            && ::fcntl(sock.get(), F_SETFL, ::fcntl(sock.get(), F_GETFL) | O_NONBLOCK) != 0) {
+            error = errno;
+        }
+#endif
         if (error == 0 && ::connect(sock.get(), resolved->ai_addr, static_cast<int>(resolved->ai_addrlen)) != 0) {
             error = lastSocketError();
         }
 
         ::freeaddrinfo(resolved);
         return { std::move(sock), error };
+    }
+
+    static ConnectedSocket udpConnect(const std::string &host, uint16_t port, unsigned mark = 0)
+    {
+        return connectSocket(host, port, SOCK_DGRAM, mark);
+    }
+
+    static ConnectedSocket tcpConnect(const std::string &host, uint16_t port)
+    {
+        return connectSocket(host, port, SOCK_STREAM, 0);
     }
 }
 
