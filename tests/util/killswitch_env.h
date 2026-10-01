@@ -74,7 +74,9 @@ namespace libxtun::test
         std::string m_ifName;
 #if defined(__linux__)
         int m_netnsFd = -1;
-#else
+#elif defined(__APPLE__)
+        int m_ipv6TunFd = -1;
+#elif defined(_WIN32)
         std::unique_ptr<TunDevice> m_ipv6Path;
 #endif
     };
