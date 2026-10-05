@@ -17,7 +17,7 @@ namespace libxtun
 
         libxtun_error update(int ifIndex, const std::string &ifName);
 
-        static std::unique_ptr<Killswitch> create(libxtun_killswitch_mode mode);
+        static std::unique_ptr<Killswitch> create(libxtun_killswitch_mode mode, int macosGroup = -1);
 
     protected:
         Killswitch(libxtun_killswitch_mode mode) noexcept : m_mode(mode)

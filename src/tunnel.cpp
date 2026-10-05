@@ -41,7 +41,7 @@ namespace libxtun
         auto tun = std::unique_ptr<Tunnel>(new Tunnel());
         tun->m_device = createTunDevice();
         tun->m_router = Router::create();
-        tun->m_killswitch = Killswitch::create(opts.killswitch_mode);
+        tun->m_killswitch = Killswitch::create(opts.killswitch_mode, opts.macos_group);
 
         auto &dev = tun->m_device;
         auto &router = tun->m_router;

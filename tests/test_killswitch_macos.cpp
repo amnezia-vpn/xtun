@@ -304,4 +304,26 @@ namespace libxtun::test
         const bool delivered = ipv6 ? readNonce(m_ipv6TunFd, nonce, PROBE_TIMEOUT) : tap->spotted(nonce, PROBE_TIMEOUT);
         return delivered ? ProbeResult::Delivered : ProbeResult::Blocked;
     }
+
+    using KillswitchMacos = KillswitchTest;
+
+    TEST_F(KillswitchMacos, ConfiguredGroupIsExcluded)
+    {
+        {
+            const auto killswitch = Killswitch::create(LIBXTUN_KILLSWITCH_MODE_SOFT, static_cast<int>(::getegid()));
+            ASSERT_NE(killswitch, nullptr);
+            ASSERT_EQ(m_env.update(*killswitch), LIBXTUN_OK);
+
+            expectProbeResult(TEST_NET_V4, Bypass::Proxy, ProbeResult::Delivered, "with the process's group");
+            expectProbeResult(TEST_NET_V4, Bypass::None, ProbeResult::Blocked, "with the process's group");
+        }
+        {
+            const auto killswitch = Killswitch::create(LIBXTUN_KILLSWITCH_MODE_SOFT, static_cast<int>(FOREIGN_GID));
+            ASSERT_NE(killswitch, nullptr);
+            ASSERT_EQ(m_env.update(*killswitch), LIBXTUN_OK);
+
+            expectProbeResult(TEST_NET_V4, Bypass::None, ProbeResult::Delivered, "with the foreign group");
+            expectProbeResult(TEST_NET_V4, Bypass::Proxy, ProbeResult::Blocked, "with the foreign group");
+        }
+    }
 }
