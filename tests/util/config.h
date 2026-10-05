@@ -118,6 +118,7 @@ namespace libxtun::test
         TunOpts()
         {
             m_opts.size = sizeof(libxtun_tunnel_opts);
+            m_opts.macos_group = -1;
         }
 
         TunOpts &dns(std::vector<std::string> dns)

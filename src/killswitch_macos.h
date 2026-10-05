@@ -13,7 +13,7 @@ namespace libxtun
     class MacosKillswitch final : public Killswitch
     {
     public:
-        explicit MacosKillswitch (libxtun_killswitch_mode mode) noexcept : Killswitch(mode)
+        explicit MacosKillswitch (libxtun_killswitch_mode mode, int group) noexcept : Killswitch(mode), m_group(group)
         {
         }
         ~MacosKillswitch() override;
@@ -23,6 +23,7 @@ namespace libxtun
         void remove() noexcept override;
 
     private:
+        int m_group = -1;
         std::uint64_t m_pfToken = 0;
     };
 }

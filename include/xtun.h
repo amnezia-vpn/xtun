@@ -83,6 +83,7 @@ struct libxtun_tunnel_opts
     const char *const *if_addrs;
     int mtu;
     int health_seconds;
+    int macos_group;
 };
 
 int libxtun_tunnel_new(struct libxtun_tunnel *tun, const struct libxtun_tunnel_opts *opts);

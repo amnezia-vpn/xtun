@@ -59,16 +59,19 @@ namespace libxtun
 #endif
     }
 
-    std::unique_ptr<Killswitch> Killswitch::create(libxtun_killswitch_mode mode)
+    std::unique_ptr<Killswitch> Killswitch::create(libxtun_killswitch_mode mode, int macosGroup)
     {
 #if defined(__linux__) && !defined(__ANDROID__)
+        (void)macosGroup;
         return std::make_unique<LinuxKillswitch>(mode);
 #elif defined(__APPLE__)
-        return std::make_unique<MacosKillswitch>(mode);
+        return std::make_unique<MacosKillswitch>(mode, macosGroup);
 #elif defined(_WIN32)
+        (void)macosGroup;
         return std::make_unique<WindowsKillswitch>(mode);
 #else
         (void)mode;
+        (void)macosGroup;
         return nullptr;
 #endif
     }
