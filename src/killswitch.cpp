@@ -1,9 +1,32 @@
 #include "killswitch.h"
 #include "xtun.h"
+#include <algorithm>
 #include <mutex>
+#include <vector>
 
 namespace libxtun
 {
+    namespace
+    {
+        std::vector<net::IpPrefix> protectedSet(const std::vector<net::IpPrefix> &routes)
+        {
+            const auto included = [&routes](int family) {
+                return std::ranges::any_of(routes, [family](const net::IpPrefix &route) {
+                    return route.address().family() == family;
+                });
+            };
+
+            std::vector<net::IpPrefix> prefixes = routes;
+            if (!included(AF_INET)) {
+                prefixes.emplace_back(net::IpAddress::fromV4(in_addr {}), 0);
+            }
+            if (!included(AF_INET6)) {
+                prefixes.emplace_back(net::IpAddress::fromV6(in6_addr {}), 0);
+            }
+            return prefixes;
+        }
+    }
+
     libxtun_error Killswitch::update(int ifIndex, const std::string &ifName)
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -25,5 +48,15 @@ namespace libxtun
         }
 
         return LIBXTUN_ERR_KILLSWITCH;
+    }
+
+    libxtun_error Killswitch::protect(const std::vector<net::IpPrefix> &routes)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+
+        if (!m_installed) {
+            return LIBXTUN_OK;
+        }
+        return setProtected(protectedSet(routes));
     }
 }

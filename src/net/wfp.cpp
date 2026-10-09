@@ -7,6 +7,7 @@
 #include <winerror.h>
 
 #include <memory>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -103,7 +104,8 @@ namespace libxtun::wfp
         return LIBXTUN_OK;
     }
 
-    libxtun_error WfpEngine::addFilter(const GUID &layer, const FWP_ACTION_TYPE action, FWPM_FILTER_CONDITION *condition, const wchar_t *name) noexcept
+    libxtun_error WfpEngine::addFilter(const GUID &layer, const FWP_ACTION_TYPE action,
+                                       std::span<FWPM_FILTER_CONDITION> conditions, const wchar_t *name) noexcept
     {
         FWPM_FILTER filter {};
         filter.layerKey = layer;
@@ -113,8 +115,8 @@ namespace libxtun::wfp
         filter.action.type = action;
         filter.weight.type = FWP_UINT8;
         filter.weight.uint8 = action == FWP_ACTION_BLOCK ? WEIGHT_BLOCK : WEIGHT_ALLOW;
-        filter.numFilterConditions = condition != nullptr ? 1 : 0;
-        filter.filterCondition = condition;
+        filter.numFilterConditions = static_cast<UINT32>(conditions.size());
+        filter.filterCondition = conditions.data();
 
         if (::FwpmFilterAdd(m_engine, &filter, nullptr, nullptr) != ERROR_SUCCESS) {
             return LIBXTUN_ERR_SYSTEM;

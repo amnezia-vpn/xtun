@@ -1,17 +1,48 @@
 #include "killswitch_linux.h"
 #include "fwmark.h"
-#include "net/netlink.h"
+#include "net/iptables.h"
 #include "xtun.h"
 
-#include <cerrno>
-#include <linux/fib_rules.h>
-#include <linux/netlink.h>
-#include <linux/rtnetlink.h>
+#include <sstream>
 #include <string>
-#include <sys/socket.h>
+#include <vector>
 
 namespace libxtun
 {
+    namespace
+    {
+        std::string iptablesRules(int family, const std::string &ifName, const std::vector<net::IpPrefix> &prefixes)
+        {
+            std::ostringstream input;
+            const auto drop = [&](const char *chain) {
+                for (const net::IpPrefix &prefix : prefixes) {
+                    if (prefix.address().family() == family) {
+                        input << "-A " << chain << " -d " << prefix.toString() << " -j DROP\n";
+                    }
+                }
+            };
+
+            input << "*filter\n"
+                  << ':' << CHAIN << " - [0:0]\n"
+                  << "-A " << CHAIN << " -o lo -j ACCEPT\n"
+                  << "-A " << CHAIN << " -o " << ifName << " -j ACCEPT\n"
+                  << "-A " << CHAIN << " -m mark --mark " << std::showbase << std::hex << PROXY_FWMARK << " -j ACCEPT\n";
+            if (family == AF_INET6) {
+                for (const char *type : { "router-solicitation", "neighbour-solicitation", "neighbour-advertisement" }) {
+                    input << "-A " << CHAIN << " -p ipv6-icmp --icmpv6-type " << type << " -j ACCEPT\n";
+                }
+            }
+            drop(CHAIN);
+            input << "COMMIT\n"
+                  << "*mangle\n"
+                  << ':' << FORWARD_CHAIN << " - [0:0]\n"
+                  << "-A " << FORWARD_CHAIN << " -o " << ifName << " -j ACCEPT\n";
+            drop(FORWARD_CHAIN);
+            input << "COMMIT\n";
+            return input.str();
+        }
+    }
+
     LinuxKillswitch::~LinuxKillswitch()
     {
         if (installed() && !persistent()) {
@@ -22,59 +53,53 @@ namespace libxtun
     libxtun_error LinuxKillswitch::install(int ifIndex, const std::string &ifName)
     {
         (void)ifIndex;
-        (void)ifName;
+
+        m_ifName = ifName;
+        const std::vector<net::IpPrefix> everything {
+            net::IpPrefix(net::IpAddress::fromV4(in_addr {}), 0),
+            net::IpPrefix(net::IpAddress::fromV6(in6_addr {}), 0),
+        };
+        if (const auto rc = setProtected(everything); rc != LIBXTUN_OK) {
+            remove();
+            return rc;
+        }
 
         for (const int family : { AF_INET, AF_INET6 }) {
-            if (const auto rc = updateFallbackRoute(family, true); rc != LIBXTUN_OK) {
+            if (iptables::run(family, { "-t", "filter", "-C", "OUTPUT", "-j", CHAIN }) != LIBXTUN_OK
+                && iptables::run(family, { "-t", "filter", "-I", "OUTPUT", "1", "-j", CHAIN }) != LIBXTUN_OK) {
                 remove();
-                return rc;
+                return LIBXTUN_ERR_SYSTEM;
             }
-            // rule duplicating installed by router with higher priority to exclude traffic coming from LAN
-            // `priority <RULE_PRIORITY_KILLSWITCH_LAN> from all lookup main suppress_prefixlen 0`
-            if (const auto rc = net::netlink::updateRule(true, family, false, 0, RT_TABLE_MAIN,
-                                                             0, RULE_PRIORITY_KILLSWITCH_LAN); rc != LIBXTUN_OK) {
+            if (iptables::run(family, { "-t", "mangle", "-C", "FORWARD", "-j", FORWARD_CHAIN }) != LIBXTUN_OK
+                && iptables::run(family, { "-t", "mangle", "-I", "FORWARD", "1", "-j", FORWARD_CHAIN }) != LIBXTUN_OK) {
                 remove();
-                return rc;
-            }
-            // rule before main and after rules added by Router with unreacheable destination
-            // `priority <RULE_PRIORITY_KILLSWITCH_TUNNEL> not fwmark <PROXY_FWMARK> lookup <KILLSWITCH_TABLE>`
-            if (const auto rc = net::netlink::updateRule(true, family, true, PROXY_FWMARK, KILLSWITCH_TABLE,
-                                                             -1, RULE_PRIORITY_KILLSWITCH_TUNNEL); rc != LIBXTUN_OK) {
-                remove();
-                return rc;
+                return LIBXTUN_ERR_SYSTEM;
             }
         }
 
         return LIBXTUN_OK;
     }
 
+    libxtun_error LinuxKillswitch::setProtected(const std::vector<net::IpPrefix> &prefixes)
+    {
+        for (const int family : { AF_INET, AF_INET6 }) {
+            if (const auto rc = iptables::restore(family, iptablesRules(family, m_ifName, prefixes));
+                rc != LIBXTUN_OK) {
+                return rc;
+            }
+        }
+        return LIBXTUN_OK;
+    }
+
     void LinuxKillswitch::remove() noexcept
     {
         for (const int family : { AF_INET, AF_INET6 }) {
-            net::netlink::updateRule(false, family, true, PROXY_FWMARK, KILLSWITCH_TABLE,
-                    -1, RULE_PRIORITY_KILLSWITCH_TUNNEL);
-            net::netlink::updateRule(false, family, false, 0, RT_TABLE_MAIN,
-                    0, RULE_PRIORITY_KILLSWITCH_LAN);
-            updateFallbackRoute(family, false);
+            iptables::run(family, { "-t", "filter", "-D", "OUTPUT", "-j", CHAIN });
+            iptables::run(family, { "-t", "filter", "-F", CHAIN });
+            iptables::run(family, { "-t", "filter", "-X", CHAIN });
+            iptables::run(family, { "-t", "mangle", "-D", "FORWARD", "-j", FORWARD_CHAIN });
+            iptables::run(family, { "-t", "mangle", "-F", FORWARD_CHAIN });
+            iptables::run(family, { "-t", "mangle", "-X", FORWARD_CHAIN });
         }
     }
-
-    libxtun_error LinuxKillswitch::updateFallbackRoute(int family, bool add) noexcept
-    {
-        net::netlink::NetlinkRequest request(add ? RTM_NEWROUTE : RTM_DELROUTE, add ? NLM_F_CREATE | NLM_F_REPLACE : 0,
-                                    sizeof(struct rtmsg));
-
-        auto &route = request.payload<struct rtmsg>();
-        route.rtm_family = static_cast<unsigned char>(family);
-        route.rtm_dst_len = 0;
-        route.rtm_table = RT_TABLE_UNSPEC;
-        route.rtm_protocol = RTPROT_BOOT;
-        route.rtm_scope = RT_SCOPE_UNIVERSE;
-        route.rtm_type = RTN_UNREACHABLE;
-        request.attribute<std::uint32_t>(RTA_TABLE, KILLSWITCH_TABLE);
-
-        const int rc = request.send();
-        return rc == 0 || (add && rc == -EEXIST) ? LIBXTUN_OK : LIBXTUN_ERR_KILLSWITCH;
-    }
-
 }

@@ -26,15 +26,18 @@ namespace libxtun
 
     protected:
         libxtun_error install(int ifIndex, const std::string &ifName) override;
+        libxtun_error setProtected(const std::vector<net::IpPrefix> &prefixes) override;
         void remove() noexcept override;
 
     private:
-        libxtun_error installFilters(std::uint64_t luidValue) noexcept;
-        libxtun_error blockAll(const GUID &layer) noexcept;
-        libxtun_error allowTunnel(const GUID &layer, std::uint64_t luidValue) noexcept;
+        libxtun_error installFilters(std::uint64_t luidValue, const std::vector<net::IpPrefix> &prefixes);
+        libxtun_error blockProtected(const GUID &layer, const GUID &field, int family,
+                                     const std::vector<net::IpPrefix> &prefixes);
+        libxtun_error allowTunnel(const GUID &layer, const GUID &field, std::uint64_t luidValue) noexcept;
         libxtun_error allowLoopback(const GUID &layer) noexcept;
         libxtun_error allowAppTraffic(const GUID &layer) noexcept;
         std::unique_ptr<wfp::WfpEngine> m_wfp;
+        std::uint64_t m_luid = 0;
     };
 }
 #endif

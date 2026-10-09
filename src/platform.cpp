@@ -18,6 +18,7 @@
     #include "killswitch_macos.cpp"
     #include "killswitch_macos.h"
     #include "net/pf.cpp"
+    #include "util/spawn.cpp"
 #elif defined(__ANDROID__)
     #include "tun_device_linux.cpp"
     #include "tun_device_linux.h"
@@ -28,6 +29,8 @@
     #include "tun_device_linux.h"
     #include "killswitch_linux.cpp"
     #include "killswitch_linux.h"
+    #include "net/iptables.cpp"
+    #include "util/spawn.cpp"
 #else
     #error Unsupported platform
 #endif
