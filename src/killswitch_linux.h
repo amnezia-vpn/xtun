@@ -4,8 +4,13 @@
 #include "killswitch.h"
 #include "xtun.h"
 
+#include <string>
+
 namespace libxtun
 {
+    constexpr const char *CHAIN = "XTUN";
+    constexpr const char *FORWARD_CHAIN = "XTUN_FWD";
+
     class LinuxKillswitch final : public Killswitch
     {
     public:
@@ -16,10 +21,11 @@ namespace libxtun
 
     protected:
         libxtun_error install(int ifIndex, const std::string &ifName) override;
+        libxtun_error setProtected(const std::vector<net::IpPrefix> &prefixes) override;
         void remove() noexcept override;
 
     private:
-        libxtun_error updateFallbackRoute(int family, bool add) noexcept;
+        std::string m_ifName;
     };
 }
 #endif

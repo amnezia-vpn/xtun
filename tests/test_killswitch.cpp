@@ -2,10 +2,24 @@
 #include "util/config.h"
 #include "util/killswitch_env.h"
 #include "util/log.h"
+#include "util/os.h"
+#include "util/status.h"
 #include "xtun.h"
 
+#if !defined(_WIN32)
+    #include <sys/select.h>
+#endif
+
+#include <array>
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
+#include <optional>
+#include <span>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "gtest/gtest.h"
 
@@ -41,10 +55,89 @@ namespace libxtun::test
     {
         return killswitch.update(m_ifIndex, m_ifName);
     }
+
+    std::optional<ProbeResult> KillswitchEnv::probe(const Destination &to, Sender sender, ProbeResult expected,
+                                                    MemTun *server) const
+    {
+        const Nonce nonce = randomNonce();
+        switch (send(to.host, PROBE_PORT, sender, nonce)) {
+        case SendResult::Refused: return ProbeResult::Blocked;
+        case SendResult::Failed: return std::nullopt;
+        case SendResult::Out: break;
+        }
+
+        std::array<std::byte, 2048> packet {};
+        const auto deadline = std::chrono::steady_clock::now()
+                + (expected == ProbeResult::Blocked ? BLOCKED_TIMEOUT : DELIVERY_TIMEOUT);
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (server != nullptr) {
+                const int size = server->waitForArrival(packet, PROBE_SLICE);
+                if (size > 0 && udpPktContainsNonce(std::span(packet.data(), static_cast<std::size_t>(size)), nonce)) {
+                    return ProbeResult::Tunnel;
+                }
+            }
+            if (const std::optional<ProbeResult> seen = pollUplink(to, nonce)) {
+                return *seen;
+            }
+        }
+        return ProbeResult::Blocked;
+    }
 }
 
 namespace
 {
+    using libxtun::test::DELIVERY_TIMEOUT;
+    using libxtun::test::Destination;
+    using libxtun::test::HIJACKED;
+    using libxtun::test::INTERNET_V4;
+    using libxtun::test::INTERNET_V6;
+    using libxtun::test::LAN;
+    using libxtun::test::LOOPBACK_V4;
+    using libxtun::test::Nonce;
+    using libxtun::test::ProbeResult;
+    using libxtun::test::ScopedFd;
+    using libxtun::test::Sender;
+    using libxtun::test::SendResult;
+    using enum libxtun::test::ProbeResult;
+
+    struct LoopbackSocket
+    {
+        ScopedFd fd;
+        std::uint16_t port = 0;
+    };
+
+    LoopbackSocket openLoopbackSocket()
+    {
+        ScopedFd sock(static_cast<int>(::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)));
+        ::sockaddr_in address {};
+        address.sin_family = AF_INET;
+        ::inet_pton(AF_INET, LOOPBACK_V4, &address.sin_addr);
+        ::socklen_t size = sizeof(address);
+        if (!sock || ::bind(sock.get(), reinterpret_cast<::sockaddr *>(&address), sizeof(address)) != 0
+            || ::getsockname(sock.get(), reinterpret_cast<::sockaddr *>(&address), &size) != 0) {
+            return {};
+        }
+        return { std::move(sock), ntohs(address.sin_port) };
+    }
+
+    bool nonceReceived(const ScopedFd &loopback, const Nonce &nonce)
+    {
+        ::fd_set ready;
+        FD_ZERO(&ready);
+        FD_SET(loopback.get(), &ready);
+        constexpr auto timeoutMicros = std::chrono::duration_cast<std::chrono::microseconds>(DELIVERY_TIMEOUT).count();
+        ::timeval timeout { timeoutMicros / 1000000, timeoutMicros % 1000000 };
+        if (::select(loopback.get() + 1, &ready, nullptr, nullptr, &timeout) <= 0) {
+            return false;
+        }
+
+        std::array<std::byte, 64> datagram {};
+        const auto size = ::recv(loopback.get(), reinterpret_cast<char *>(datagram.data()),
+                                 static_cast<int>(datagram.size()), 0);
+        return size > 0
+            && libxtun::test::containsNonce(std::span(datagram.data(), static_cast<std::size_t>(size)), nonce);
+    }
+
     std::string modeName(libxtun_killswitch_mode mode)
     {
         switch (mode) {
@@ -55,37 +148,116 @@ namespace
         return "Unknown";
     }
 
-    using libxtun::test::Bypass;
-    using libxtun::test::LOOPBACK_V4;
-    using libxtun::test::ProbeResult;
-    using libxtun::test::TEST_NET_V4;
-    using libxtun::test::TEST_NET_V6;
+    enum TunnelState : std::size_t {
+        BEFORE_ATTACH,
+        TUNNEL_UP,
+        ROUTES_LOST,
+        DETACHED,
+        FREED,
+        TUNNEL_STATE_COUNT
+    };
+
+    constexpr std::array<const char *, TUNNEL_STATE_COUNT> TUNNEL_STATE_NAMES {
+        "before attach", "with the tunnel up", "with the routes lost", "after detach", "after the tunnel was freed",
+    };
+
+    struct ProbeCase
+    {
+        Destination to;
+        Sender sender;
+        std::array<ProbeResult, TUNNEL_STATE_COUNT> expected;
+    };
+
+    constexpr Destination SPLIT_DESTINATION { "split destination", "10.8.0.5", true };
+    constexpr const char *SPLIT_PREFIX = "10.8.0.0/24";
+    const std::vector<std::string> FULL_ROUTES { "0.0.0.0/0" };
+    const std::vector<std::string> SPLIT_ROUTES { SPLIT_PREFIX };
+
+    std::vector<libxtun::test::Setup> profileSetups(const std::vector<std::string> &routes)
+    {
+        return libxtun::test::SetupBuilder()
+                .withRoutes(routes)
+                .withServerAllowedIps({ std::string(libxtun::test::TUNNEL_ADDRESS) + "/32",
+                                        libxtun::test::CLIENT_SIDE_PREFIX })
+                .build();
+    }
+
+    std::string setupName(const testing::TestParamInfo<std::tuple<libxtun_killswitch_mode, libxtun::test::Setup>> &info)
+    {
+        return modeName(std::get<0>(info.param)) + "_" + std::get<1>(info.param).name;
+    }
+
+    const std::array FULL_PROFILE {
+        //                                                before   up       no route detached freed
+        // disabled
+        std::array {
+            ProbeCase { INTERNET_V4, Sender::App,       { Uplink,  Tunnel,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { INTERNET_V6, Sender::App,       { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { LAN,         Sender::App,       { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { HIJACKED,    Sender::App,       { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { INTERNET_V4, Sender::Proxy,     { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { INTERNET_V4, Sender::Forwarded, { Uplink,  Tunnel,  Uplink,  Uplink,  Uplink  } },
+        },
+        // soft
+        std::array {
+            ProbeCase { INTERNET_V4, Sender::App,       { Blocked, Tunnel,  Blocked, Blocked, Uplink  } },
+            ProbeCase { INTERNET_V6, Sender::App,       { Blocked, Blocked, Blocked, Blocked, Uplink  } },
+            ProbeCase { LAN,         Sender::App,       { Blocked, Blocked, Blocked, Blocked, Uplink  } },
+            ProbeCase { HIJACKED,    Sender::App,       { Blocked, Blocked, Blocked, Blocked, Uplink  } },
+            ProbeCase { INTERNET_V4, Sender::Proxy,     { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { INTERNET_V4, Sender::Forwarded, { Blocked, Tunnel,  Blocked, Blocked, Uplink  } },
+        },
+        // hard
+        std::array {
+            ProbeCase { INTERNET_V4, Sender::App,       { Blocked, Tunnel,  Blocked, Blocked, Blocked } },
+            ProbeCase { INTERNET_V6, Sender::App,       { Blocked, Blocked, Blocked, Blocked, Blocked } },
+            ProbeCase { LAN,         Sender::App,       { Blocked, Blocked, Blocked, Blocked, Blocked } },
+            ProbeCase { HIJACKED,    Sender::App,       { Blocked, Blocked, Blocked, Blocked, Blocked } },
+            ProbeCase { INTERNET_V4, Sender::Proxy,     { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { INTERNET_V4, Sender::Forwarded, { Blocked, Tunnel,  Blocked, Blocked, Blocked } },
+        },
+    };
+
+    const std::array SPLIT_PROFILE {
+        //                                                before   up       no route detached freed
+        // disabled
+        std::array {
+            ProbeCase { SPLIT_DESTINATION, Sender::App, { Uplink,  Tunnel,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { INTERNET_V4,       Sender::App, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { INTERNET_V6,       Sender::App, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { LAN,               Sender::App, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+        },
+        // soft
+        std::array {
+            ProbeCase { SPLIT_DESTINATION, Sender::App, { Blocked, Tunnel,  Blocked, Blocked, Uplink  } },
+            ProbeCase { INTERNET_V4,       Sender::App, { Blocked, Uplink,  Uplink,  Blocked, Uplink  } },
+            ProbeCase { INTERNET_V6,       Sender::App, { Blocked, Blocked, Blocked, Blocked, Uplink  } },
+            ProbeCase { LAN,               Sender::App, { Blocked, Uplink,  Uplink,  Blocked, Uplink  } },
+        },
+        // hard
+        std::array {
+            ProbeCase { SPLIT_DESTINATION, Sender::App, { Blocked, Tunnel,  Blocked, Blocked, Blocked } },
+            ProbeCase { INTERNET_V4,       Sender::App, { Blocked, Uplink,  Uplink,  Blocked, Blocked } },
+            ProbeCase { INTERNET_V6,       Sender::App, { Blocked, Blocked, Blocked, Blocked, Blocked } },
+            ProbeCase { LAN,               Sender::App, { Blocked, Uplink,  Uplink,  Blocked, Blocked } },
+        },
+    };
 }
 
 class KillswitchMode : public libxtun::test::KillswitchTest, public testing::WithParamInterface<libxtun_killswitch_mode>
 {
 };
 
-TEST_P(KillswitchMode, BlocksUnprotectedEgress)
-{
-    auto killswitch = m_env.create(GetParam());
-    ASSERT_NE(killswitch, nullptr);
-    expectProbeResult(TEST_NET_V4, Bypass::None, probeResultFor(GetParam()));
-    expectProbeResult(TEST_NET_V6, Bypass::None, probeResultFor(GetParam()));
-}
-
-TEST_P(KillswitchMode, ProxyTrafficAlwaysEscapes)
-{
-    auto killswitch = m_env.create(GetParam());
-    ASSERT_NE(killswitch, nullptr);
-    expectProbeResult(TEST_NET_V4, Bypass::Proxy, ProbeResult::Delivered);
-}
-
 TEST_P(KillswitchMode, LoopbackStaysUsable)
 {
     auto killswitch = m_env.create(GetParam());
     ASSERT_NE(killswitch, nullptr);
-    expectProbeResult(LOOPBACK_V4, Bypass::None, ProbeResult::Delivered);
+
+    const LoopbackSocket loopback = openLoopbackSocket();
+    ASSERT_TRUE(loopback.fd) << "could not open a socket on " << LOOPBACK_V4;
+    const Nonce nonce = libxtun::test::randomNonce();
+    ASSERT_TRUE(m_env.send(LOOPBACK_V4, loopback.port, Sender::App, nonce) == SendResult::Out);
+    EXPECT_TRUE(nonceReceived(loopback.fd, nonce)) << "loopback traffic did not arrive";
 }
 
 TEST_P(KillswitchMode, HardLeftoversCleanedUp)
@@ -124,64 +296,90 @@ TEST_P(KillswitchMode, DestructionHonoursPersistence)
         ASSERT_EQ(installed > 0, GetParam() != LIBXTUN_KILLSWITCH_MODE_DISABLED);
     }
     EXPECT_EQ(m_env.ruleCount(), persistent(GetParam()) ? installed : 0);
-    expectProbeResult(TEST_NET_V4, Bypass::None, persistent(GetParam()) ? ProbeResult::Blocked : ProbeResult::Delivered);
+    expectProbeResult(INTERNET_V4, Sender::App, persistent(GetParam()) ? Blocked : Uplink);
 }
 
 INSTANTIATE_TEST_SUITE_P(Killswitch, KillswitchMode, testing::ValuesIn(libxtun::test::allKillswitchModes()),
                          [](const auto &info) { return modeName(info.param); });
 
-class KillswitchTunnel : public libxtun::test::KillswitchTest,
-                         public testing::WithParamInterface<std::tuple<libxtun_killswitch_mode, test::Setup>>
+class KillswitchProfile : public libxtun::test::KillswitchTest,
+                          public testing::WithParamInterface<std::tuple<libxtun_killswitch_mode, test::Setup>>
+{
+protected:
+    void checkLifecycle(const std::vector<std::string> &routes, std::span<const ProbeCase> cases)
+    {
+        const auto &[mode, setup] = GetParam();
+        const auto srv = setup.createServer("server");
+        if (!srv) {
+            GTEST_SKIP() << "local server setup is required";
+        }
+
+        libxtun::test::TunOpts opts;
+        opts.killswitchMode(mode).ifaddrs({ std::string(libxtun::test::TUNNEL_ADDRESS) + "/32" });
+
+        libxtun::test::Logger log("client");
+        libxtun::test::StatusChecker status;
+
+        const auto check = [&](TunnelState state) {
+            for (const ProbeCase &probeCase : cases) {
+                if (const std::optional<ProbeResult> result =
+                            m_env.probe(probeCase.to, probeCase.sender, probeCase.expected[state], &srv->tun())) {
+                    EXPECT_EQ(*result, probeCase.expected[state])
+                            << probeCase.to.name << ' ' << probeCase.sender << ", " << TUNNEL_STATE_NAMES[state];
+                }
+            }
+        };
+
+        libxtun_tunnel tun {};
+        ASSERT_EQ(libxtun_tunnel_new(&tun, &opts.get()), LIBXTUN_OK);
+        check(BEFORE_ATTACH);
+
+        libxtun_proxy proxy {};
+        setup.wrapper->wrapProxy(proxy);
+        log.wrapProxy(proxy);
+        status.wrapProxy(proxy);
+        ASSERT_EQ(libxtun_proxy_new(&proxy, setup.proto, setup.clientA.c_str()), LIBXTUN_OK);
+        ASSERT_EQ(libxtun_tunnel_attach_proxy(&tun, &proxy), LIBXTUN_OK);
+        ASSERT_TRUE(status.await(LIBXTUN_STATUS_CONNECTED, std::chrono::seconds(5)))
+                << "the tunnel did not connect after attach";
+        check(TUNNEL_UP);
+
+        ASSERT_TRUE(m_env.removeTunnelRoutes(routes)) << "could not remove the tunnel's routes";
+        check(ROUTES_LOST);
+
+        libxtun_tunnel_detach_proxy(&tun, &proxy);
+        libxtun_proxy_free(&proxy);
+        check(DETACHED);
+
+        libxtun_tunnel_free(&tun);
+        check(FREED);
+    }
+};
+
+class KillswitchFullTunnel : public KillswitchProfile
 {
 };
 
-TEST_P(KillswitchTunnel, FullLifecycle)
+TEST_P(KillswitchFullTunnel, Lifecycle)
 {
-    auto &[mode, setup] = GetParam();
-    [[maybe_unused]] const auto srv = setup.createServer("server");
-
-    libxtun::test::TunOpts opts;
-    opts.killswitchMode(mode);
-
-    libxtun::test::Logger log("client");
-
-    libxtun_tunnel tun {};
-    ASSERT_EQ(libxtun_tunnel_new(&tun, &opts.get()), LIBXTUN_OK);
-
-    libxtun_proxy proxy {};
-    setup.wrapper->wrapProxy(proxy);
-    log.wrapProxy(proxy);
-    ASSERT_EQ(libxtun_proxy_new(&proxy, setup.proto, setup.clientA.c_str()), LIBXTUN_OK);
-    ASSERT_EQ(libxtun_tunnel_attach_proxy(&tun, &proxy), LIBXTUN_OK);
-
-    expectProbeResult(TEST_NET_V4, Bypass::None, ProbeResult::Delivered, "with the proxy attached");
-    expectProbeResult(TEST_NET_V6, Bypass::None, probeResultFor(mode), "with the proxy attached");
-    expectProbeResult(TEST_NET_V4, Bypass::Proxy, ProbeResult::Delivered, "with the proxy attached");
-    expectProbeResult(TEST_NET_V6, Bypass::Proxy, ProbeResult::Delivered, "with the proxy attached");
-
-    libxtun_tunnel_detach_proxy(&tun, &proxy);
-    libxtun_proxy_free(&proxy);
-
-    expectProbeResult(TEST_NET_V4, Bypass::None, probeResultFor(mode), "after the proxy detached");
-    expectProbeResult(TEST_NET_V6, Bypass::None, probeResultFor(mode), "after the proxy detached");
-    expectProbeResult(TEST_NET_V4, Bypass::Proxy, ProbeResult::Delivered, "after the proxy detached");
-    expectProbeResult(TEST_NET_V6, Bypass::Proxy, ProbeResult::Delivered, "after the proxy detached");
-
-    libxtun_tunnel_free(&tun);
-
-    expectProbeResult(TEST_NET_V4, Bypass::None, persistent(mode) ? ProbeResult::Blocked : ProbeResult::Delivered,
-                      "after the tunnel was freed");
-    expectProbeResult(TEST_NET_V6, Bypass::None, persistent(mode) ? ProbeResult::Blocked : ProbeResult::Delivered,
-                      "after the tunnel was freed");
-    expectProbeResult(TEST_NET_V4, Bypass::Proxy, ProbeResult::Delivered, "after the tunnel was freed");
-    expectProbeResult(TEST_NET_V6, Bypass::Proxy, ProbeResult::Delivered, "after the tunnel was freed");
+    checkLifecycle(FULL_ROUTES, FULL_PROFILE[std::get<0>(GetParam())]);
 }
 
-INSTANTIATE_TEST_SUITE_P(Killswitch, KillswitchTunnel,
+INSTANTIATE_TEST_SUITE_P(Killswitch, KillswitchFullTunnel,
                          testing::Combine(testing::ValuesIn(libxtun::test::allKillswitchModes()),
-                                          testing::ValuesIn(test::SetupBuilder().withRoutes({ "0.0.0.0/0" }).build())),
-                         [](const auto &info) {
-                             const auto mode = std::get<0>(info.param);
-                             const auto &setup = std::get<1>(info.param);
-                             return modeName(mode) + "_" + setup.name;
-                         });
+                                          testing::ValuesIn(profileSetups(FULL_ROUTES))),
+                         setupName);
+
+class KillswitchSplitTunnel : public KillswitchProfile
+{
+};
+
+TEST_P(KillswitchSplitTunnel, Lifecycle)
+{
+    checkLifecycle(SPLIT_ROUTES, SPLIT_PROFILE[std::get<0>(GetParam())]);
+}
+
+INSTANTIATE_TEST_SUITE_P(Killswitch, KillswitchSplitTunnel,
+                         testing::Combine(testing::ValuesIn(libxtun::test::allKillswitchModes()),
+                                          testing::ValuesIn(profileSetups(SPLIT_ROUTES))),
+                         setupName);

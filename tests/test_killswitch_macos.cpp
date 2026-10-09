@@ -1,25 +1,27 @@
 #include "killswitch_macos.h"
+#include "net/ip.h"
 #include "net/pf.h"
 #include "util/killswitch_env.h"
 #include "util/os.h"
+#include "util/spawn.h"
 
+#include <arpa/inet.h>
 #include <fcntl.h>
-#include <ifaddrs.h>
 #include <net/bpf.h>
 #include <net/if.h>
 #include <netdb.h>
+#include <netinet/in.h>
 #include <poll.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/sysctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include <algorithm>
 #include <array>
 #include <cerrno>
-#include <chrono>
 #include <cstddef>
-#include <cstdlib>
+#include <cstdint>
 #include <cstring>
 #include <memory>
 #include <optional>
@@ -33,130 +35,82 @@ namespace libxtun::test
     namespace
     {
         constexpr const char *PROBE_IFACE = "utun9";
+        constexpr const char *FAKE_UPLINK_PEER = "10.10.0.1";
+        constexpr const char *FORWARDING = "net.inet.ip.forwarding";
         constexpr ::gid_t FOREIGN_GID = 1;
         constexpr int MAX_TAP_UNITS = 256;
         constexpr unsigned TAP_BUFFER_SIZE = 32768;
-        constexpr auto PROBE_TIMEOUT = std::chrono::milliseconds(500);
+        constexpr std::size_t UTUN_HEADER_SIZE = 4;
 
-        using Nonce = std::array<std::byte, 16>;
-
-        class ProbeTap : private NonCopyable
+        ScopedFd tapOn(const std::string &ifName)
         {
-        public:
-            ProbeTap()
-            {
-                ::ifaddrs *list = nullptr;
-                if (::getifaddrs(&list) != 0) {
-                    ADD_FAILURE() << "could not list the interfaces to tap";
-                    return;
-                }
-
-                const std::unique_ptr<::ifaddrs, decltype(&::freeifaddrs)> interfaces(list, ::freeifaddrs);
-                for (const ::ifaddrs *it = interfaces.get(); it != nullptr; it = it->ifa_next) {
-                    if (it->ifa_addr == nullptr || it->ifa_addr->sa_family != AF_LINK || (it->ifa_flags & IFF_UP) == 0) {
+            for (int unit = 0; unit < MAX_TAP_UNITS; ++unit) {
+                ScopedFd tap(::open(("/dev/bpf" + std::to_string(unit)).c_str(), O_RDONLY | O_CLOEXEC));
+                if (!tap) {
+                    if (errno == EBUSY) {
                         continue;
                     }
-                    if (ScopedFd tap = attach(it->ifa_name)) {
-                        m_taps.push_back(std::move(tap));
-                    } else {
-                        ADD_FAILURE() << "could not tap " << it->ifa_name;
-                    }
+                    return ScopedFd {};
                 }
+
+                ::ifreq request {};
+                std::strncpy(request.ifr_name, ifName.c_str(), sizeof(request.ifr_name) - 1);
+                unsigned bufferSize = TAP_BUFFER_SIZE;
+                unsigned on = 1;
+                if (::ioctl(tap.get(), BIOCSBLEN, &bufferSize) != 0 || bufferSize != TAP_BUFFER_SIZE
+                    || ::ioctl(tap.get(), BIOCSETIF, &request) != 0 || ::ioctl(tap.get(), BIOCIMMEDIATE, &on) != 0
+                    || ::ioctl(tap.get(), BIOCSSEESENT, &on) != 0) {
+                    return ScopedFd {};
+                }
+                return tap;
             }
+            return ScopedFd {};
+        }
 
-            [[nodiscard]] bool spotted(const Nonce &nonce, std::chrono::milliseconds timeout) const
-            {
-                std::vector<::pollfd> fds;
-                for (const ScopedFd &tap : m_taps) {
-                    fds.push_back({ tap.get(), POLLIN, 0 });
-                }
-
-                std::vector<std::byte> captured(TAP_BUFFER_SIZE);
-                const auto deadline = std::chrono::steady_clock::now() + timeout;
-                while (true) {
-                    const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
-                            deadline - std::chrono::steady_clock::now());
-                    if (left.count() <= 0) {
-                        return false;
-                    }
-
-                    const int ready = ::poll(fds.data(), fds.size(), static_cast<int>(left.count()));
-                    if (ready < 0 && errno == EINTR) {
-                        continue;
-                    }
-                    if (ready <= 0) {
-                        return false;
-                    }
-
-                    for (const ::pollfd &fd : fds) {
-                        if ((fd.revents & POLLIN) == 0) {
-                            continue;
-                        }
-                        const ssize_t size = ::read(fd.fd, captured.data(), captured.size());
-                        if (size > 0
-                            && !std::ranges::search(std::span(captured.data(), static_cast<std::size_t>(size)), nonce)
-                                        .empty()) {
-                            return true;
-                        }
-                    }
-                }
-            }
-
-        private:
-            static ScopedFd attach(const char *ifName)
-            {
-                for (int unit = 0; unit < MAX_TAP_UNITS; ++unit) {
-                    ScopedFd tap(::open(("/dev/bpf" + std::to_string(unit)).c_str(), O_RDONLY | O_CLOEXEC));
-                    if (!tap) {
-                        if (errno == EBUSY) {
-                            continue;
-                        }
-                        return ScopedFd {};
-                    }
-
-                    ::ifreq request {};
-                    std::strncpy(request.ifr_name, ifName, sizeof(request.ifr_name) - 1);
-                    unsigned bufferSize = TAP_BUFFER_SIZE;
-                    unsigned on = 1;
-                    if (::ioctl(tap.get(), BIOCSBLEN, &bufferSize) != 0 || bufferSize != TAP_BUFFER_SIZE
-                        || ::ioctl(tap.get(), BIOCSETIF, &request) != 0 || ::ioctl(tap.get(), BIOCIMMEDIATE, &on) != 0
-                        || ::ioctl(tap.get(), BIOCSSEESENT, &on) != 0) {
-                        return ScopedFd {};
-                    }
-                    return tap;
-                }
-                return ScopedFd {};
-            }
-
-            std::vector<ScopedFd> m_taps;
-        };
-
-        bool readNonce(int fd, const Nonce &nonce, std::chrono::milliseconds timeout)
+        void drain(const ScopedFd &source)
         {
-            std::array<std::byte, 2048> packet {};
-            const auto deadline = std::chrono::steady_clock::now() + timeout;
-            while (true) {
-                const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        deadline - std::chrono::steady_clock::now());
-                if (left.count() <= 0) {
-                    return false;
-                }
-
-                ::pollfd ready { fd, POLLIN, 0 };
-                const int events = ::poll(&ready, 1, static_cast<int>(left.count()));
-                if (events < 0 && errno == EINTR) {
-                    continue;
-                }
-                if (events <= 0) {
-                    return false;
-                }
-
-                const ssize_t size = ::read(fd, packet.data(), packet.size());
-                if (size > 0
-                    && !std::ranges::search(std::span(packet.data(), static_cast<std::size_t>(size)), nonce).empty()) {
-                    return true;
-                }
+            ::pollfd ready { source.get(), POLLIN, 0 };
+            std::vector<std::byte> buffer(TAP_BUFFER_SIZE);
+            while (::poll(&ready, 1, 0) > 0 && ::read(source.get(), buffer.data(), buffer.size()) > 0) {
             }
+        }
+
+        std::string defaultInterface()
+        {
+            const ConnectedSocket probe = udpConnect(TEST_NET_V4, PROBE_PORT);
+            ::sockaddr_in local {};
+            ::socklen_t size = sizeof(local);
+            if (probe.error != 0 || ::getsockname(probe.fd.get(), reinterpret_cast<::sockaddr *>(&local), &size) != 0) {
+                return {};
+            }
+
+            std::array<char, INET_ADDRSTRLEN> address {};
+            if (::inet_ntop(AF_INET, &local.sin_addr, address.data(), address.size()) == nullptr) {
+                return {};
+            }
+            return ifnameFromAddr(address.data());
+        }
+
+        int getForwarding()
+        {
+            int value = 0;
+            std::size_t size = sizeof(value);
+            return ::sysctlbyname(FORWARDING, &value, &size, nullptr, 0) == 0 ? value : -1;
+        }
+
+        bool setForwarding(int value)
+        {
+            return ::sysctlbyname(FORWARDING, nullptr, nullptr, &value, sizeof(value)) == 0;
+        }
+
+        bool ifconfig(const std::vector<std::string> &args)
+        {
+            return static_cast<bool>(spawn::run("/sbin/ifconfig", args, {}));
+        }
+
+        bool route(const std::vector<std::string> &args)
+        {
+            return static_cast<bool>(spawn::run("/sbin/route", args, {}));
         }
 
         std::string anchorRules()
@@ -165,23 +119,47 @@ namespace libxtun::test
             return rules ? rules.value() : std::string {};
         }
 
-        int sendDatagram(const std::string &host, const Nonce &nonce)
+        std::string protectedEntries()
         {
-            const ConnectedSocket probe = udpConnect(host, PROBE_PORT);
-            if (probe.error != 0) {
-                return probe.error;
-            }
-            return ::send(probe.fd.get(), nonce.data(), nonce.size(), 0) < 0 ? errno : 0;
+            const auto entries = pf::pfctl({ "-a", ANCHOR, "-t", PROTECTED_TABLE, "-T", "show" }, {});
+            return entries ? entries.value() : std::string {};
         }
 
-        int sendAsForeignGroup(const std::string &host, const Nonce &nonce)
+        int sendBound(const std::string &host, std::uint16_t port, unsigned ifIndex, const Nonce &nonce)
         {
             ::addrinfo hints {};
             hints.ai_socktype = SOCK_DGRAM;
             hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV;
 
             ::addrinfo *resolved = nullptr;
-            if (::getaddrinfo(host.c_str(), std::to_string(PROBE_PORT).c_str(), &hints, &resolved) != 0) {
+            if (::getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &resolved) != 0) {
+                return EINVAL;
+            }
+            const std::unique_ptr<::addrinfo, decltype(&::freeaddrinfo)> owner(resolved, ::freeaddrinfo);
+
+            const ScopedFd sock(::socket(resolved->ai_family, resolved->ai_socktype, resolved->ai_protocol));
+            if (!sock) {
+                return errno;
+            }
+            const bool v6 = resolved->ai_family == AF_INET6;
+            if (::setsockopt(sock.get(), v6 ? IPPROTO_IPV6 : IPPROTO_IP, v6 ? IPV6_BOUND_IF : IP_BOUND_IF, &ifIndex,
+                             sizeof(ifIndex))
+                        != 0
+                || ::connect(sock.get(), resolved->ai_addr, resolved->ai_addrlen) != 0
+                || ::send(sock.get(), nonce.data(), nonce.size(), 0) < 0) {
+                return errno;
+            }
+            return 0;
+        }
+
+        int sendAsForeignGroup(const std::string &host, std::uint16_t port, const Nonce &nonce)
+        {
+            ::addrinfo hints {};
+            hints.ai_socktype = SOCK_DGRAM;
+            hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV;
+
+            ::addrinfo *resolved = nullptr;
+            if (::getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &resolved) != 0) {
                 return EINVAL;
             }
 
@@ -231,33 +209,45 @@ namespace libxtun::test
             m_skipReason = "the main pf ruleset does not reference com.apple/*";
             return;
         }
-        if (sendDatagram(TEST_NET_V4, Nonce {}) != 0) {
+
+        const std::string uplink = defaultInterface();
+        m_defaultIfIndex = uplink.empty() ? 0 : ::if_nametoindex(uplink.c_str());
+        if (m_defaultIfIndex == 0) {
             m_skipReason = "no uplink to probe through";
             return;
         }
-
-        auto tun = createTun();
-        if (!tun || !tun->first) {
-            m_skipReason = "could not open a utun for the IPv6 test path";
-            return;
-        }
-        if (tun->second == PROBE_IFACE) {
-            m_skipReason = "the IPv6 test utun took the name the killswitch exempts";
+        m_tap = tapOn(uplink);
+        if (!m_tap) {
+            m_skipReason = "could not tap the uplink " + uplink;
             return;
         }
 
-        const std::string dev = tun->second;
-        m_ipv6TunFd = tun->first.release();
-        const std::vector<std::string> setup {
-            "ifconfig " + dev + " inet6 " + IPV6_PATH_ADDRESS + " alias",
-            "ifconfig " + dev + " up",
-            "route -q -n add -inet6 " + std::string(TEST_NET_V6_PREFIX) + " -interface " + dev,
-        };
-        if (!std::ranges::all_of(setup, sh)) {
-            m_skipReason = "could not route the IPv6 test net into a utun";
+        auto fake = createTun();
+        auto client = createTun();
+        if (!fake || !fake->first || !client || !client->first) {
+            m_skipReason = "could not open the utuns for the fake uplink and the client side";
+            return;
+        }
+        if (fake->second == PROBE_IFACE || client->second == PROBE_IFACE) {
+            m_skipReason = "a test utun took the name the killswitch exempts";
+            return;
+        }
+        m_uplinkFd = std::move(fake->first);
+        m_clientFd = std::move(client->first);
+
+        const std::string up = fake->second;
+        const std::string side = client->second;
+        if (!(ifconfig({ up, "inet", FAKE_UPLINK_V4, FAKE_UPLINK_PEER, "up" })
+              && ifconfig({ up, "inet6", FAKE_UPLINK_V6, "alias" })
+              && route({ "-q", "-n", "add", "-net", LAN_PREFIX, "-interface", up })
+              && route({ "-q", "-n", "add", "-net", HIJACKED_PREFIX, "-interface", up })
+              && route({ "-q", "-n", "add", "-inet6", TEST_NET_V6_PREFIX, "-interface", up })
+              && ifconfig({ side, "inet", CLIENT_SIDE_V4, FORWARDED_SOURCE, "up" }))) {
+            m_skipReason = "could not set up the fake uplink and the client side utuns";
             return;
         }
 
+        m_restoreForwarding = getForwarding() == 0 && setForwarding(1);
         m_ifName = PROBE_IFACE;
         pf::flushRules(ANCHOR);
     }
@@ -267,8 +257,8 @@ namespace libxtun::test
         if (m_skipReason.empty()) {
             pf::flushRules(ANCHOR);
         }
-        if (m_ipv6TunFd >= 0) {
-            ::close(m_ipv6TunFd);
+        if (m_restoreForwarding) {
+            setForwarding(0);
         }
     }
 
@@ -281,28 +271,97 @@ namespace libxtun::test
                 ++count;
             }
         }
+
+        std::istringstream entries(protectedEntries());
+        for (std::string entry; entries >> entry;) {
+            if (net::IpPrefix::parse(entry)) {
+                ++count;
+            }
+        }
         return count;
     }
 
-    std::optional<ProbeResult> KillswitchEnv::probe(const std::string &host, Bypass bypass) const
+    SendResult KillswitchEnv::send(const std::string &host, std::uint16_t port, Sender sender, const Nonce &nonce) const
     {
-        Nonce nonce {};
-        ::arc4random_buf(nonce.data(), nonce.size());
+        drain(m_tap);
+        drain(m_uplinkFd);
 
-        const bool ipv6 = host.find(':') != std::string::npos;
-        std::optional<ProbeTap> tap;
-        if (!ipv6) {
-            tap.emplace();
+        int error = 0;
+        switch (sender) {
+        case Sender::App: error = sendAsForeignGroup(host, port, nonce); break;
+        case Sender::Proxy: error = sendBound(host, port, m_defaultIfIndex, nonce); break;
+        case Sender::Forwarded: {
+            if (getForwarding() != 1) {
+                ADD_FAILURE() << "IPv4 forwarding is off";
+                return SendResult::Failed;
+            }
+            const std::optional<net::IpAddress> destination = net::IpAddress::parse(host);
+            if (!destination || destination->family() != AF_INET) {
+                ADD_FAILURE() << "forwarded probes are IPv4 only, got " << host;
+                return SendResult::Failed;
+            }
+
+            const std::uint32_t family = htonl(AF_INET);
+            std::vector<std::byte> packet(UTUN_HEADER_SIZE);
+            std::memcpy(packet.data(), &family, sizeof(family));
+            const std::vector<std::byte> datagram = forwardedPacket(*destination, port, nonce);
+            packet.insert(packet.end(), datagram.begin(), datagram.end());
+            if (::write(m_clientFd.get(), packet.data(), packet.size()) != static_cast<ssize_t>(packet.size())) {
+                error = errno;
+            }
+            break;
+        }
         }
 
-        const int error = bypass == Bypass::Proxy ? sendDatagram(host, nonce) : sendAsForeignGroup(host, nonce);
-        if (error != 0) {
-            ADD_FAILURE() << "could not send to " << host << ": " << std::strerror(error);
-            return std::nullopt;
+        if (error == 0) {
+            return SendResult::Out;
+        }
+        if (error == EPERM) {
+            return SendResult::Refused;
         }
 
-        const bool delivered = ipv6 ? readNonce(m_ipv6TunFd, nonce, PROBE_TIMEOUT) : tap->spotted(nonce, PROBE_TIMEOUT);
-        return delivered ? ProbeResult::Delivered : ProbeResult::Blocked;
+        ADD_FAILURE() << "the probe to " << host << ' ' << sender << " failed: " << std::strerror(error);
+        return SendResult::Failed;
+    }
+
+    std::optional<ProbeResult> KillswitchEnv::pollUplink(const Destination &to, const Nonce &nonce) const
+    {
+        const ScopedFd &source = to.viaDefault ? m_tap : m_uplinkFd;
+        ::pollfd ready { source.get(), POLLIN, 0 };
+        std::vector<std::byte> buffer(TAP_BUFFER_SIZE);
+        int wait = static_cast<int>(PROBE_SLICE.count());
+        while (::poll(&ready, 1, wait) > 0) {
+            const ssize_t size = ::read(source.get(), buffer.data(), buffer.size());
+            if (size > static_cast<ssize_t>(UTUN_HEADER_SIZE)) {
+                const std::span<const std::byte> data(buffer.data(), static_cast<std::size_t>(size));
+                if (to.viaDefault ? containsNonce(data, nonce)
+                                  : udpPktContainsNonce(data.subspan(UTUN_HEADER_SIZE), nonce)) {
+                    return ProbeResult::Uplink;
+                }
+            }
+            wait = 0;
+        }
+        return std::nullopt;
+    }
+
+    bool KillswitchEnv::removeTunnelRoutes(const std::vector<std::string> &routes) const
+    {
+        const std::string tunnel = ifnameFromAddr(TUNNEL_ADDRESS);
+        if (tunnel.empty()) {
+            return false;
+        }
+
+        for (const std::string &profileRoute : routes) {
+            const std::vector<std::string> prefixes = profileRoute == "0.0.0.0/0"
+                    ? std::vector<std::string> { "0.0.0.0/1", "128.0.0.0/1" }
+                    : std::vector<std::string> { profileRoute };
+            for (const std::string &prefix : prefixes) {
+                if (!route({ "-q", "-n", "delete", "-net", prefix, "-interface", tunnel })) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     using KillswitchMacos = KillswitchTest;
@@ -314,16 +373,16 @@ namespace libxtun::test
             ASSERT_NE(killswitch, nullptr);
             ASSERT_EQ(m_env.update(*killswitch), LIBXTUN_OK);
 
-            expectProbeResult(TEST_NET_V4, Bypass::Proxy, ProbeResult::Delivered, "with the process's group");
-            expectProbeResult(TEST_NET_V4, Bypass::None, ProbeResult::Blocked, "with the process's group");
+            expectProbeResult(INTERNET_V4, Sender::Proxy, ProbeResult::Uplink, "with the process's group");
+            expectProbeResult(INTERNET_V4, Sender::App, ProbeResult::Blocked, "with the process's group");
         }
         {
             const auto killswitch = Killswitch::create(LIBXTUN_KILLSWITCH_MODE_SOFT, static_cast<int>(FOREIGN_GID));
             ASSERT_NE(killswitch, nullptr);
             ASSERT_EQ(m_env.update(*killswitch), LIBXTUN_OK);
 
-            expectProbeResult(TEST_NET_V4, Bypass::None, ProbeResult::Delivered, "with the foreign group");
-            expectProbeResult(TEST_NET_V4, Bypass::Proxy, ProbeResult::Blocked, "with the foreign group");
+            expectProbeResult(INTERNET_V4, Sender::App, ProbeResult::Uplink, "with the foreign group");
+            expectProbeResult(INTERNET_V4, Sender::Proxy, ProbeResult::Blocked, "with the foreign group");
         }
     }
 }

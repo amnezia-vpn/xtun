@@ -9,6 +9,7 @@
 namespace libxtun
 {
     constexpr const char *ANCHOR = "com.apple/xtun";
+    constexpr const char *PROTECTED_TABLE = "xtun_protected";
 
     class MacosKillswitch final : public Killswitch
     {
@@ -20,6 +21,7 @@ namespace libxtun
 
     protected:
         libxtun_error install(int ifIndex, const std::string &ifName) override;
+        libxtun_error setProtected(const std::vector<net::IpPrefix> &prefixes) override;
         void remove() noexcept override;
 
     private:

@@ -19,7 +19,7 @@ target_compile_definitions(xtun_tests PRIVATE
     XTUN_TEST_SECRETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/secrets")
 
 if(WIN32)
-    target_link_libraries(xtun_tests PRIVATE amnezia::wintun advapi32 iphlpapi)
+    target_link_libraries(xtun_tests PRIVATE amnezia::wintun advapi32 iphlpapi fwpuclnt)
 
     add_custom_command(TARGET xtun_tests POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different

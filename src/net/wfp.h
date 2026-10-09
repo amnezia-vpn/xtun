@@ -10,6 +10,7 @@
 #include <windows.h>
 
 #include <memory>
+#include <span>
 #include <vector>
 
 namespace libxtun::wfp
@@ -63,7 +64,8 @@ namespace libxtun::wfp
 
         libxtun_error addProvider() noexcept;
         libxtun_error addSublayer() noexcept;
-        libxtun_error addFilter(const GUID &layer, const FWP_ACTION_TYPE action, FWPM_FILTER_CONDITION *condition, const wchar_t *name) noexcept;
+        libxtun_error addFilter(const GUID &layer, const FWP_ACTION_TYPE action,
+                                std::span<FWPM_FILTER_CONDITION> conditions, const wchar_t *name) noexcept;
         ResultXtun<std::vector<FilterInfo>> getInstalledFilters();
         libxtun_error deleteFilters();
         libxtun_error cleanup();

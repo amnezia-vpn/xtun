@@ -1,77 +1,16 @@
 #include "pf.h"
 #include "xtun.h"
-#include "util/pipe.h"
 #include "util/result.h"
+#include "util/spawn.h"
 
-#include <fcntl.h>
-#include <unistd.h>
-
-#include <array>
+#include <cstdlib>
 #include <vector>
 
 namespace libxtun::pf
 {
     ResultXtun<std::string> pfctl(const std::vector<std::string> &args, const std::string &input)
     {
-        auto feed = Pipe::create();
-        auto collect = Pipe::create();
-        if (!feed || !collect) {
-            return fail(LIBXTUN_ERR_SYSTEM);
-        }
-
-        if (::fcntl(feed->writeFd.get(), F_SETNOSIGPIPE, 1) != 0) {
-            return fail(LIBXTUN_ERR_SYSTEM);
-        }
-
-        SpawnActions actions;
-        if (!actions.dup2(feed->readFd.get(), STDIN_FILENO)
-            || !actions.dup2(collect->writeFd.get(), STDOUT_FILENO)
-            || !actions.dup2(collect->writeFd.get(), STDERR_FILENO)) {
-            return fail(LIBXTUN_ERR_SYSTEM);
-        }
-
-        std::vector<char *> argv;
-        argv.reserve(args.size() + 2);
-        argv.push_back(const_cast<char *>(BINARY));
-        for (const std::string &arg : args) {
-            argv.push_back(const_cast<char *>(arg.c_str()));
-        }
-        argv.push_back(nullptr);
-
-        pid_t child = -1;
-        std::array<char *, 1> env = { nullptr };
-        if (::posix_spawn(&child, BINARY, actions.get(), nullptr, argv.data(), env.data())) {
-            return fail(LIBXTUN_ERR_SYSTEM);
-        }
-
-        feed->readFd.close();
-        collect->writeFd.close();
-
-        for (std::size_t sent = 0; sent < input.size();) {
-            const ssize_t chunk = ::write(feed->writeFd.get(), input.data() + sent, input.size() - sent);
-            if (chunk < 0) {
-                break;
-            }
-            sent += static_cast<std::size_t>(chunk);
-        }
-        feed->writeFd.close();
-
-        std::string output;
-        std::array<char, 512> buffer {};
-        ssize_t received = 0;
-        while ((received = ::read(collect->readFd.get(), buffer.data(), buffer.size())) > 0) {
-            output.append(buffer.data(), static_cast<std::size_t>(received));
-        }
-
-        int status = 0;
-        if (::waitpid(child, &status, 0) < 0) {
-            return fail(LIBXTUN_ERR_SYSTEM);
-        }
-
-        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-            return fail(LIBXTUN_ERR_SYSTEM);
-        }
-        return output;
+        return spawn::run(BINARY, args, input);
     }
 
     libxtun_error loadRules(const std::string &rules, const std::string &anchor)
