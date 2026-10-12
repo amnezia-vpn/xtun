@@ -16,21 +16,22 @@ namespace libxtun
         int read(std::span<std::byte> buf) override;
         int write(std::span<const std::byte> packet) override;
 
-        void halt() override
-        {
-            m_inner.halt();
-        }
-
         void protectSocket(int fd) override
         {
             m_inner.protectSocket(fd);
         }
-
+        void wake() override
+        {
+            m_inner.wake();
+        }
+        void halt() override
+        {
+            m_inner.halt();
+        }
         int mtu() const override
         {
             return m_inner.mtu();
         }
-
         std::vector<net::IpPrefix> addresses() override
         {
             return m_inner.addresses();

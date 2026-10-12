@@ -39,6 +39,7 @@ namespace libxtun
         int read(std::span<std::byte> buf) override;
         int write(std::span<const std::byte> packet) override;
         void protectSocket(int fd) override;
+        void wake() override;
         void halt() override;
         int mtu() const override;
         std::vector<net::IpPrefix> addresses() override;
