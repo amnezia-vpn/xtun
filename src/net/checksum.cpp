@@ -1,4 +1,15 @@
 #include "checksum.h"
+#include <cstring>
+
+namespace
+{
+    uint16_t load16(const void *p)
+    {
+        uint16_t val;
+        std::memcpy(&val, p, 2);
+        return val;
+    }
+}
 
 namespace libxtun::net
 {
@@ -31,23 +42,47 @@ namespace libxtun::net
         return static_cast<uint16_t>(~sum);
     }
 
-    uint16_t checksum(void *b, int len)
+    void Checksum::update(std::span<const std::byte> s)
     {
-        auto *p = reinterpret_cast<uint16_t *>(b);
-        uint32_t sum = 0;
+        update(s.data(), s.size());
+    }
 
-        while (len > 1) {
-            sum += *p++;
-            len -= 2;
+    void Checksum::update(const void *data, std::size_t n)
+    {
+        auto *p = reinterpret_cast<const uint8_t *>(data);
+        if (m_hasOdd && n > 0) {
+            uint8_t pair[2] = { m_odd, *p++ };
+            m_sum += load16(pair);
+            --n;
+            m_hasOdd = false;
         }
-        if (len > 0) {
-            uint16_t last = 0;
-            *reinterpret_cast<uint8_t *>(last) = *reinterpret_cast<uint8_t *>(p);
-            sum += last;
+        while (n > 1) {
+            m_sum += load16(p);
+            p += 2;
+            n -= 2;
+        }
+        if (n > 0) {
+            m_odd = *p;
+            m_hasOdd = true;
+        }
+    }
+
+    uint16_t Checksum::finalize()
+    {
+        uint32_t sum = m_sum;
+        if (m_hasOdd) {
+            uint8_t pair[2] = { m_odd, 0 };
+            sum += load16(pair);
         }
         while (sum >> 16) {
             sum = (sum & 0xffff) + (sum >> 16);
         }
         return static_cast<uint16_t>(~sum);
+    }
+
+    void Checksum::reset()
+    {
+        m_sum = 0;
+        m_hasOdd = false;
     }
 }

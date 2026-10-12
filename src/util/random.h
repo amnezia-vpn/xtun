@@ -4,42 +4,48 @@
 #include <cstdint>
 #include <random>
 
-namespace libxtun
+namespace
 {
-
-    class RandomSource
+    static std::mt19937 &engine() noexcept
     {
-    public:
-        RandomSource() : m_engine(std::random_device {}())
-        {
-        }
-        explicit RandomSource(std::uint32_t seed) noexcept : m_engine(seed)
-        {
-        }
+        static thread_local std::mt19937 e { std::random_device {}() };
+        return e;
+    }
+}
 
-        std::uint16_t next16() noexcept
-        {
-            return static_cast<std::uint16_t>(m_engine() & 0xffffu);
+namespace libxtun::rand
+{
+    static std::uint16_t next16() noexcept
+    {
+        return static_cast<std::uint16_t>(engine()() & 0xffffu);
+    }
+    static std::uint16_t next16(std::uint16_t lo, std::uint16_t hi) noexcept
+    {
+        if (hi <= lo) {
+            return lo;
         }
+        return std::uniform_int_distribution<std::uint16_t> { lo, hi }(engine());
+    }
 
-        std::uint32_t next32() noexcept
-        {
-            return static_cast<std::uint32_t>(m_engine());
+    static std::uint32_t next32() noexcept
+    {
+        return static_cast<std::uint32_t>(engine()());
+    }
+    static std::uint32_t next32(std::uint32_t lo, std::uint32_t hi) noexcept
+    {
+        if (hi <= lo) {
+            return lo;
         }
+        return std::uniform_int_distribution<std::uint32_t> { lo, hi }(engine());
+    }
 
-        int inRange(int lo, int hi) noexcept
-        {
-            if (hi <= lo) {
-                return lo;
-            }
-            const std::uint32_t span = static_cast<std::uint32_t>(hi - lo) + 1u;
-            return lo + static_cast<int>(next32() % span);
+    static int nexti(int lo, int hi) noexcept
+    {
+        if (hi <= lo) {
+            return lo;
         }
-
-    private:
-        std::mt19937 m_engine;
-    };
-
+        return std::uniform_int_distribution<int> { lo, hi }(engine());
+    }
 }
 
 #endif // RANDOM_H
