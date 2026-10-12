@@ -8,7 +8,7 @@
 
 namespace libxtun
 {
-    class AwaitingIo : public TunnelIo
+    class AwaitingIo final : public TunnelIo
     {
     public:
         explicit AwaitingIo(TunnelIo *io);
@@ -18,12 +18,12 @@ namespace libxtun
         int read(std::span<std::byte> buf) override;
         int write(std::span<const std::byte> packet) override;
         void protectSocket(int fd) override;
+        void wake() override;
         void halt() override;
         int mtu() const override;
         std::vector<net::IpPrefix> addresses() override;
 
         void assign(TunnelIo *io);
-        void destroy();
 
     private:
         void assignLocked(std::unique_lock<std::mutex> &lock, TunnelIo *io);
@@ -31,8 +31,8 @@ namespace libxtun
 
         TunnelIo *m_io = nullptr;
 
-        mutable bool m_destroyed = false;
-        mutable int m_haltEpoch = 0;
+        mutable bool m_halted = false;
+        mutable int m_wakeEpoch = 0;
         mutable int m_users = 0;
         mutable std::mutex m_mutex;
         mutable std::condition_variable m_cv;

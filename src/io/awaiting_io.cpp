@@ -15,7 +15,7 @@ namespace libxtun
 
     AwaitingIo::~AwaitingIo()
     {
-        destroy();
+        halt();
     }
 
     int AwaitingIo::read(std::span<std::byte> buf)
@@ -54,13 +54,13 @@ namespace libxtun
         }
     }
 
-    void AwaitingIo::halt()
+    void AwaitingIo::wake()
     {
         std::unique_lock lock(m_mutex);
         if (m_io) {
-            m_io->halt();
+            m_io->wake();
         }
-        m_haltEpoch++;
+        m_wakeEpoch++;
         m_cv.notify_all();
     }
 
@@ -77,7 +77,7 @@ namespace libxtun
         }
 
         if (TunnelIo *io = std::exchange(m_io, nullptr)) {
-            io->halt();
+            io->wake();
             m_usersCv.wait(lock, [this]() { return m_users == 0; });
         }
 
@@ -85,10 +85,10 @@ namespace libxtun
         m_cv.notify_all();
     }
 
-    void AwaitingIo::destroy()
+    void AwaitingIo::halt()
     {
         std::unique_lock lock(m_mutex);
-        m_destroyed = true;
+        m_halted = true;
         m_cv.notify_all();
         assignLocked(lock, nullptr);
     }
@@ -98,12 +98,12 @@ namespace libxtun
         using R = std::invoke_result_t<F, TunnelIo &>;
 
         std::unique_lock lock(m_mutex);
-        int haltEpoch = m_haltEpoch;
-        m_cv.wait(lock, [&]() { return m_io || m_haltEpoch != haltEpoch || m_destroyed; });
-        if (m_destroyed) {
+        int wakeEpoch = m_wakeEpoch;
+        m_cv.wait(lock, [&]() { return m_io || m_wakeEpoch != wakeEpoch || m_halted; });
+        if (m_halted) {
             return R { -1 };
         }
-        if (m_haltEpoch != haltEpoch) {
+        if (m_wakeEpoch != wakeEpoch) {
             return R { 0 };
         }
         m_users++;

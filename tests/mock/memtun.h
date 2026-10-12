@@ -20,15 +20,19 @@ namespace libxtun::test
     public:
         ~MemTun()
         {
-            halt();
+            wake();
         }
 
         int read(std::span<std::byte> buf) override
         {
             std::unique_lock<std::mutex> lock(m_mutex);
-            m_cond.wait(lock, [this] { return !m_in.empty() || m_halted; });
+            int wakeEpoch = m_wakeEpoch;
+            m_cond.wait(lock, [&] { return !m_in.empty() || m_wakeEpoch != wakeEpoch || m_halted; });
             if (m_halted) {
-                return libxtun::IO_FATAL;
+                return -1;
+            }
+            if (wakeEpoch != m_wakeEpoch) {
+                return 0;
             }
             const auto &pkt = m_in.front();
             size_t n = pkt.size() > buf.size() ? buf.size() : pkt.size();
@@ -55,6 +59,13 @@ namespace libxtun::test
             (void)fd;
         }
 
+        void wake() override
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_wakeEpoch++;
+            m_cond.notify_all();
+        }
+
         void halt() override
         {
             std::lock_guard<std::mutex> lock(m_mutex);
@@ -78,7 +89,8 @@ namespace libxtun::test
         int waitForArrival(std::span<std::byte> buf, std::chrono::milliseconds timeout)
         {
             std::unique_lock<std::mutex> lock(m_mutex);
-            if (!m_cond.wait_for(lock, timeout, [this] { return !m_out.empty() || m_halted; })) {
+            int wakeEpoch = m_wakeEpoch;
+            if (!m_cond.wait_for(lock, timeout, [&] { return !m_out.empty() || m_wakeEpoch != wakeEpoch || m_halted; })) {
                 return 0;
             }
             auto &vec = m_out.front();
@@ -90,10 +102,11 @@ namespace libxtun::test
 
     private:
         mutable std::mutex m_mutex;
+        mutable int m_wakeEpoch = 0;
+        mutable bool m_halted = false;
         std::condition_variable m_cond;
         std::deque<std::vector<std::byte>> m_in;
         std::deque<std::vector<std::byte>> m_out;
-        bool m_halted = false;
     };
 }
 

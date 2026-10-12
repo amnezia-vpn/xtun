@@ -18,6 +18,7 @@ namespace libxtun
         virtual int read(std::span<std::byte> buf) = 0;
         virtual int write(std::span<const std::byte> packet) = 0;
         virtual void protectSocket(int fd) = 0;
+        virtual void wake() = 0;
         virtual void halt() = 0;
 
         virtual int mtu() const = 0;

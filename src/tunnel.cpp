@@ -210,6 +210,11 @@ namespace libxtun
         }
     }
 
+    void Tunnel::wake()
+    {
+        m_device->wakeRead();
+    }
+
     void Tunnel::halt()
     {
         m_device->cancelRead();

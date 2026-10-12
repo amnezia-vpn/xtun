@@ -46,7 +46,7 @@ namespace libxtun
                                                          ClientCallbacks callbacks);
 
         Proxy(ClientCallbacks callbacks);
-        ~Proxy() override;
+        virtual ~Proxy();
 
         virtual const char *name() = 0;
 
@@ -85,13 +85,8 @@ namespace libxtun
         }
         void emitLog(char *str);
 
-        void destroyIo()
-        {
-            m_io.destroy();
-        }
-
-    private:
-        void onConnectionState(health::ConnectionState state) noexcept override;
+    protected:
+        void publishStatus(libxtun_status status);
 
         AwaitingIo m_io;
         ClientCallbacks m_callbacks;
