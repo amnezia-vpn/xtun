@@ -1,47 +1,20 @@
 #ifndef HEALTH_PROBE_H
 #define HEALTH_PROBE_H
 
-#include <chrono>
-#include <cstddef>
-#include <span>
-
 namespace libxtun::health
 {
-
-    class DnsQuery;
-
-    enum class ProbeStyle {
-        Datagram
-    };
-
-    enum class ProbeOutcome {
-        NotRun,
-        Answered,
-        Failed
-    };
-
-    class ConnectivityProbe
+    class Probe
     {
     public:
-        virtual ~ConnectivityProbe() = default;
-
-        [[nodiscard]] virtual ProbeOutcome run(const DnsQuery &query, std::chrono::milliseconds timeout) = 0;
-        virtual void abort() noexcept = 0;
+        virtual ~Probe() {};
+        virtual void sendProbe() = 0;
     };
 
-    class PacketInterceptor
+    class DummyProbe final : public Probe
     {
     public:
-        virtual ~PacketInterceptor() = default;
-
-        virtual int stage(std::span<std::byte> buf) noexcept = 0;
-        [[nodiscard]] virtual bool capture(std::span<const std::byte> packet) noexcept = 0;
+        void sendProbe() override {};
     };
-
-    class TunnelProbe : public ConnectivityProbe, public PacketInterceptor
-    {
-    };
-
 }
 
 #endif // HEALTH_PROBE_H

@@ -1,17 +1,19 @@
 #ifndef REMAPPING_IO_H
 #define REMAPPING_IO_H
 
+#include "net/ip.h"
 #include "net/sys.h" // IWYU pragma: keep
 #include "tunnel_io.h"
 #include "util/noncopyable.h"
 #include <cstring>
+#include <memory>
 
 namespace libxtun
 {
-    class RemappingIo : public TunnelIo, private NonCopyable
+    class RemappingIo final : public TunnelIo, private NonCopyable
     {
     public:
-        explicit RemappingIo(TunnelIo &io, in_addr v4origin, in_addr v4target, in6_addr v6origin, in6_addr v6target);
+        static std::unique_ptr<RemappingIo> create(TunnelIo &io, std::span<const net::IpPrefix> prefixes);
 
         int read(std::span<std::byte> buf) override;
         int write(std::span<const std::byte> packet) override;
@@ -38,6 +40,8 @@ namespace libxtun
         }
 
     private:
+        RemappingIo(TunnelIo &io, in_addr v4origin, in_addr v4target, in6_addr v6origin, in6_addr v6target);
+
         void fixProtoChecksum(void *p, int n, uint8_t proto, uint32_t delta);
 
         in_addr m_v4origin {};

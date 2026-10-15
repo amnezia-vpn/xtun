@@ -72,7 +72,7 @@ namespace libxtun::test
                                           "PrivateKey = eMTu4xarpbzj2RKaXO0WiLXA5Xd3coo2rcZPmnR111k=\n"
                                           "[Peer]\n"
                                           "PublicKey = Wg8kZUNcdM6034MJwxlj02Nx9wut7QcUPyb88+j0QXY=\n"
-                                          "AllowedIPs = %s\n"
+                                          "AllowedIPs = 10.9.10.2/32, %s\n"
                                           "Endpoint = 127.0.0.1:%d\n";
 
             const char *clientTemplateB = "[Interface]\n"
@@ -80,10 +80,11 @@ namespace libxtun::test
                                           "PrivateKey = yH6N0U9I7Ui4KYNOWyacmDqY4KcD21mL0MdA6v7IuXI=\n"
                                           "[Peer]\n"
                                           "PublicKey = Wg8kZUNcdM6034MJwxlj02Nx9wut7QcUPyb88+j0QXY=\n"
-                                          "AllowedIPs = %s\n"
+                                          "AllowedIPs = 10.9.10.3/32, %s\n"
                                           "Endpoint = 127.0.0.1:%d\n";
 
             const char *serverTemplate = "[Interface]\n"
+                                         "Address = 10.9.10.1/32\n"
                                          "ListenPort = %d\n"
                                          "PrivateKey = 6MCXtO93sn3WXDWu2MqLi9EZ3Kq2BNqQX9fgIuPijUA=\n"
                                          "[Peer]\n"
