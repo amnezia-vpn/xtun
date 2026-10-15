@@ -1,9 +1,7 @@
 #ifndef HEALTH_SCHEDULER_H
 #define HEALTH_SCHEDULER_H
 
-#include "health/state.h"
 #include "util/noncopyable.h"
-#include "util/random.h"
 
 #include <chrono>
 #include <condition_variable>
@@ -14,6 +12,7 @@
 
 namespace libxtun::health
 {
+    constexpr int DEFAULT_JITTER_PERCENT = 8;
 
     class Scheduler
     {
@@ -31,7 +30,7 @@ namespace libxtun::health
     class ThreadedScheduler final : public Scheduler, private NonCopyable
     {
     public:
-        ThreadedScheduler(RandomSource &random, int jitterPercent, LogSink log = {});
+        ThreadedScheduler(int jitterPercent = DEFAULT_JITTER_PERCENT);
         ~ThreadedScheduler() override;
 
         void start(Tick tick, std::chrono::milliseconds firstDelay) override;
@@ -42,12 +41,10 @@ namespace libxtun::health
     private:
         void loop(std::chrono::milliseconds firstDelay);
         std::chrono::milliseconds withJitter(std::chrono::milliseconds base);
-        std::optional<std::chrono::milliseconds> runTick(const Tick &tick, std::chrono::milliseconds fallback) noexcept;
+        std::optional<std::chrono::milliseconds> runTick(const Tick &tick) noexcept;
 
         Tick m_tick;
-        RandomSource &m_random;
         int m_jitterPercent;
-        LogSink m_log;
 
         mutable std::mutex m_mtx;
         std::condition_variable m_cond;
@@ -56,7 +53,6 @@ namespace libxtun::health
         bool m_stop = false;
         bool m_wake = false;
     };
-
 }
 
 #endif // HEALTH_SCHEDULER_H

@@ -53,7 +53,7 @@ TEST(NetPacketBuilder, CreatesValidIcmp)
                                      .icmpEchoRequest()
                                      .withHeader([](net::IcmpEchoRef h) { h.setIdentifier(0xabcd).setSeqNumber(1); })
                                      .withPayload([](std::span<std::byte> s) -> std::size_t {
-                                         std::memcpy(s.data(), "ping", s.size());
+                                         std::memcpy(s.data(), "ping", 4);
                                          return 4;
                                      })
                                      .finish());

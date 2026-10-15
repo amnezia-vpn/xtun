@@ -1,6 +1,7 @@
 #include "dns_query.h"
 
 #include "net/network_order.h"
+#include "util/random.h"
 
 #include <cstring>
 #include <string_view>
@@ -9,7 +10,6 @@ namespace libxtun::health
 {
     namespace
     {
-
         constexpr std::size_t DNS_HEADER_LEN = 12;
 
         constexpr std::string_view PROBE_DOMAIN = "example.com";
@@ -76,8 +76,7 @@ namespace libxtun::health
 
     }
 
-    DnsQuery::DnsQuery(std::uint16_t transactionId, std::uint32_t nonce, std::uint16_t sourcePort)
-        : m_transactionId(transactionId), m_sourcePort(sourcePort)
+    DnsQuery::DnsQuery(std::uint16_t transactionId, std::uint32_t nonce)
     {
         m_bytes.reserve(DNS_HEADER_LEN + NONCE_HEX_DIGITS + PROBE_DOMAIN.size() + 8);
 
@@ -100,40 +99,14 @@ namespace libxtun::health
         net::appendBigEndian16(m_bytes, DNS_CLASS_IN);
     }
 
-    bool DnsQuery::matchesResponse(std::span<const std::byte> response) const noexcept
-    {
-        if (m_bytes.size() <= DNS_HEADER_LEN || response.size() < m_bytes.size()) {
-            return false;
-        }
-        if (net::readBigEndian16(response, 0) != m_transactionId) {
-            return false;
-        }
-
-        const DnsFlags flags(net::readBigEndian16(response, 2));
-        if (!flags.isResponse() || flags.opcode() != OPCODE_QUERY) {
-            return false;
-        }
-        if (flags.rcode() != RCODE_NO_ERROR && flags.rcode() != RCODE_NX_DOMAIN) {
-            return false;
-        }
-        if (net::readBigEndian16(response, 4) != 1) {
-            return false;
-        }
-
-        const std::size_t questionLen = m_bytes.size() - DNS_HEADER_LEN;
-        return std::memcmp(response.data() + DNS_HEADER_LEN, m_bytes.data() + DNS_HEADER_LEN, questionLen) == 0;
-    }
-
-    DnsQueryFactory::DnsQueryFactory(RandomSource &random) noexcept : m_random(random)
+    DnsQueryFactory::DnsQueryFactory() noexcept
     {
     }
 
     DnsQuery DnsQueryFactory::next()
     {
-        const std::uint16_t transactionId = m_random.next16();
-        const std::uint32_t nonce = m_random.next32();
-        const auto sourcePort = static_cast<std::uint16_t>(m_random.inRange(EPHEMERAL_PORT_FIRST, EPHEMERAL_PORT_LAST));
-        return DnsQuery(transactionId, nonce, sourcePort);
+        const std::uint16_t transactionId = rand::next16();
+        const std::uint32_t nonce = rand::next32();
+        return DnsQuery(transactionId, nonce);
     }
-
 }

@@ -1,17 +1,30 @@
 #include "mock/memtun.h"
+#include "net/ip.h"
 #include "proxy.h"
 #include "util/config.h"
 #include "util/log.h"
-#include "util/sample.h"
+#include "util/status.h"
+#include "xtun.h"
 
+#include <algorithm>
 #include <chrono>
 #include <gtest/gtest.h>
+#include <optional>
 #include <vector>
+
+using namespace std::chrono;
+using namespace libxtun;
 
 namespace
 {
-    constexpr auto ARRIVE_THRESHOLD = std::chrono::milliseconds(100);
-    constexpr auto SETUP_TIMEOUT = std::chrono::seconds(2);
+    std::optional<net::IpAddress> pickFirst(std::vector<net::IpPrefix> prefixes, int family)
+    {
+        auto res = std::ranges::find_if(prefixes, [&](const net::IpPrefix &p) { return p.address().family() == family; });
+        if (res == prefixes.end()) {
+            return std::nullopt;
+        }
+        return res->address();
+    }
 }
 
 class ProxyConfig : public testing::TestWithParam<libxtun::test::Confpair>
@@ -66,46 +79,32 @@ TEST_P(ProxyConfig, Roundtrip)
 {
     auto &[_, proto, cfgA, _b, cfgB] = GetParam();
 
-    libxtun::test::Logger logA("A");
-    libxtun::test::Logger logB("B");
-    libxtun::test::MemTun tunA;
-    libxtun::test::MemTun tunB;
+    test::Logger logA("A");
+    test::Logger logB("B");
+    test::StatusChecker statusA;
+    test::StatusChecker statusB;
+    test::MemTun tunA;
+    test::MemTun tunB;
 
-    auto resB = libxtun::Proxy::create(proto, cfgB.c_str(), logB.defaultCallbacks());
-    EXPECT_TRUE(resB) << "[B] Proxy::create failed with " << resB.error() << " error code";
+    ClientCallbacks callbacksB {};
+    auto resB = Proxy::create(proto, cfgB.c_str(), logB.wrapCallbacks(statusB.wrapCallbacks(callbacksB)));
+    ASSERT_TRUE(resB) << "[B] Proxy::create failed with " << resB.error() << " error code";
 
-    auto resA = libxtun::Proxy::create(proto, cfgA.c_str(), logA.defaultCallbacks());
-    EXPECT_TRUE(resA) << "[A] Proxy::create failed with " << resA.error() << " error code";
+    ClientCallbacks callbacksA {};
+    auto resA = Proxy::create(proto, cfgA.c_str(), logA.wrapCallbacks(statusA.wrapCallbacks(callbacksA)));
+    ASSERT_TRUE(resA) << "[A] Proxy::create failed with " << resA.error() << " error code";
 
     auto &proxyB = resB.value();
     auto &proxyA = resA.value();
 
     proxyB->attachIo(&tunB);
-    proxyB->event(libxtun::ProxyEvent::Up);
+    proxyB->event(ProxyEvent::Up);
 
     proxyA->attachIo(&tunA);
-    proxyA->event(libxtun::ProxyEvent::Up);
+    proxyA->event(ProxyEvent::Up);
 
-    {
-        const auto sent = libxtun::test::sampleIpv4Packet("ping");
-        std::vector<std::byte> received(sent.size());
-
-        const auto start = std::chrono::steady_clock::now();
-        bool arrived = false;
-
-        while (std::chrono::steady_clock::now() - start < SETUP_TIMEOUT) {
-            tunA.injectPacket(sent);
-
-            int n = tunB.waitForArrival(received, ARRIVE_THRESHOLD);
-            if (n > 0) {
-                arrived = true;
-                received.resize(n);
-                break;
-            }
-        }
-        // FIXME: check the actual IP addresses arrived in IP packet
-        EXPECT_TRUE(arrived && received.size() == sent.size());
-    }
+    ASSERT_TRUE(statusA.await(LIBXTUN_STATUS_CONNECTED, seconds(5)));
+    ASSERT_TRUE(statusB.await(LIBXTUN_STATUS_CONNECTED, seconds(5)));
 }
 
 INSTANTIATE_TEST_SUITE_P(Proxy, ProxyConfig, testing::ValuesIn(libxtun::test::ConfpairBuilder().build()),

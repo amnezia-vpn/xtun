@@ -3,9 +3,6 @@
 
 #include <xtun.h>
 
-#include "health/probe.h"
-#include "health/state.h"
-#include "health/subsystem.h"
 #include "io/awaiting_io.h"
 #include "net/ip.h"
 #include "tunnel_io.h"
@@ -26,7 +23,6 @@ namespace libxtun
     {
         std::vector<net::IpPrefix> routes;
         std::vector<net::IpAddress> dnsServers;
-        health::ProbeStyle probeStyle = health::ProbeStyle::Datagram;
     };
 
     struct ClientCallbacks
@@ -39,7 +35,7 @@ namespace libxtun
         void *onStatusPriv = nullptr;
     };
 
-    class Proxy : private health::HealthListener, private NonCopyable
+    class Proxy : private NonCopyable
     {
     public:
         static ResultXtun<std::unique_ptr<Proxy>> create(libxtun_proxy_proto proto, const char *conf,
@@ -84,13 +80,12 @@ namespace libxtun
             return reinterpret_cast<Proxy *>(priv)->emitLog(str);
         }
         void emitLog(char *str);
-
+    
     protected:
         void publishStatus(libxtun_status status);
 
         AwaitingIo m_io;
         ClientCallbacks m_callbacks;
-        std::unique_ptr<health::HealthSubsystem> m_health;
     };
 }
 

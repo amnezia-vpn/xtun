@@ -3,16 +3,10 @@ include(GoogleTest)
 
 set(XTUN_TEST_SOURCES
     test_contract.cpp
-    test_health_monitor.cpp
-    test_health_monitored_io.cpp
-    test_health_probe.cpp
-    test_health_resolver.cpp
-    test_health_scheduler.cpp
-    test_health_verdict.cpp
     test_killswitch.cpp
     test_net_ip.cpp
     test_net_socket.cpp
-    test_net_udp.cpp
+    test_net_packet_builder.cpp
     test_proxy.cpp
     test_scenario.cpp
     test_tunnel.cpp

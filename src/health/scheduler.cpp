@@ -1,13 +1,11 @@
 #include "scheduler.h"
 
-#include <exception>
+#include "util/random.h"
 #include <utility>
 
 namespace libxtun::health
 {
-
-    ThreadedScheduler::ThreadedScheduler(RandomSource &random, int jitterPercent, LogSink log)
-        : m_random(random), m_jitterPercent(jitterPercent), m_log(std::move(log))
+    ThreadedScheduler::ThreadedScheduler(int jitterPercent) : m_jitterPercent(jitterPercent)
     {
     }
 
@@ -71,7 +69,7 @@ namespace libxtun::health
 
             const Tick tick = m_tick;
             lock.unlock();
-            const auto next = runTick(tick, delay);
+            const auto next = runTick(tick);
             lock.lock();
 
             if (!next.has_value()) {
@@ -82,21 +80,9 @@ namespace libxtun::health
         m_running = false;
     }
 
-    std::optional<std::chrono::milliseconds> ThreadedScheduler::runTick(const Tick &tick,
-                                                                        std::chrono::milliseconds fallback) noexcept
+    std::optional<std::chrono::milliseconds> ThreadedScheduler::runTick(const Tick &tick) noexcept
     {
-        try {
-            return tick();
-        } catch (const std::exception &e) {
-            if (m_log) {
-                m_log(e.what());
-            }
-        } catch (...) {
-            if (m_log) {
-                m_log("health: the monitor tick threw");
-            }
-        }
-        return fallback;
+        return tick();
     }
 
     std::chrono::milliseconds ThreadedScheduler::withJitter(std::chrono::milliseconds base)
@@ -105,7 +91,6 @@ namespace libxtun::health
             return base;
         }
         const auto span = static_cast<int>(base.count() * m_jitterPercent / 100);
-        return base + std::chrono::milliseconds(m_random.inRange(-span, span));
+        return base + std::chrono::milliseconds(rand::nexti(-span, span));
     }
-
 }

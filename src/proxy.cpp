@@ -1,28 +1,11 @@
 #include "proxy.h"
-#include "health/state.h"
-#include "health/subsystem.h"
 #include "proto/awg.h"
 #include "xtun.h"
 
 #include <memory>
-#include <optional>
 
 namespace libxtun
 {
-    namespace
-    {
-        [[nodiscard]] std::optional<libxtun_status> statusFor(health::ConnectionState state) noexcept
-        {
-            switch (state) {
-            case health::ConnectionState::Connected: return LIBXTUN_STATUS_CONNECTED;
-            case health::ConnectionState::NoNetwork: return LIBXTUN_STATUS_NO_NETWORK;
-            case health::ConnectionState::Disconnected: return LIBXTUN_STATUS_DISCONNECTED;
-            case health::ConnectionState::Unknown: return std::nullopt;
-            }
-            return std::nullopt;
-        }
-    }
-
     ResultXtun<std::unique_ptr<Proxy>> Proxy::create(libxtun_proxy_proto proto, const char *conf,
                                                      ClientCallbacks callbacks)
     {
@@ -41,26 +24,14 @@ namespace libxtun
 
     void Proxy::attachIo(TunnelIo *io)
     {
-        if (io == nullptr) {
-            m_io.assign(io);
-            return;
-        }
-
-        auto prof = profile();
-        // FIXME(ygurov): FIX HEALTH YOU HAVE BROKE!!!
-        health::HealthConfig conf { .probeStyle = prof.probeStyle };
-
-        health::HealthListener *listener = this;
-        m_health = std::make_unique<health::HealthSubsystem>(*listener, conf);
-        m_io.assign(&m_health->decorate(*io));
+        m_io.assign(io);
     }
 
-    void Proxy::onConnectionState(health::ConnectionState state) noexcept
+    void Proxy::publishStatus(libxtun_status status)
     {
-        if (const auto status = statusFor(state)) {
-            if (m_callbacks.onStatus != nullptr) {
-                m_callbacks.onStatus(*status, m_callbacks.onStatusPriv);
-            }
+        // TODO: log?
+        if (m_callbacks.onStatus != nullptr) {
+            m_callbacks.onStatus(status, m_callbacks.onStatusPriv);
         }
     }
 

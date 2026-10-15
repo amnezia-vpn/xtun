@@ -2,6 +2,7 @@
 #define TEST_MEMTUN_H
 
 #include "net/ip.h"
+#include "responder.h"
 #include "tunnel_io.h"
 
 #include <chrono>
@@ -44,6 +45,13 @@ namespace libxtun::test
         int write(std::span<const std::byte> packet) override
         {
             std::lock_guard<std::mutex> lock(m_mutex);
+
+            auto icmpReply = Responder::replyIcmp(packet);
+            if (!icmpReply.empty()) {
+                m_in.push_back(icmpReply);
+                m_cond.notify_all();
+            }
+
             m_out.emplace_back(packet.data(), packet.data() + packet.size());
             m_cond.notify_all();
             return static_cast<int>(packet.size());
@@ -90,7 +98,8 @@ namespace libxtun::test
         {
             std::unique_lock<std::mutex> lock(m_mutex);
             int wakeEpoch = m_wakeEpoch;
-            if (!m_cond.wait_for(lock, timeout, [&] { return !m_out.empty() || m_wakeEpoch != wakeEpoch || m_halted; })) {
+            if (!m_cond.wait_for(lock, timeout, [&] { return !m_out.empty() || m_wakeEpoch != wakeEpoch || m_halted; })
+                || m_out.empty()) {
                 return 0;
             }
             auto &vec = m_out.front();

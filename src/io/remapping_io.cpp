@@ -2,9 +2,41 @@
 #include "net/checksum.h"
 #include "net/ip.h"
 #include <cstdint>
+#include <memory>
 
 namespace libxtun
 {
+    std::unique_ptr<RemappingIo> RemappingIo::create(TunnelIo &io, std::span<const net::IpPrefix> prefixes)
+    {
+        struct Dualstack
+        {
+            in_addr v4;
+            in6_addr v6;
+        };
+        auto pick = [](std::span<const net::IpPrefix> prefixes) {
+            Dualstack ds{};
+            for (const auto &prefix : prefixes) {
+                const auto &addr = prefix.address();
+                const auto bytes = addr.octets();
+
+                switch (addr.family()) {
+                case AF_INET: std::memcpy(&ds.v4, bytes.data(), sizeof(ds.v4)); break;
+                case AF_INET6: std::memcpy(&ds.v6, bytes.data(), sizeof(ds.v6)); break;
+                }
+            }
+            return ds;
+        };
+
+        auto origin = pick(io.addresses());
+        auto target = pick(prefixes);
+
+        if (std::memcmp(&target.v4, &origin.v4, sizeof(target.v4)) == 0
+            && std::memcmp(&target.v6, &origin.v6, sizeof(target.v6)) == 0) {
+            return nullptr;
+        }
+        return std::unique_ptr<RemappingIo>(new RemappingIo(io, origin.v4, target.v4, origin.v6, target.v6));
+    }
+
     RemappingIo::RemappingIo(TunnelIo &io, in_addr v4origin, in_addr v4target, in6_addr v6origin, in6_addr v6target)
         : m_inner(io), m_v4origin(v4origin), m_v4target(v4target), m_v6origin(v6origin), m_v6target(v6target)
     {
