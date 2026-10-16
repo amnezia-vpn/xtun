@@ -52,12 +52,24 @@ static inline void goxtun_sockcb_invoke(goxtun_sockcb cb, int fd, void *priv)
 import "C"
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"runtime/cgo"
 	"unsafe"
 
 	"github.com/amnezia-vpn/amneziawg-go/v3/tun"
 	"github.com/amnezia-vpn/libxtun/goxtun/awg"
+	"github.com/amnezia-vpn/libxtun/goxtun/xray"
+	"gvisor.dev/gvisor/pkg/tcpip"
+	"gvisor.dev/gvisor/pkg/tcpip/header"
+	"gvisor.dev/gvisor/pkg/tcpip/link/channel"
+	"gvisor.dev/gvisor/pkg/tcpip/network/ipv4"
+	"gvisor.dev/gvisor/pkg/tcpip/network/ipv6"
+	"gvisor.dev/gvisor/pkg/tcpip/stack"
+	"gvisor.dev/gvisor/pkg/tcpip/transport/icmp"
+	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
+	"gvisor.dev/gvisor/pkg/tcpip/transport/udp"
 )
 
 //export goxtun_free
@@ -68,6 +80,10 @@ func goxtun_free(ptr unsafe.Pointer) {
 func toCtx(v any) unsafe.Pointer {
 	h := cgo.NewHandle(v)
 	return unsafe.Pointer(h)
+}
+
+func toHandle(v any) C.uintptr_t {
+	return C.uintptr_t(cgo.NewHandle(v))
 }
 
 func fromCtx[K any](ctx unsafe.Pointer) (*K, cgo.Handle) {
@@ -163,6 +179,221 @@ func goxtun_awg_setconf(ctx unsafe.Pointer, uapi *C.char) *C.char {
 		return C.CString(err.Error())
 	}
 	return nil
+}
+
+const (
+	outboundQueueSize             = 1024
+	initialMTU        uint32      = 1500
+	nicID             tcpip.NICID = 1
+)
+
+//export goxtun_xray_new
+func goxtun_xray_new(
+	readCb C.goxtun_readcb,
+	writeCb C.goxtun_writecb,
+	mtuCb C.goxtun_mtucb,
+	tunPriv unsafe.Pointer,
+	verbosefCb C.goxtun_logcb,
+	errorfCb C.goxtun_logcb,
+	logPriv unsafe.Pointer,
+	sockCb C.goxtun_sockcb,
+	sockPriv unsafe.Pointer,
+) C.uintptr_t {
+	logError := wrapLog(errorfCb, logPriv)
+
+	if readCb == nil || mtuCb == nil || writeCb == nil {
+		logError("xray: read, write and mtu callbacks are required")
+		return 0
+	}
+
+	callbacks := xray.Callbacks{
+		Read:    wrapRead(readCb, tunPriv),
+		Write:   wrapWrite(writeCb, tunPriv),
+		MTU:     wrapMTU(mtuCb, tunPriv),
+		Verbose: wrapLog(verbosefCb, logPriv),
+		Error:   logError,
+		Socket:  wrapSocket(sockCb, sockPriv),
+	}
+
+	endpoint := channel.New(outboundQueueSize, initialMTU, "")
+
+	gStack := stack.New(stack.Options{
+		NetworkProtocols: []stack.NetworkProtocolFactory{
+			ipv4.NewProtocol,
+			ipv6.NewProtocol,
+		},
+		TransportProtocols: []stack.TransportProtocolFactory{
+			tcp.NewProtocol,
+			udp.NewProtocol,
+			icmp.NewProtocol4,
+			icmp.NewProtocol6,
+		},
+		HandleLocal: false,
+	})
+
+	transferred := false
+
+	defer func() {
+		if !transferred {
+			endpoint.Close()
+			gStack.Destroy()
+		}
+	}()
+
+	if err := gStack.CreateNIC(nicID, endpoint); err != nil {
+		callbacks.Error("xray: create nic: " + err.String())
+		return 0
+	}
+
+	gStack.SetRouteTable([]tcpip.Route{
+		{Destination: header.IPv4EmptySubnet, NIC: nicID},
+		{Destination: header.IPv6EmptySubnet, NIC: nicID},
+	})
+
+	if err := gStack.SetPromiscuousMode(nicID, true); err != nil {
+		callbacks.Error("xray: enable promiscuous mode: " + err.String())
+		return 0
+	}
+
+	if err := gStack.SetSpoofing(nicID, true); err != nil {
+		callbacks.Error("xray: enable spoofing: " + err.String())
+		return 0
+	}
+
+	instance := xray.NewInstance(context.Background(), gStack, endpoint, nicID, callbacks)
+
+	handle := toHandle(instance)
+
+	transferred = true
+	return handle
+}
+
+//export goxtun_xray_free
+func goxtun_xray_free(handle C.uintptr_t) {
+	if handle == 0 {
+		return
+	}
+
+	h := cgo.Handle(handle)
+	instance := h.Value().(*xray.Instance)
+
+	instance.Close()
+	h.Delete()
+}
+
+//export goxtun_xray_event
+func goxtun_xray_event(handle C.uintptr_t, event C.int) {
+	if handle == 0 {
+		return
+	}
+
+	h := cgo.Handle(handle)
+	instance := h.Value().(*xray.Instance)
+
+	instance.TriggerEvent(xray.Event(event))
+}
+
+func wrapLog(cb C.goxtun_logcb, priv unsafe.Pointer) func(string) {
+	if cb == nil {
+		return func(string) {}
+	}
+
+	return func(msg string) {
+		cstr := C.CString(msg)
+		defer C.free(unsafe.Pointer(cstr))
+		C.goxtun_logcb_invoke(cb, cstr, priv)
+	}
+}
+
+func wrapRead(
+	cb C.goxtun_readcb,
+	priv unsafe.Pointer,
+) func([]byte) (int, error) {
+	return func(buf []byte) (int, error) {
+		if len(buf) == 0 {
+			return 0, nil
+		}
+		size := C.int(len(buf))
+		if int(size) != len(buf) {
+			return 0, fmt.Errorf("xray read: buffer too large: %d", len(buf))
+		}
+
+		n := int(C.goxtun_readcb_invoke(
+			cb,
+			unsafe.Pointer(&buf[0]),
+			size,
+			priv,
+		))
+
+		switch {
+		case n < 0:
+			return 0, fmt.Errorf("xray read: readcb err %d", n)
+		case n == 0:
+			return 0, nil
+		case n > len(buf):
+			return 0, fmt.Errorf("xray read: readcb n too large %d", n)
+		default:
+			return n, nil
+		}
+	}
+}
+
+func wrapWrite(
+	cb C.goxtun_writecb,
+	priv unsafe.Pointer,
+) func([]byte) (int, error) {
+	return func(buf []byte) (int, error) {
+		if len(buf) == 0 {
+			return 0, nil
+		}
+		size := C.int(len(buf))
+		if int(size) != len(buf) {
+			return 0, fmt.Errorf("xray write: buffer too large: %d", len(buf))
+		}
+
+		n := int(C.goxtun_writecb_invoke(
+			cb,
+			unsafe.Pointer(&buf[0]),
+			size,
+			priv,
+		))
+
+		switch {
+		case n < 0:
+			return 0, fmt.Errorf("xray write: writecb err %d", n)
+		case n > len(buf):
+			return 0, fmt.Errorf("xray write: writecb n too large %d", n)
+		case n >= 0 && n < len(buf):
+			return n, io.ErrShortWrite
+		default:
+			return n, nil
+		}
+	}
+}
+
+func wrapMTU(
+	cb C.goxtun_mtucb,
+	priv unsafe.Pointer,
+) func() (int, error) {
+	return func() (int, error) {
+		mtu := int(C.goxtun_mtucb_invoke(cb, priv))
+		if mtu < 0 {
+			return 0, fmt.Errorf("xray mtu error: %d", mtu)
+		}
+		return mtu, nil
+	}
+}
+
+func wrapSocket(
+	cb C.goxtun_sockcb,
+	priv unsafe.Pointer,
+) func(int) {
+	if cb == nil {
+		return func(i int) {}
+	}
+	return func(fd int) {
+		C.goxtun_sockcb_invoke(cb, C.int(fd), priv)
+	}
 }
 
 func main() {}
