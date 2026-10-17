@@ -1,9 +1,7 @@
 #include "killswitch.h"
-#include "mock/memserver.h"
 #include "util/config.h"
 #include "util/killswitch_env.h"
 #include "util/log.h"
-#include "util/socket.h"
 #include "xtun.h"
 
 #include <memory>
@@ -20,6 +18,8 @@
 #else
     #error Unsupported platform
 #endif
+
+using namespace libxtun;
 
 namespace libxtun::test
 {
@@ -45,9 +45,9 @@ namespace libxtun::test
 
 namespace
 {
-    std::string modeName(const testing::TestParamInfo<libxtun_killswitch_mode> &info)
+    std::string modeName(libxtun_killswitch_mode mode)
     {
-        switch (info.param) {
+        switch (mode) {
         case LIBXTUN_KILLSWITCH_MODE_DISABLED: return "Disabled";
         case LIBXTUN_KILLSWITCH_MODE_SOFT: return "Soft";
         case LIBXTUN_KILLSWITCH_MODE_HARD: return "Hard";
@@ -64,15 +64,6 @@ namespace
 
 class KillswitchMode : public libxtun::test::KillswitchTest, public testing::WithParamInterface<libxtun_killswitch_mode>
 {
-protected:
-    [[nodiscard]] static ProbeResult probeResultFor(libxtun_killswitch_mode mode) noexcept
-    {
-        return mode == LIBXTUN_KILLSWITCH_MODE_DISABLED ? ProbeResult::Delivered : ProbeResult::Blocked;
-    }
-    [[nodiscard]] static bool persistent(libxtun_killswitch_mode mode) noexcept
-    {
-        return mode == LIBXTUN_KILLSWITCH_MODE_HARD;
-    }
 };
 
 TEST_P(KillswitchMode, BlocksUnprotectedEgress)
@@ -136,53 +127,61 @@ TEST_P(KillswitchMode, DestructionHonoursPersistence)
     expectProbeResult(TEST_NET_V4, Bypass::None, persistent(GetParam()) ? ProbeResult::Blocked : ProbeResult::Delivered);
 }
 
-INSTANTIATE_TEST_SUITE_P(Killswitch, KillswitchMode, testing::ValuesIn(libxtun::test::allKillswitchModes()), modeName);
+INSTANTIATE_TEST_SUITE_P(Killswitch, KillswitchMode, testing::ValuesIn(libxtun::test::allKillswitchModes()),
+                         [](const auto &info) { return modeName(info.param); });
 
-class KillswitchTunnel : public KillswitchMode
+class KillswitchTunnel : public libxtun::test::KillswitchTest,
+                         public testing::WithParamInterface<std::tuple<libxtun_killswitch_mode, test::Setup>>
 {
 };
 
 TEST_P(KillswitchTunnel, FullLifecycle)
 {
-    const auto confs = libxtun::test::ConfpairBuilder().withRoutes({ "0.0.0.0/0" }).buildAwg();
+    auto &[mode, setup] = GetParam();
+    [[maybe_unused]] const auto srv = setup.createServer("server");
 
     libxtun::test::TunOpts opts;
-    opts.killswitchMode(GetParam());
+    opts.killswitchMode(mode);
 
     libxtun::test::Logger log("client");
-    libxtun::test::SockBindRemover bindRemover;
-    libxtun::test::MemServer srv("server", confs.proto, confs.server.c_str());
 
     libxtun_tunnel tun {};
     ASSERT_EQ(libxtun_tunnel_new(&tun, &opts.get()), LIBXTUN_OK);
 
     libxtun_proxy proxy {};
-    bindRemover.wrapProxy(proxy);
+    setup.wrapper->wrapProxy(proxy);
     log.wrapProxy(proxy);
-    ASSERT_EQ(libxtun_proxy_new(&proxy, confs.proto, confs.clientA.c_str()), LIBXTUN_OK);
+    ASSERT_EQ(libxtun_proxy_new(&proxy, setup.proto, setup.clientA.c_str()), LIBXTUN_OK);
     ASSERT_EQ(libxtun_tunnel_attach_proxy(&tun, &proxy), LIBXTUN_OK);
 
     expectProbeResult(TEST_NET_V4, Bypass::None, ProbeResult::Delivered, "with the proxy attached");
-    expectProbeResult(TEST_NET_V6, Bypass::None, probeResultFor(GetParam()), "with the proxy attached");
+    expectProbeResult(TEST_NET_V6, Bypass::None, probeResultFor(mode), "with the proxy attached");
     expectProbeResult(TEST_NET_V4, Bypass::Proxy, ProbeResult::Delivered, "with the proxy attached");
     expectProbeResult(TEST_NET_V6, Bypass::Proxy, ProbeResult::Delivered, "with the proxy attached");
 
     libxtun_tunnel_detach_proxy(&tun, &proxy);
     libxtun_proxy_free(&proxy);
 
-    expectProbeResult(TEST_NET_V4, Bypass::None, probeResultFor(GetParam()), "after the proxy detached");
-    expectProbeResult(TEST_NET_V6, Bypass::None, probeResultFor(GetParam()), "after the proxy detached");
+    expectProbeResult(TEST_NET_V4, Bypass::None, probeResultFor(mode), "after the proxy detached");
+    expectProbeResult(TEST_NET_V6, Bypass::None, probeResultFor(mode), "after the proxy detached");
     expectProbeResult(TEST_NET_V4, Bypass::Proxy, ProbeResult::Delivered, "after the proxy detached");
     expectProbeResult(TEST_NET_V6, Bypass::Proxy, ProbeResult::Delivered, "after the proxy detached");
 
     libxtun_tunnel_free(&tun);
 
-    expectProbeResult(TEST_NET_V4, Bypass::None, persistent(GetParam()) ? ProbeResult::Blocked : ProbeResult::Delivered,
+    expectProbeResult(TEST_NET_V4, Bypass::None, persistent(mode) ? ProbeResult::Blocked : ProbeResult::Delivered,
                       "after the tunnel was freed");
-    expectProbeResult(TEST_NET_V6, Bypass::None, persistent(GetParam()) ? ProbeResult::Blocked : ProbeResult::Delivered,
+    expectProbeResult(TEST_NET_V6, Bypass::None, persistent(mode) ? ProbeResult::Blocked : ProbeResult::Delivered,
                       "after the tunnel was freed");
     expectProbeResult(TEST_NET_V4, Bypass::Proxy, ProbeResult::Delivered, "after the tunnel was freed");
     expectProbeResult(TEST_NET_V6, Bypass::Proxy, ProbeResult::Delivered, "after the tunnel was freed");
 }
 
-INSTANTIATE_TEST_SUITE_P(Killswitch, KillswitchTunnel, testing::ValuesIn(libxtun::test::allKillswitchModes()), modeName);
+INSTANTIATE_TEST_SUITE_P(Killswitch, KillswitchTunnel,
+                         testing::Combine(testing::ValuesIn(libxtun::test::allKillswitchModes()),
+                                          testing::ValuesIn(test::SetupBuilder().withRoutes({ "0.0.0.0/0" }).build())),
+                         [](const auto &info) {
+                             const auto mode = std::get<0>(info.param);
+                             const auto &setup = std::get<1>(info.param);
+                             return modeName(mode) + "_" + setup.name;
+                         });

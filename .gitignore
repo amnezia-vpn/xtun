@@ -3,3 +3,6 @@
 .cache
 
 build
+
+tests/secrets/*
+!tests/secrets/.gitkeep

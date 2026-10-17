@@ -2,40 +2,39 @@
 #define TEST_LOG_H
 
 #include "proxy.h"
+#include "wrapper.h"
 #include "xtun.h"
 
 namespace libxtun::test
 {
-    class Logger
+    class Logger : public ProxyWrapper
     {
     public:
         Logger() {};
         explicit Logger(std::string prefix) : m_prefix(prefix) {};
 
-        ClientCallbacks defaultCallbacks()
-        {
-            ClientCallbacks callbacks {};
-            return wrapCallbacks(callbacks);
-        }
-
-        ClientCallbacks &wrapCallbacks(ClientCallbacks &callbacks)
+        ClientCallbacks &wrapCallbacks(ClientCallbacks &callbacks) override
         {
             callbacks.onLog = Logger::clog;
             callbacks.onLogPriv = this;
             return callbacks;
         }
-
-        libxtun_proxy defaultProxy()
+        ClientCallbacks defaultCallbacks() override
         {
-            libxtun_proxy proxy;
-            return wrapProxy(proxy);
+            ClientCallbacks callbacks {};
+            return wrapCallbacks(callbacks);
         }
 
-        libxtun_proxy &wrapProxy(libxtun_proxy &proxy)
+        libxtun_proxy &wrapProxy(libxtun_proxy &proxy) override
         {
             proxy.loghandler = Logger::clog;
             proxy.loghandler_priv = this;
             return proxy;
+        }
+        libxtun_proxy defaultProxy() override
+        {
+            libxtun_proxy proxy {};
+            return wrapProxy(proxy);
         }
 
         static void clog(const char *message, void *priv)

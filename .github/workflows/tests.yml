@@ -8,11 +8,21 @@ jobs:
         matrix:
             os: [windows-latest, ubuntu-latest, macos-latest]
       runs-on: ${{ matrix.os }}
+      concurrency:
+        group: secrets-lock
+        cancel-in-progress: false
+        queue: max
       steps:
         - name: Obtain sources
           uses: actions/checkout@v7
           with:
             submodules: true
+        - name: Write secrets
+          shell: bash
+          run: |
+            umask 077
+            echo '${{ secrets.TEST_SECRET_AWG_BASE64 }}' | base64 --decode > "tests/secrets/awg.conf"
+            echo '${{ secrets.TEST_SECRET_AWG_B_BASE64 }}' | base64 --decode > "tests/secrets/awgB.conf"
         - name: Install conan
           run:  pip install conan
         - name: Load conan cache

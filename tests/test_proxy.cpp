@@ -27,31 +27,38 @@ namespace
     }
 }
 
-class ProxyConfig : public testing::TestWithParam<libxtun::test::Confpair>
+class ProxySetup : public testing::TestWithParam<libxtun::test::Setup>
 {
 };
 
-TEST_P(ProxyConfig, DeclinesInvalidConfiguration)
+TEST_P(ProxySetup, DeclinesInvalidConfiguration)
 {
-    const auto &[_a, proto, _b, _c, _d] = GetParam();
+    const auto &p = GetParam();
+    const auto proto = p.proto;
+
     libxtun::test::Logger log;
 
     auto res = libxtun::Proxy::create(proto, "0xd34db33f", log.defaultCallbacks());
     EXPECT_FALSE(res) << "Proxy::create initialized with invalid configuration";
 }
 
-TEST_P(ProxyConfig, EatsConfiguration)
+TEST_P(ProxySetup, EatsConfiguration)
 {
-    const auto &[_a, proto, cfg, _b, _c] = GetParam();
+    const auto &p = GetParam();
+    const auto proto = p.proto;
+    const auto &cfg = p.clientA;
+
     libxtun::test::Logger log;
 
     auto res = libxtun::Proxy::create(proto, cfg.c_str(), log.defaultCallbacks());
     EXPECT_TRUE(res) << "Proxy::create failed with " << res.error() << " error code";
 }
 
-TEST_P(ProxyConfig, AttachesNull)
+TEST_P(ProxySetup, AttachesNull)
 {
-    const auto &[_a, proto, cfg, _b, _c] = GetParam();
+    const auto &p = GetParam();
+    const auto proto = p.proto;
+    const auto &cfg = p.clientA;
     libxtun::test::Logger log;
 
     auto res = libxtun::Proxy::create(proto, cfg.c_str(), log.defaultCallbacks());
@@ -61,9 +68,11 @@ TEST_P(ProxyConfig, AttachesNull)
     proxy->attachIo(nullptr);
 }
 
-TEST_P(ProxyConfig, AttachesIo)
+TEST_P(ProxySetup, AttachesIo)
 {
-    const auto &[_a, proto, cfg, _b, _c] = GetParam();
+    const auto &p = GetParam();
+    const auto proto = p.proto;
+    const auto &cfg = p.clientA;
     libxtun::test::Logger log;
 
     libxtun::test::MemTun tun;
@@ -75,37 +84,37 @@ TEST_P(ProxyConfig, AttachesIo)
     proxy->attachIo(&tun);
 }
 
-TEST_P(ProxyConfig, Roundtrip)
+TEST_P(ProxySetup, Roundtrip)
 {
-    auto &[_, proto, cfgA, _b, cfgB] = GetParam();
+    const auto &p = GetParam();
+    const auto proto = p.proto;
+    const auto &cfg = p.clientA;
+    const auto wrapper = p.wrapper;
+    const auto server = p.createServer("server");
 
-    test::Logger logA("A");
-    test::Logger logB("B");
-    test::StatusChecker statusA;
-    test::StatusChecker statusB;
-    test::MemTun tunA;
-    test::MemTun tunB;
+    if (!server) {
+        GTEST_SKIP() << "local server setup is required";
+    }
 
-    ClientCallbacks callbacksB {};
-    auto resB = Proxy::create(proto, cfgB.c_str(), logB.wrapCallbacks(statusB.wrapCallbacks(callbacksB)));
-    ASSERT_TRUE(resB) << "[B] Proxy::create failed with " << resB.error() << " error code";
+    test::Logger log("client");
+    test::StatusChecker status;
+    test::MemTun tun;
 
-    ClientCallbacks callbacksA {};
-    auto resA = Proxy::create(proto, cfgA.c_str(), logA.wrapCallbacks(statusA.wrapCallbacks(callbacksA)));
-    ASSERT_TRUE(resA) << "[A] Proxy::create failed with " << resA.error() << " error code";
+    ClientCallbacks callbacks {};
+    log.wrapCallbacks(callbacks);
+    status.wrapCallbacks(callbacks);
+    wrapper->wrapCallbacks(callbacks);
 
-    auto &proxyB = resB.value();
-    auto &proxyA = resA.value();
+    auto res = Proxy::create(proto, cfg.c_str(), callbacks);
+    ASSERT_TRUE(res) << "[B] Proxy::create failed with " << res.error() << " error code";
 
-    proxyB->attachIo(&tunB);
-    proxyB->event(ProxyEvent::Up);
+    auto &proxy = res.value();
 
-    proxyA->attachIo(&tunA);
-    proxyA->event(ProxyEvent::Up);
+    proxy->attachIo(&tun);
+    proxy->event(ProxyEvent::Up);
 
-    ASSERT_TRUE(statusA.await(LIBXTUN_STATUS_CONNECTED, seconds(5)));
-    ASSERT_TRUE(statusB.await(LIBXTUN_STATUS_CONNECTED, seconds(5)));
+    ASSERT_TRUE(status.await(LIBXTUN_STATUS_CONNECTED, seconds(5)));
 }
 
-INSTANTIATE_TEST_SUITE_P(Proxy, ProxyConfig, testing::ValuesIn(libxtun::test::ConfpairBuilder().build()),
-                         [](const testing::TestParamInfo<libxtun::test::Confpair> &info) { return info.param.name; });
+INSTANTIATE_TEST_SUITE_P(Proxy, ProxySetup, testing::ValuesIn(libxtun::test::SetupBuilder().build()),
+                         [](const testing::TestParamInfo<libxtun::test::Setup> &info) { return info.param.name; });

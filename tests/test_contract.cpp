@@ -1,5 +1,3 @@
-#include "mock/memtun.h"
-#include "proxy.h"
 #include "util/config.h"
 #include "util/log.h"
 #include "xtun.h"
@@ -146,27 +144,24 @@ TEST_P(ContractProxyProto, NewRejectsInvalidConf)
 
 INSTANTIATE_TEST_SUITE_P(ContractProxy, ContractProxyProto, testing::ValuesIn(libxtun::test::allProtos()));
 
-class ContractProxyConfpair : public testing::TestWithParam<libxtun::test::Confpair>
+class ContractProxySetup : public testing::TestWithParam<libxtun::test::Setup>
 {
 };
 
-TEST_P(ContractProxyConfpair, InitsFromConf)
+TEST_P(ContractProxySetup, InitsFromConf)
 {
-    const auto &[_a, proto, conf, _b, _c] = GetParam();
+    const auto &p = GetParam();
+    const auto proto = p.proto;
+    const auto &cfg = p.clientA;
 
     libxtun::test::Logger log;
 
     libxtun_proxy proxy {};
     log.wrapProxy(proxy);
 
-    int res = libxtun_proxy_new(&proxy, proto, conf.c_str());
+    int res = libxtun_proxy_new(&proxy, proto, cfg.c_str());
     EXPECT_EQ(res, 0);
 }
 
-TEST_P(ContractProxyConfpair, )
-{
-}
-
-INSTANTIATE_TEST_SUITE_P(ContractProxy, ContractProxyConfpair,
-                         testing::ValuesIn(libxtun::test::ConfpairBuilder().build()),
-                         [](const testing::TestParamInfo<libxtun::test::Confpair> &info) { return info.param.name; });
+INSTANTIATE_TEST_SUITE_P(ContractProxy, ContractProxySetup, testing::ValuesIn(libxtun::test::SetupBuilder().build()),
+                         [](const testing::TestParamInfo<libxtun::test::Setup> &info) { return info.param.name; });

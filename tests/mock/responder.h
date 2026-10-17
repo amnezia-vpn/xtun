@@ -4,6 +4,8 @@
 #include "net/icmp.h"
 #include "net/ip.h"
 #include "net/packet_builder.h"
+#include "net/tcp.h"
+#include "util/random.h"
 #include <algorithm>
 #include <vector>
 
@@ -12,7 +14,8 @@ namespace libxtun::test
     class Responder
     {
     protected:
-        template<typename F> static std::vector<std::byte> overIp(std::span<const std::byte> pkt, F &&func)
+        template<uint8_t PROTO4, uint8_t PROTO6 = PROTO4, typename F>
+        static std::vector<std::byte> overIp(std::span<const std::byte> pkt, F &&func)
         {
             if (pkt.empty()) {
                 return {};
@@ -25,7 +28,7 @@ namespace libxtun::test
                 }
                 net::IpView ip(pkt.first<net::IpView::HEADER_LEN>());
                 std::size_t ihl = ip.ihlBytes(), total = ip.totalLen();
-                if (ip.protocol() != IPPROTO_ICMP || pkt.size() < total || ihl > total) {
+                if (ip.protocol() != PROTO4 || pkt.size() < total || ihl > total) {
                     return {};
                 };
                 return func(ip, pkt.subspan(ihl, total - ihl));
@@ -35,7 +38,7 @@ namespace libxtun::test
                     return {};
                 }
                 net::Ip6View ip6(pkt.first<net::Ip6View::HEADER_LEN>());
-                if (ip6.nextHeader() != IPPROTO_ICMPV6 || pkt.size() < net::Ip6View::HEADER_LEN + ip6.payloadLength()) {
+                if (ip6.nextHeader() != PROTO6 || pkt.size() < net::Ip6View::HEADER_LEN + ip6.payloadLength()) {
                     return {};
                 }
                 return func(ip6, pkt.subspan(net::Ip6View::HEADER_LEN, ip6.payloadLength()));
@@ -47,29 +50,60 @@ namespace libxtun::test
     public:
         static inline std::vector<std::byte> replyIcmp(std::span<const std::byte> pkt)
         {
-            return overIp(pkt, [&](auto &&ip, std::span<const std::byte> rest) -> std::vector<std::byte> {
-                constexpr bool v4 = std::is_same_v<std::remove_cvref_t<decltype(ip)>, net::IpView>;
-                constexpr int type = v4 ? ICMP_ECHO : ICMP6_ECHO_REQUEST;
-                using IcmpView = net::IcmpView<type>;
+            return overIp<IPPROTO_ICMP, IPPROTO_ICMPV6>(
+                    pkt, [&](auto &&ip, std::span<const std::byte> rest) -> std::vector<std::byte> {
+                        constexpr bool v4 = std::is_same_v<std::remove_cvref_t<decltype(ip)>, net::IpView>;
+                        constexpr int type = v4 ? ICMP_ECHO : ICMP6_ECHO_REQUEST;
+                        using IcmpView = net::IcmpView<type>;
 
-                if (rest.size() < IcmpView::HEADER_LEN) {
+                        if (rest.size() < IcmpView::HEADER_LEN) {
+                            return {};
+                        }
+                        IcmpView icmp(rest.first<IcmpView::HEADER_LEN>());
+                        if (icmp.type() != type) {
+                            return {};
+                        }
+                        auto payload = rest.subspan(IcmpView::HEADER_LEN);
+
+                        std::vector<std::byte> buf(pkt.size());
+                        auto res = net::PacketBuilder(buf).ipAuto(ip.dstAddress(), ip.srcAddress(), [&](auto &&ipStage) {
+                            return ipStage.icmpEchoReply()
+                                    .withHeader([&](auto &&h) {
+                                        h.setIdentifier(icmp.identifier()).setSeqNumber(icmp.seqNumber());
+                                    })
+                                    .withPayload([&](std::span<std::byte> s) -> std::size_t {
+                                        std::ranges::copy(payload, s.begin());
+                                        return payload.size();
+                                    })
+                                    .finish();
+                        });
+                        if (!res) {
+                            return {};
+                        }
+                        buf.resize(res->size());
+                        return buf;
+                    });
+        }
+
+        static inline std::vector<std::byte> replyTcpSyn(std::span<const std::byte> pkt)
+        {
+            return overIp<IPPROTO_TCP>(pkt, [&](auto &&ipIn, std::span<const std::byte> rest) -> std::vector<std::byte> {
+                if (rest.size() < net::TcpView::HEADER_LEN) {
                     return {};
                 }
-                IcmpView icmp(rest.first<IcmpView::HEADER_LEN>());
-                if (icmp.type() != type) {
+                net::TcpView tcpIn(rest.first<net::TcpView::HEADER_LEN>());
+                if ((tcpIn.flags() & net::TcpFlag::SYN) == 0) {
                     return {};
                 }
-                auto payload = rest.subspan(IcmpView::HEADER_LEN);
 
                 std::vector<std::byte> buf(pkt.size());
-                auto res = net::PacketBuilder(buf).ipAuto(ip.dstAddress(), ip.srcAddress(), [&](auto &&ipStage) {
-                    return ipStage.icmpEchoReply()
-                            .withHeader([&](auto &&h) {
-                                h.setIdentifier(icmp.identifier()).setSeqNumber(icmp.seqNumber());
-                            })
-                            .withPayload([&](std::span<std::byte> s) -> std::size_t {
-                                std::ranges::copy(payload, s.begin());
-                                return payload.size();
+                auto res = net::PacketBuilder(buf).ipAuto(ipIn.dstAddress(), ipIn.srcAddress(), [&](auto &&ipOut) {
+                    return ipOut.tcp(tcpIn.dport(), tcpIn.sport())
+                            .withHeader([&](net::TcpRef &h) {
+                                h.setSeqNumber(rand::next32())
+                                        .setAckNumber(tcpIn.seqNumber() + 1)
+                                        .setFlags(net::TcpFlag::SYN | net::TcpFlag::ACK)
+                                        .setWindow(65535);
                             })
                             .finish();
                 });

@@ -2,6 +2,7 @@
 #define TEST_STATUS_H
 
 #include "proxy.h"
+#include "wrapper.h"
 #include "xtun.h"
 #include <chrono>
 #include <condition_variable>
@@ -9,21 +10,31 @@
 
 namespace libxtun::test
 {
-    class StatusChecker
+    class StatusChecker : public ProxyWrapper
     {
     public:
-        ClientCallbacks &wrapCallbacks(ClientCallbacks &callbacks)
+        ClientCallbacks &wrapCallbacks(ClientCallbacks &callbacks) override
         {
             callbacks.onStatus = StatusChecker::cOnStatus;
             callbacks.onStatusPriv = this;
             return callbacks;
         }
+        ClientCallbacks defaultCallbacks() override
+        {
+            ClientCallbacks callbacks {};
+            return wrapCallbacks(callbacks);
+        }
 
-        libxtun_proxy &wrapProxy(libxtun_proxy &proxy)
+        libxtun_proxy &wrapProxy(libxtun_proxy &proxy) override
         {
             proxy.statushandler = StatusChecker::cOnStatus;
             proxy.statushandler_priv = this;
             return proxy;
+        }
+        libxtun_proxy defaultProxy() override
+        {
+            libxtun_proxy proxy {};
+            return wrapProxy(proxy);
         }
 
         static void cOnStatus(int status, void *priv)

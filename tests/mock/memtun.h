@@ -46,9 +46,13 @@ namespace libxtun::test
         {
             std::lock_guard<std::mutex> lock(m_mutex);
 
-            auto icmpReply = Responder::replyIcmp(packet);
-            if (!icmpReply.empty()) {
-                m_in.push_back(icmpReply);
+            if (auto reply = Responder::replyIcmp(packet); !reply.empty()) {
+                m_in.push_back(reply);
+                m_cond.notify_all();
+            }
+
+            if (auto reply = Responder::replyTcpSyn(packet); !reply.empty()) {
+                m_in.push_back(reply);
                 m_cond.notify_all();
             }
 
