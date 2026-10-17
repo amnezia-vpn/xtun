@@ -97,6 +97,14 @@ namespace libxtun::test
                 EXPECT_EQ(*result, wanted) << host << ", " << bypass << ' ' << phase;
             }
         }
+        [[nodiscard]] static ProbeResult probeResultFor(libxtun_killswitch_mode mode) noexcept
+        {
+            return mode == LIBXTUN_KILLSWITCH_MODE_DISABLED ? ProbeResult::Delivered : ProbeResult::Blocked;
+        }
+        [[nodiscard]] static bool persistent(libxtun_killswitch_mode mode) noexcept
+        {
+            return mode == LIBXTUN_KILLSWITCH_MODE_HARD;
+        }
         KillswitchEnv m_env;
     };
 }

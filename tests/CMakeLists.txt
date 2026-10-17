@@ -12,13 +12,11 @@ set(XTUN_TEST_SOURCES
     test_tunnel.cpp
 )
 
-if(NOT WIN32)
-    # list(APPEND XTUN_TEST_SOURCES routing_test.cpp)
-endif()
-
 add_executable(xtun_tests ${XTUN_TEST_SOURCES})
 target_link_libraries(xtun_tests PRIVATE xtun GTest::gtest GTest::gtest_main)
 target_include_directories(xtun_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_definitions(xtun_tests PRIVATE
+    XTUN_TEST_SECRETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/secrets")
 
 if(WIN32)
     target_link_libraries(xtun_tests PRIVATE amnezia::wintun advapi32 iphlpapi)

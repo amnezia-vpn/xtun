@@ -4,6 +4,7 @@
 #include "util/noncopyable.h"
 
 #include <cerrno>
+#include <chrono>
 #include <optional>
 #include <string>
 #include <utility>
@@ -17,7 +18,13 @@
     #include <sys/ioctl.h>
     #include <sys/socket.h>
     #include <unistd.h>
+#endif
 
+#ifdef _WIN32
+    #include <winsock2.h>
+    #define poll WSAPoll
+#else
+    #include <sys/poll.h>
 #endif
 
 #if defined(__linux__)
@@ -258,36 +265,36 @@ namespace libxtun::test
         hints.ai_protocol = type == SOCK_STREAM ? IPPROTO_TCP : IPPROTO_UDP;
         hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV;
 
-        ::addrinfo *resolved = nullptr;
-        if (::getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &resolved) != 0) {
-            return { ScopedFd {}, EINVAL };
+        ::addrinfo *ptr = nullptr;
+        if (::getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &ptr) != 0) {
+            return { {}, EINVAL };
         }
+        std::unique_ptr<::addrinfo, decltype(&::freeaddrinfo)> resolved(ptr, &::freeaddrinfo);
 
         ScopedFd sock(static_cast<int>(::socket(resolved->ai_family, resolved->ai_socktype, resolved->ai_protocol)));
-        int error = sock ? 0 : lastSocketError();
+        if (!sock) {
+            return { {}, lastSocketError() };
+        }
 #if defined(__linux__)
-        if (error == 0 && mark != 0 && ::setsockopt(sock.get(), SOL_SOCKET, SO_MARK, &mark, sizeof(mark)) != 0) {
-            error = errno;
+        if (mark != 0 && ::setsockopt(sock.get(), SOL_SOCKET, SO_MARK, &mark, sizeof(mark)) != 0) {
+            return { {}, lastSocketError() };
         }
 #endif
 #if defined(_WIN32)
         u_long nonBlocking = 1;
-        if (error == 0 && type == SOCK_STREAM
-            && ::ioctlsocket(static_cast<SOCKET>(sock.get()), FIONBIO, &nonBlocking) != 0) {
-            error = lastSocketError();
+        if (type == SOCK_STREAM && ::ioctlsocket(static_cast<SOCKET>(sock.get()), FIONBIO, &nonBlocking) != 0) {
+            return { {}, lastSocketError() };
         }
 #else
-        if (error == 0 && type == SOCK_STREAM
-            && ::fcntl(sock.get(), F_SETFL, ::fcntl(sock.get(), F_GETFL) | O_NONBLOCK) != 0) {
-            error = errno;
+        if (type == SOCK_STREAM && ::fcntl(sock.get(), F_SETFL, ::fcntl(sock.get(), F_GETFL) | O_NONBLOCK) != 0) {
+            return { {}, lastSocketError() };
         }
 #endif
-        if (error == 0 && ::connect(sock.get(), resolved->ai_addr, static_cast<int>(resolved->ai_addrlen)) != 0) {
-            error = lastSocketError();
+        if (::connect(sock.get(), resolved->ai_addr, static_cast<int>(resolved->ai_addrlen)) != 0) {
+            return { std::move(sock), lastSocketError() };
         }
 
-        ::freeaddrinfo(resolved);
-        return { std::move(sock), error };
+        return { std::move(sock), 0 };
     }
 
     static ConnectedSocket udpConnect(const std::string &host, uint16_t port, unsigned mark = 0)
@@ -295,9 +302,82 @@ namespace libxtun::test
         return connectSocket(host, port, SOCK_DGRAM, mark);
     }
 
-    static ConnectedSocket tcpConnect(const std::string &host, uint16_t port)
+#ifdef _WIN32
+    constexpr int ERR_IN_PROGRESS = WSAEWOULDBLOCK;
+    constexpr int ERR_INTERRUPTED = WSAEINTR;
+#else
+    constexpr int ERR_IN_PROGRESS = EINPROGRESS;
+    constexpr int ERR_INTERRUPTED = EINTR;
+#endif
+
+    static ConnectedSocket tcpConnect(const std::string &host, uint16_t port,
+                                      std::chrono::milliseconds timeout = std::chrono::milliseconds(100))
     {
-        return connectSocket(host, port, SOCK_STREAM, 0);
+        auto [sock, err] = connectSocket(host, port, SOCK_STREAM, 0);
+        if (err != ERR_IN_PROGRESS && err != ERR_INTERRUPTED) {
+            return { std::move(sock), err };
+        }
+#ifdef _WIN32
+        SOCKET fd = static_cast<SOCKET>(sock.get());
+#else
+        int fd = sock.get();
+#endif
+
+        ::pollfd pfd { fd, POLLOUT, 0 };
+        auto deadline = std::chrono::steady_clock::now() + timeout;
+        for (;;) {
+            auto left = std::chrono::ceil<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+            if (left.count() <= 0) {
+                return { {}, ETIMEDOUT };
+            }
+
+            int n = ::poll(&pfd, 1, static_cast<int>(left.count()));
+            if (n > 0) {
+                break;
+            }
+            if (n == 0) {
+                return { {}, ETIMEDOUT };
+            }
+            if (int err = lastSocketError(); err != ERR_INTERRUPTED) {
+                return { {}, err };
+            }
+        }
+
+        int sockErr = 0;
+        ::socklen_t len = sizeof(sockErr);
+        if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, reinterpret_cast<char *>(&sockErr), &len) != 0) {
+            return { {}, lastSocketError() };
+        }
+        return { std::move(sock), sockErr };
+    }
+
+    static std::vector<std::string> resolve(const std::string &host)
+    {
+#if defined(_WIN32)
+        static const bool wsaInit = [] {
+            WSADATA wsa;
+            return ::WSAStartup(MAKEWORD(2, 2), &wsa) == 0;
+        }();
+#endif
+        ::addrinfo hints {};
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+
+        ::addrinfo *ptr = nullptr;
+        if (::getaddrinfo(host.c_str(), nullptr, &hints, &ptr) != 0) {
+            return {};
+        }
+        std::unique_ptr<::addrinfo, decltype(&::freeaddrinfo)> resolved(ptr, &::freeaddrinfo);
+
+        std::vector<std::string> res;
+        for (auto *it = resolved.get(); it; it = it->ai_next) {
+            char buf[INET_ADDRSTRLEN] {};
+            auto *sin = reinterpret_cast<const sockaddr_in *>(it->ai_addr);
+            if (::inet_ntop(AF_INET, &sin->sin_addr, buf, sizeof(buf))) {
+                res.emplace_back(buf);
+            }
+        }
+        return res;
     }
 }
 

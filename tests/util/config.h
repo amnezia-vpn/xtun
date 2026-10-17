@@ -1,12 +1,21 @@
 #ifndef TEST_CONFIG_H
 #define TEST_CONFIG_H
 
+#include "../mock/memserver.h"
+#include "socket.h"
 #include "util/noncopyable.h"
+#include "wrapper.h"
 #include "xtun.h"
 #include <cstdint>
 #include <cstdio>
+#include <fstream>
+#include <functional>
+#include <iterator>
+#include <memory>
 #include <numeric>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -42,30 +51,33 @@ namespace libxtun::test
     constexpr const char *DEFAULT_ROUTE_PREFIX = "10.9.9.2/32";
     constexpr uint16_t DEFAULT_PORT = 35777;
 
-    struct Confpair
+    struct Setup
     {
         std::string name;
         libxtun_proxy_proto proto;
         std::string clientA;
-        std::string clientB;
-        std::string server;
+        std::optional<std::string> clientB;
+        std::shared_ptr<ProxyWrapper> wrapper;
+        std::function<std::unique_ptr<MemServer>(std::string log)> createServer;
     };
 
-    class ConfpairBuilder
+    class SetupBuilder
     {
-    public:
-        ConfpairBuilder &withPort(uint16_t port)
+    private:
+        std::optional<std::string> loadFromFile(std::string path)
         {
-            m_port = port;
-            return *this;
-        }
-        ConfpairBuilder &withRoutes(std::vector<std::string> routes)
-        {
-            m_routes = std::move(routes);
-            return *this;
+            std::ifstream f(path);
+            if (!f) {
+                return std::nullopt;
+            }
+            std::string cfg { std::istreambuf_iterator<char>(f), {} };
+            if (auto pos = cfg.find("{ROUTES}"); pos != std::string::npos) {
+                cfg.replace(pos, 8, join(m_routes));
+            }
+            return cfg;
         }
 
-        Confpair buildAwg()
+        Setup awgLocalSetup()
         {
             const char *clientTemplateA = "[Interface]\n"
                                           "Address = 10.9.10.2/32\n"
@@ -96,15 +108,57 @@ namespace libxtun::test
 
             auto routes = join(m_routes);
 
-            return { .name = "sample_awg",
-                     .proto = LIBXTUN_PROXY_PROTO_AWG,
-                     .clientA = formatString(clientTemplateA, routes.c_str(), m_port),
-                     .clientB = formatString(clientTemplateB, routes.c_str(), m_port),
-                     .server = formatString(serverTemplate, m_port) };
+            return {
+                .name = "awg_local",
+                .proto = LIBXTUN_PROXY_PROTO_AWG,
+                .clientA = formatString(clientTemplateA, routes.c_str(), m_port),
+                .clientB = formatString(clientTemplateB, routes.c_str(), m_port),
+                .wrapper = std::make_shared<SockBindRemover>(),
+                .createServer =
+                        [cfg = formatString(serverTemplate, m_port)](std::string log) {
+                            return std::make_unique<MemServer>(log, LIBXTUN_PROXY_PROTO_AWG, cfg.c_str());
+                        },
+            };
         }
-        std::vector<Confpair> build()
+
+        std::optional<Setup> awgRealSetup()
         {
-            return { buildAwg() };
+            auto cfgA = loadFromFile(XTUN_TEST_SECRETS_DIR "/awg.conf");
+            if (!cfgA) {
+                return std::nullopt;
+            }
+            auto cfgB = loadFromFile(XTUN_TEST_SECRETS_DIR "/awgB.conf");
+
+            return Setup {
+                .name = "awg_real",
+                .proto = LIBXTUN_PROXY_PROTO_AWG,
+                .clientA = std::move(cfgA.value()),
+                .clientB = std::move(cfgB),
+                .wrapper = std::make_shared<DummyWrapper>(),
+                .createServer = [](std::string log) { return nullptr; },
+            };
+        }
+
+    public:
+        SetupBuilder &withPort(uint16_t port)
+        {
+            m_port = port;
+            return *this;
+        }
+        SetupBuilder &withRoutes(std::vector<std::string> routes)
+        {
+            m_routes = std::move(routes);
+            return *this;
+        }
+
+        std::vector<Setup> build()
+        {
+            std::vector<Setup> res;
+            res.emplace_back(awgLocalSetup());
+            if (auto setup = awgRealSetup()) {
+                res.emplace_back(std::move(setup.value()));
+            }
+            return res;
         }
 
     private:
