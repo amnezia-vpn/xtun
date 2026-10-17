@@ -3,6 +3,7 @@
 
 #include "net/icmp.h"
 #include "net/ip.h"
+#include "net/tcp.h"
 #include "net/udp.h"
 #include "net/view.h"
 #include <array>
@@ -33,6 +34,7 @@ namespace libxtun::net
         class IpStage;
         class Ip6Stage;
         template<BasicRef L3> class UdpStage;
+        template<BasicRef L3> class TcpStage;
         template<BasicRef L3, int T> class IcmpStage;
 
         PacketBuilder(std::span<std::byte> buf) : m_buf(buf)
@@ -63,6 +65,7 @@ namespace libxtun::net
         [[nodiscard]] IcmpStage<IpRef, ICMP_ECHO> icmpEchoRequest();
         [[nodiscard]] IcmpStage<IpRef, ICMP_ECHOREPLY> icmpEchoReply();
         [[nodiscard]] UdpStage<IpRef> udp(uint16_t sport, uint16_t dport);
+        [[nodiscard]] TcpStage<IpRef> tcp(uint16_t sport, uint16_t dport);
 
     private:
         friend class PacketBuilder;
@@ -103,6 +106,7 @@ namespace libxtun::net
         [[nodiscard]] IcmpStage<Ip6Ref, ICMP6_ECHO_REQUEST> icmpEchoRequest();
         [[nodiscard]] IcmpStage<Ip6Ref, ICMP6_ECHO_REPLY> icmpEchoReply();
         [[nodiscard]] UdpStage<Ip6Ref> udp(uint16_t sport, uint16_t dport);
+        [[nodiscard]] TcpStage<Ip6Ref> tcp(uint16_t sport, uint16_t dport);
 
     private:
         friend class PacketBuilder;
@@ -264,6 +268,74 @@ namespace libxtun::net
         std::optional<std::size_t> m_payloadLen = 0;
     };
 
+    template<BasicRef L3> class PacketBuilder::TcpStage
+    {
+    public:
+        template<std::invocable<TcpRef &> F> TcpStage &withHeader(F &&func)
+        {
+            func(m_ref);
+            return *this;
+        }
+
+        template<typename F>
+            requires std::is_invocable_r_v<std::optional<std::size_t>, F, std::span<std::byte>>
+        TcpStage &withPayload(F &&func)
+        {
+            constexpr auto offset = L3::HEADER_LEN + TcpRef::HEADER_LEN;
+            if (m_buf.size() < offset) {
+                return *this;
+            }
+            std::span<std::byte> payload = m_buf.subspan(offset);
+            std::optional<std::size_t> n = std::invoke(std::forward<F>(func), payload);
+            if (n && *n > payload.size()) {
+                n = std::nullopt;
+            }
+            m_payloadLen = n;
+            return *this;
+        }
+
+        [[nodiscard]] std::optional<std::span<std::byte>> finish()
+        {
+            if (!m_payloadLen) {
+                return std::nullopt;
+            }
+            constexpr auto headerLen = L3::HEADER_LEN + TcpRef::HEADER_LEN;
+            const size_t len = headerLen + *m_payloadLen;
+            if (m_buf.size() < len) {
+                return std::nullopt;
+            }
+            m_ref.recalcChecksum(m_l3, m_buf.subspan(headerLen, *m_payloadLen));
+            if constexpr (std::is_same_v<L3, IpRef>) {
+                m_l3.setTotalLen(len).recalcChecksum();
+            } else {
+                m_l3.setPayloadLength(len - L3::HEADER_LEN);
+            }
+            return m_buf.first(len);
+        }
+
+    private:
+        friend class IpStage;
+        friend class Ip6Stage;
+        TcpStage(L3 l3, std::span<std::byte> buf, uint16_t sport, uint16_t dport)
+            : m_l3(l3), m_ref(detail::fit<L3::HEADER_LEN, TcpRef::HEADER_LEN>(buf)), m_buf(buf)
+        {
+            m_ref.setSport(sport)
+                    .setDport(dport)
+                    .setSeqNumber(0)
+                    .setAckNumber(0)
+                    .setDataOffset(5)
+                    .setReserved(0)
+                    .setFlags(0)
+                    .setWindow(0)
+                    .setUrgp(0);
+        }
+
+        L3 m_l3;
+        TcpRef m_ref;
+        std::span<std::byte> m_buf;
+        std::optional<std::size_t> m_payloadLen = 0;
+    };
+
     inline PacketBuilder::IcmpStage<IpRef, ICMP_ECHO> PacketBuilder::IpStage::icmpEchoRequest()
     {
         return icmp<ICMP_ECHO>();
@@ -276,6 +348,11 @@ namespace libxtun::net
     {
         m_ref.setProtocol(IPPROTO_UDP);
         return UdpStage<IpRef>(m_ref, m_buf, sport, dport);
+    }
+    inline PacketBuilder::TcpStage<IpRef> PacketBuilder::IpStage::tcp(uint16_t sport, uint16_t dport)
+    {
+        m_ref.setProtocol(IPPROTO_TCP);
+        return TcpStage<IpRef>(m_ref, m_buf, sport, dport);
     }
 
     inline PacketBuilder::IcmpStage<Ip6Ref, ICMP6_ECHO_REQUEST> PacketBuilder::Ip6Stage::icmpEchoRequest()
@@ -290,6 +367,11 @@ namespace libxtun::net
     {
         m_ref.setNextHeader(IPPROTO_UDP);
         return UdpStage<Ip6Ref>(m_ref, m_buf, sport, dport);
+    }
+    inline PacketBuilder::TcpStage<Ip6Ref> PacketBuilder::Ip6Stage::tcp(uint16_t sport, uint16_t dport)
+    {
+        m_ref.setNextHeader(IPPROTO_TCP);
+        return TcpStage<Ip6Ref>(m_ref, m_buf, sport, dport);
     }
 }
 
