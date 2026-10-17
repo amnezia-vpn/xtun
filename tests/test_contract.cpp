@@ -14,6 +14,7 @@ TEST(ContractTunnel, NewRejectsNullOpts)
 {
     libxtun_tunnel tun {};
     EXPECT_EQ(libxtun_tunnel_new(&tun, nullptr), LIBXTUN_ERR_INVALID_ARGS);
+    libxtun_tunnel_free(&tun);
 }
 
 TEST(ContractTunnel, NewRejectsOutOfRangeKillswitch)
@@ -23,6 +24,7 @@ TEST(ContractTunnel, NewRejectsOutOfRangeKillswitch)
 
     libxtun_tunnel tun {};
     EXPECT_EQ(libxtun_tunnel_new(&tun, &opts.get()), LIBXTUN_ERR_INVALID_ARGS);
+    libxtun_tunnel_free(&tun);
 }
 
 class ContractTunnelFd : public testing::TestWithParam<int>
@@ -39,7 +41,7 @@ INSTANTIATE_TEST_SUITE_P(ContractTunnel, ContractTunnelFd, testing::Values(0, -1
 
 TEST(ContractTunnel, FromFdRejectsNegativeFd)
 {
-    libxtun_tunnel tun;
+    libxtun_tunnel tun{};
     EXPECT_EQ(libxtun_tunnel_new_from_tunfile(&tun, -1), LIBXTUN_ERR_INVALID_ARGS);
 }
 
@@ -50,14 +52,15 @@ TEST(ContractTunnel, FromNameRejectsNullTunnel)
 
 TEST(ContractTunnel, FromNameRejectsNullName)
 {
-    libxtun_tunnel tun;
+    libxtun_tunnel tun{};
     EXPECT_EQ(libxtun_tunnel_new_from_name(&tun, nullptr), LIBXTUN_ERR_INVALID_ARGS);
 }
 
 TEST(ContractTunnel, FromNameRejectsEmptyName)
 {
-    libxtun_tunnel tun;
+    libxtun_tunnel tun{};
     EXPECT_EQ(libxtun_tunnel_new_from_name(&tun, ""), LIBXTUN_ERR_INVALID_ARGS);
+    libxtun_tunnel_free(&tun);
 }
 
 TEST(ContractTunnel, FreeIgnoresNull)
@@ -67,7 +70,7 @@ TEST(ContractTunnel, FreeIgnoresNull)
 
 TEST(ContractTunnel, FromNameRejectsOverlongName)
 {
-    libxtun_tunnel tun;
+    libxtun_tunnel tun{};
     std::string name(512, 'x');
 
     int res = libxtun_tunnel_new_from_name(&tun, name.c_str());
@@ -75,17 +78,19 @@ TEST(ContractTunnel, FromNameRejectsOverlongName)
         GTEST_SKIP() << "skipped due to unsupported named tunnels";
     }
     EXPECT_EQ(res, LIBXTUN_ERR_INVALID_ARGS);
+    libxtun_tunnel_free(&tun);
 }
 
 TEST(ContractTunnel, FromNameRejectsNonexistentDevice)
 {
-    libxtun_tunnel tun;
+    libxtun_tunnel tun{};
 
     int res = libxtun_tunnel_new_from_name(&tun, "xtun_nope0");
     if (res == LIBXTUN_ERR_UNSUPPORTED) {
         GTEST_SKIP() << "skipped due to unsupported named tunnels";
     }
     EXPECT_EQ(res, LIBXTUN_ERR_DEVICE_CREATE);
+    libxtun_tunnel_free(&tun);
 }
 
 TEST(ContractProxy, FreeIgnoresNull)
@@ -102,6 +107,7 @@ TEST(ContractProxy, NewRejectsOutOfRangeProto)
 
     int res = libxtun_proxy_new(&proxy, static_cast<libxtun_proxy_proto>(LIBXTUN_PROXY_PROTO_LAST + 1), "");
     EXPECT_EQ(res, LIBXTUN_ERR_INVALID_ARGS);
+    libxtun_proxy_free(&proxy);
 }
 
 class ContractProxyProto : public testing::TestWithParam<libxtun_proxy_proto>
@@ -127,6 +133,7 @@ TEST_P(ContractProxyProto, NewRejectsNullConf)
 
     int res = libxtun_proxy_new(&proxy, proto, nullptr);
     EXPECT_EQ(res, LIBXTUN_ERR_INVALID_ARGS);
+    libxtun_proxy_free(&proxy);
 }
 
 TEST_P(ContractProxyProto, NewRejectsInvalidConf)
@@ -140,6 +147,7 @@ TEST_P(ContractProxyProto, NewRejectsInvalidConf)
 
     int res = libxtun_proxy_new(&proxy, proto, "d34db33f");
     EXPECT_EQ(res, LIBXTUN_ERR_INVALID_ARGS);
+    libxtun_proxy_free(&proxy);
 }
 
 INSTANTIATE_TEST_SUITE_P(ContractProxy, ContractProxyProto, testing::ValuesIn(libxtun::test::allProtos()));
@@ -161,6 +169,7 @@ TEST_P(ContractProxySetup, InitsFromConf)
 
     int res = libxtun_proxy_new(&proxy, proto, cfg.c_str());
     EXPECT_EQ(res, 0);
+    libxtun_proxy_free(&proxy);
 }
 
 INSTANTIATE_TEST_SUITE_P(ContractProxy, ContractProxySetup, testing::ValuesIn(libxtun::test::SetupBuilder().build()),
