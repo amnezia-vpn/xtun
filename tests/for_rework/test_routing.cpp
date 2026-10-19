@@ -22,10 +22,11 @@
 
 #include <cerrno>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 
 #if defined(__linux__)
+    #include "util/spawn.h"
+
     #include <fcntl.h>
     #include <sched.h>
 #elif defined(__APPLE__)
@@ -137,9 +138,14 @@ namespace
 
 #if defined(__linux__)
 
-    bool sh(const std::string &cmd)
+    bool ip(const std::vector<std::string> &args)
     {
-        return std::system((cmd + " >/dev/null 2>&1").c_str()) == 0;
+        for (const char *path : { "/usr/sbin/ip", "/sbin/ip" }) {
+            if (::access(path, X_OK) == 0) {
+                return static_cast<bool>(libxtun::spawn::run(path, args, {}));
+            }
+        }
+        return false;
     }
 
     // Moves the calling thread into a fresh, empty network namespace and restores
@@ -292,11 +298,11 @@ TEST(Routing, FullTunnelMarksBypassPhysical)
     NetnsGuard netns;
     ASSERT_TRUE(netns.ok) << "could not create a private network namespace";
 
-    ASSERT_TRUE(sh("ip link set lo up"));
-    ASSERT_TRUE(sh("ip link add dummy0 type dummy")) << "needs the 'dummy' kernel module";
-    ASSERT_TRUE(sh("ip addr add 10.10.0.2/24 dev dummy0"));
-    ASSERT_TRUE(sh("ip link set dummy0 up"));
-    ASSERT_TRUE(sh("ip route add default via 10.10.0.1 dev dummy0"));
+    ASSERT_TRUE(ip({ "link", "set", "lo", "up" }));
+    ASSERT_TRUE(ip({ "link", "add", "dummy0", "type", "dummy" })) << "needs the 'dummy' kernel module";
+    ASSERT_TRUE(ip({ "addr", "add", "10.10.0.2/24", "dev", "dummy0" }));
+    ASSERT_TRUE(ip({ "link", "set", "dummy0", "up" }));
+    ASSERT_TRUE(ip({ "route", "add", "default", "via", "10.10.0.1", "dev", "dummy0" }));
 
     libxtun_tunnel_opts opts = routingOpts();
     libxtun::Tunnel tunnel(opts);

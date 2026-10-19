@@ -186,7 +186,13 @@ namespace libxtun::test
             }
 
             int status = 0;
-            if (::waitpid(child, &status, 0) < 0 || !WIFEXITED(status)) {
+            pid_t r;
+
+            do {
+                r = ::waitpid(child, &status, 0);
+            } while (r == -1 && errno == EINTR);
+
+            if (r < 0 || !WIFEXITED(status)) {
                 return ECHILD;
             }
             return WEXITSTATUS(status);
