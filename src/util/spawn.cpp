@@ -28,8 +28,7 @@ namespace libxtun::spawn
         feed->writeFd.close();
 
         SpawnActions actions;
-        if (!actions.dup2(feed->readFd.get(), STDIN_FILENO)
-            || !actions.dup2(collect->writeFd.get(), STDOUT_FILENO)
+        if (!actions.dup2(feed->readFd.get(), STDIN_FILENO) || !actions.dup2(collect->writeFd.get(), STDOUT_FILENO)
             || !actions.dup2(collect->writeFd.get(), STDERR_FILENO)) {
             return fail(LIBXTUN_ERR_SYSTEM);
         }
@@ -59,11 +58,12 @@ namespace libxtun::spawn
         }
 
         int status = 0;
-        if (::waitpid(child, &status, 0) < 0) {
-            return fail(LIBXTUN_ERR_SYSTEM);
-        }
+        pid_t r;
+        do {
+            r = ::waitpid(child, &status, 0);
+        } while (r == -1 && errno == EINTR);
 
-        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        if (r < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
             return fail(LIBXTUN_ERR_SYSTEM);
         }
         return output;
