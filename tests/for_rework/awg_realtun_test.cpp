@@ -29,6 +29,8 @@
 #endif
 
 #if defined(__linux__)
+    #include "util/spawn.h"
+
     #include <sched.h>
 
     #include <linux/if_ether.h>
@@ -36,13 +38,14 @@
 
     #include <cstdlib>
 #elif defined(__APPLE__)
+    #include "util/spawn.h"
+
     #include <net/bpf.h>
     #include <net/route.h>
     #include <sys/ioctl.h>
     #include <sys/sysctl.h>
 
     #include <cerrno>
-    #include <cstdlib>
 #elif defined(_WIN32)
     #include <iphlpapi.h>
     #include <windows.h>
@@ -70,9 +73,14 @@ namespace
 
 #if defined(__linux__)
 
-    bool sh(const std::string &cmd)
+    bool iproute(const std::vector<std::string> &args)
     {
-        return std::system((cmd + " >/dev/null 2>&1").c_str()) == 0;
+        for (const char *path : { "/usr/sbin/ip", "/sbin/ip" }) {
+            if (::access(path, X_OK) == 0) {
+                return static_cast<bool>(libxtun::spawn::run(path, args, {}));
+            }
+        }
+        return false;
     }
 
     constexpr const char *NETNS_MARKER = "XTUN_NETNS_CHILD";
@@ -374,9 +382,14 @@ namespace
         }
     }
 
-    bool sh(const std::string &cmd)
+    bool ifconfig(const std::vector<std::string> &args)
     {
-        return std::system((cmd + " >/dev/null 2>&1").c_str()) == 0;
+        return static_cast<bool>(libxtun::spawn::run("/sbin/ifconfig", args, {}));
+    }
+
+    bool route(const std::vector<std::string> &args)
+    {
+        return static_cast<bool>(libxtun::spawn::run("/sbin/route", args, {}));
     }
 
     std::string shOut(const std::string &cmd)
@@ -468,14 +481,14 @@ namespace
             if (feth.empty()) {
                 return false;
             }
-            if (!sh("ifconfig " + feth + " inet 10.77.0.1/24 up")) {
+            if (!ifconfig({ feth, "inet", "10.77.0.1/24", "up" })) {
                 return false;
             }
             origGw = shOut("route -n get default 2>/dev/null | awk '/gateway:/{print $2}'");
             if (origGw.empty()) {
                 return false;
             }
-            if (!sh("route -n change default 10.77.0.254")) {
+            if (!route({ "-n", "change", "default", "10.77.0.254" })) {
                 return false;
             }
             changed = true;
@@ -485,10 +498,10 @@ namespace
         ~RoamSim()
         {
             if (changed && !origGw.empty()) {
-                sh("route -n change default " + origGw);
+                route({ "-n", "change", "default", origGw });
             }
             if (!feth.empty()) {
-                sh("ifconfig " + feth + " destroy");
+                ifconfig({ feth, "destroy" });
             }
         }
     };
@@ -510,7 +523,7 @@ TEST(AwgRealTun, FullTunnelDeliversThroughKernelTun)
                 << "the test failed in its private network namespace; see the child output above";
         return;
     }
-    ASSERT_TRUE(sh("ip link set lo up")) << "loopback is needed for the AWG handshake";
+    ASSERT_TRUE(iproute({ "link", "set", "lo", "up" })) << "loopback is needed for the AWG handshake";
 
     // Peer B: a second AWG instance behind an in-memory tun.
     MemTun tunB;
@@ -578,12 +591,12 @@ TEST(AwgRealTun, MarkedHandshakeBypassesTunnel)
         return;
     }
 
-    ASSERT_TRUE(sh("ip link set lo up"));
-    ASSERT_TRUE(sh("ip link add phys0 type dummy")) << "needs the 'dummy' module";
-    ASSERT_TRUE(sh("ip addr add 10.0.0.1/24 dev phys0"));
-    ASSERT_TRUE(sh("ip link set phys0 up"));
-    ASSERT_TRUE(sh("ip route add default via 10.0.0.254 dev phys0"));
-    ASSERT_TRUE(sh("ip neigh add 10.0.0.254 lladdr 02:00:00:00:00:99 dev phys0"));
+    ASSERT_TRUE(iproute({ "link", "set", "lo", "up" }));
+    ASSERT_TRUE(iproute({ "link", "add", "phys0", "type", "dummy" })) << "needs the 'dummy' module";
+    ASSERT_TRUE(iproute({ "addr", "add", "10.0.0.1/24", "dev", "phys0" }));
+    ASSERT_TRUE(iproute({ "link", "set", "phys0", "up" }));
+    ASSERT_TRUE(iproute({ "route", "add", "default", "via", "10.0.0.254", "dev", "phys0" }));
+    ASSERT_TRUE(iproute({ "neigh", "add", "10.0.0.254", "lladdr", "02:00:00:00:00:99", "dev", "phys0" }));
 
     int cap = openCaptureAll();
     ASSERT_GE(cap, 0);
