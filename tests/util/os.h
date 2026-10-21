@@ -258,7 +258,8 @@ namespace libxtun::test
         int error = 0;
     };
 
-    static ConnectedSocket connectSocket(const std::string &host, uint16_t port, int type, [[maybe_unused]] unsigned mark)
+    static ConnectedSocket connectSocket(const std::string &host, uint16_t port, int type,
+                                         [[maybe_unused]] unsigned bypass)
     {
         ::addrinfo hints {};
         hints.ai_socktype = type;
@@ -276,7 +277,24 @@ namespace libxtun::test
             return { {}, lastSocketError() };
         }
 #if defined(__linux__)
-        if (mark != 0 && ::setsockopt(sock.get(), SOL_SOCKET, SO_MARK, &mark, sizeof(mark)) != 0) {
+        if (bypass != 0 && ::setsockopt(sock.get(), SOL_SOCKET, SO_MARK, &bypass, sizeof(bypass)) != 0) {
+            return { {}, lastSocketError() };
+        }
+#elif defined(__APPLE__)
+        const bool v6 = resolved->ai_family == AF_INET6;
+        if (bypass != 0
+            && ::setsockopt(sock.get(), v6 ? IPPROTO_IPV6 : IPPROTO_IP, v6 ? IPV6_BOUND_IF : IP_BOUND_IF, &bypass,
+                            sizeof(bypass))
+                    != 0) {
+            return { {}, lastSocketError() };
+        }
+#elif defined(_WIN32)
+        const bool v6 = resolved->ai_family == AF_INET6;
+        const DWORD bound = v6 ? static_cast<DWORD>(bypass) : ::htonl(static_cast<u_long>(bypass));
+        if (bypass != 0
+            && ::setsockopt(static_cast<SOCKET>(sock.get()), v6 ? IPPROTO_IPV6 : IPPROTO_IP,
+                            v6 ? IPV6_UNICAST_IF : IP_UNICAST_IF, reinterpret_cast<const char *>(&bound), sizeof(bound))
+                    != 0) {
             return { {}, lastSocketError() };
         }
 #endif
@@ -297,9 +315,9 @@ namespace libxtun::test
         return { std::move(sock), 0 };
     }
 
-    static ConnectedSocket udpConnect(const std::string &host, uint16_t port, unsigned mark = 0)
+    static ConnectedSocket udpConnect(const std::string &host, uint16_t port, unsigned bypass = 0)
     {
-        return connectSocket(host, port, SOCK_DGRAM, mark);
+        return connectSocket(host, port, SOCK_DGRAM, bypass);
     }
 
 #ifdef _WIN32
@@ -311,9 +329,10 @@ namespace libxtun::test
 #endif
 
     static ConnectedSocket tcpConnect(const std::string &host, uint16_t port,
-                                      std::chrono::milliseconds timeout = std::chrono::milliseconds(100))
+                                      std::chrono::milliseconds timeout = std::chrono::milliseconds(100),
+                                      unsigned bypass = 0)
     {
-        auto [sock, err] = connectSocket(host, port, SOCK_STREAM, 0);
+        auto [sock, err] = connectSocket(host, port, SOCK_STREAM, bypass);
         if (err != ERR_IN_PROGRESS && err != ERR_INTERRUPTED) {
             return { std::move(sock), err };
         }

@@ -1,18 +1,17 @@
 #include "killswitch_macos.h"
 #include "net/ip.h"
 #include "net/pf.h"
+#include "util/config.h"
 #include "util/killswitch_env.h"
 #include "util/os.h"
 #include "util/spawn.h"
 
 #include <arpa/inet.h>
 #include <fcntl.h>
-#include <net/bpf.h>
 #include <net/if.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
-#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/sysctl.h>
 #include <sys/wait.h>
@@ -23,7 +22,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <memory>
 #include <optional>
 #include <span>
 #include <sstream>
@@ -38,57 +36,16 @@ namespace libxtun::test
         constexpr const char *FAKE_UPLINK_PEER = "10.10.0.1";
         constexpr const char *FORWARDING = "net.inet.ip.forwarding";
         constexpr ::gid_t FOREIGN_GID = 1;
-        constexpr int MAX_TAP_UNITS = 256;
-        constexpr unsigned TAP_BUFFER_SIZE = 32768;
         constexpr std::size_t UTUN_HEADER_SIZE = 4;
 
-        ScopedFd tapOn(const std::string &ifName)
+        std::vector<std::byte> utunFrame(std::span<const std::byte> packet)
         {
-            for (int unit = 0; unit < MAX_TAP_UNITS; ++unit) {
-                ScopedFd tap(::open(("/dev/bpf" + std::to_string(unit)).c_str(), O_RDONLY | O_CLOEXEC));
-                if (!tap) {
-                    if (errno == EBUSY) {
-                        continue;
-                    }
-                    return ScopedFd {};
-                }
-
-                ::ifreq request {};
-                std::strncpy(request.ifr_name, ifName.c_str(), sizeof(request.ifr_name) - 1);
-                unsigned bufferSize = TAP_BUFFER_SIZE;
-                unsigned on = 1;
-                if (::ioctl(tap.get(), BIOCSBLEN, &bufferSize) != 0 || bufferSize != TAP_BUFFER_SIZE
-                    || ::ioctl(tap.get(), BIOCSETIF, &request) != 0 || ::ioctl(tap.get(), BIOCIMMEDIATE, &on) != 0
-                    || ::ioctl(tap.get(), BIOCSSEESENT, &on) != 0) {
-                    return ScopedFd {};
-                }
-                return tap;
-            }
-            return ScopedFd {};
-        }
-
-        void drain(const ScopedFd &source)
-        {
-            ::pollfd ready { source.get(), POLLIN, 0 };
-            std::vector<std::byte> buffer(TAP_BUFFER_SIZE);
-            while (::poll(&ready, 1, 0) > 0 && ::read(source.get(), buffer.data(), buffer.size()) > 0) {
-            }
-        }
-
-        std::string defaultInterface()
-        {
-            const ConnectedSocket probe = udpConnect(TEST_NET_V4, PROBE_PORT);
-            ::sockaddr_in local {};
-            ::socklen_t size = sizeof(local);
-            if (probe.error != 0 || ::getsockname(probe.fd.get(), reinterpret_cast<::sockaddr *>(&local), &size) != 0) {
-                return {};
-            }
-
-            std::array<char, INET_ADDRSTRLEN> address {};
-            if (::inet_ntop(AF_INET, &local.sin_addr, address.data(), address.size()) == nullptr) {
-                return {};
-            }
-            return ifnameFromAddr(address.data());
+            const bool v6 = !packet.empty() && std::to_integer<unsigned>(packet[0]) >> 4 == 6;
+            const std::uint32_t family = htonl(v6 ? AF_INET6 : AF_INET);
+            std::vector<std::byte> frame(UTUN_HEADER_SIZE);
+            std::memcpy(frame.data(), &family, sizeof(family));
+            frame.insert(frame.end(), packet.begin(), packet.end());
+            return frame;
         }
 
         int getForwarding()
@@ -113,6 +70,21 @@ namespace libxtun::test
             return static_cast<bool>(spawn::run("/sbin/route", args, {}));
         }
 
+        std::string defaultGateway()
+        {
+            const auto output = spawn::run("/sbin/route", { "-n", "get", "default" }, {});
+            std::istringstream lines(output ? output.value() : std::string {});
+            for (std::string line; std::getline(lines, line);) {
+                if (const std::size_t at = line.find("gateway:"); at != std::string::npos) {
+                    std::istringstream value(line.substr(at + std::strlen("gateway:")));
+                    std::string gateway;
+                    value >> gateway;
+                    return gateway;
+                }
+            }
+            return {};
+        }
+
         std::string anchorRules()
         {
             const auto rules = pf::pfctl({ "-a", ANCHOR, "-s", "rules" }, {});
@@ -125,58 +97,63 @@ namespace libxtun::test
             return entries ? entries.value() : std::string {};
         }
 
-        int sendBound(const std::string &host, std::uint16_t port, unsigned ifIndex, const Nonce &nonce)
+        int connectInChild(const ::addrinfo &target, const in_addr &tunnel, int timeoutMs)
         {
-            ::addrinfo hints {};
-            hints.ai_socktype = SOCK_DGRAM;
-            hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV;
-
-            ::addrinfo *resolved = nullptr;
-            if (::getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &resolved) != 0) {
-                return EINVAL;
-            }
-            const std::unique_ptr<::addrinfo, decltype(&::freeaddrinfo)> owner(resolved, ::freeaddrinfo);
-
-            const ScopedFd sock(::socket(resolved->ai_family, resolved->ai_socktype, resolved->ai_protocol));
-            if (!sock) {
+            if (::setegid(FOREIGN_GID) != 0) {
                 return errno;
             }
-            const bool v6 = resolved->ai_family == AF_INET6;
-            if (::setsockopt(sock.get(), v6 ? IPPROTO_IPV6 : IPPROTO_IP, v6 ? IPV6_BOUND_IF : IP_BOUND_IF, &ifIndex,
-                             sizeof(ifIndex))
-                        != 0
-                || ::connect(sock.get(), resolved->ai_addr, resolved->ai_addrlen) != 0
-                || ::send(sock.get(), nonce.data(), nonce.size(), 0) < 0) {
+            const ScopedFd sock(::socket(target.ai_family, target.ai_socktype, target.ai_protocol));
+            if (!sock || ::fcntl(sock.get(), F_SETFL, ::fcntl(sock.get(), F_GETFL) | O_NONBLOCK) != 0) {
                 return errno;
             }
-            return 0;
+            if (::connect(sock.get(), target.ai_addr, target.ai_addrlen) != 0) {
+                if (errno != EINPROGRESS) {
+                    return errno;
+                }
+                ::pollfd ready { sock.get(), POLLOUT, 0 };
+                const int events = ::poll(&ready, 1, timeoutMs);
+                if (events == 0) {
+                    return ETIMEDOUT;
+                }
+                if (events < 0) {
+                    return errno;
+                }
+                int error = 0;
+                ::socklen_t errorSize = sizeof(error);
+                if (::getsockopt(sock.get(), SOL_SOCKET, SO_ERROR, &error, &errorSize) != 0) {
+                    return errno;
+                }
+                if (error != 0) {
+                    return error;
+                }
+            }
+
+            ::sockaddr_storage local {};
+            ::socklen_t localSize = sizeof(local);
+            if (::getsockname(sock.get(), reinterpret_cast<::sockaddr *>(&local), &localSize) != 0) {
+                return errno;
+            }
+            const bool viaTunnel = local.ss_family == AF_INET
+                    && reinterpret_cast<const ::sockaddr_in &>(local).sin_addr.s_addr == tunnel.s_addr;
+            return viaTunnel ? CONNECTED_VIA_TUNNEL : CONNECTED_ELSEWHERE;
         }
 
-        int sendAsForeignGroup(const std::string &host, std::uint16_t port, const Nonce &nonce)
+        int connectAsForeignGroup(const std::string &host, std::uint16_t port)
         {
             ::addrinfo hints {};
-            hints.ai_socktype = SOCK_DGRAM;
+            hints.ai_socktype = SOCK_STREAM;
             hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV;
 
             ::addrinfo *resolved = nullptr;
             if (::getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &resolved) != 0) {
-                return EINVAL;
+                return EADDRNOTAVAIL;
             }
+            in_addr tunnel {};
+            ::inet_pton(AF_INET, DEFAULT_IFADDR, &tunnel);
 
             const ::pid_t child = ::fork();
             if (child == 0) {
-                int error = 0;
-                if (::setegid(FOREIGN_GID) != 0) {
-                    error = errno;
-                } else if (const int sock = ::socket(resolved->ai_family, resolved->ai_socktype, resolved->ai_protocol);
-                           sock < 0) {
-                    error = errno;
-                } else if (::connect(sock, resolved->ai_addr, resolved->ai_addrlen) != 0) {
-                    error = errno;
-                } else if (::send(sock, nonce.data(), nonce.size(), 0) < 0) {
-                    error = errno;
-                }
-                ::_exit(error);
+                ::_exit(connectInChild(*resolved, tunnel, static_cast<int>(PROBE_TIMEOUT.count())));
             }
 
             const int forkError = child < 0 ? errno : 0;
@@ -216,15 +193,9 @@ namespace libxtun::test
             return;
         }
 
-        const std::string uplink = defaultInterface();
-        m_defaultIfIndex = uplink.empty() ? 0 : ::if_nametoindex(uplink.c_str());
-        if (m_defaultIfIndex == 0) {
-            m_skipReason = "no uplink to probe through";
-            return;
-        }
-        m_tap = tapOn(uplink);
-        if (!m_tap) {
-            m_skipReason = "could not tap the uplink " + uplink;
+        const std::string gateway = defaultGateway();
+        if (gateway.empty()) {
+            m_skipReason = "no IPv4 default gateway to take over";
             return;
         }
 
@@ -245,21 +216,59 @@ namespace libxtun::test
         const std::string side = client->second;
         if (!(ifconfig({ up, "inet", FAKE_UPLINK_V4, FAKE_UPLINK_PEER, "up" })
               && ifconfig({ up, "inet6", FAKE_UPLINK_V6, "alias" })
-              && route({ "-q", "-n", "add", "-net", LAN_PREFIX, "-interface", up })
-              && route({ "-q", "-n", "add", "-net", HIJACKED_PREFIX, "-interface", up })
-              && route({ "-q", "-n", "add", "-inet6", TEST_NET_V6_PREFIX, "-interface", up })
-              && ifconfig({ side, "inet", CLIENT_SIDE_V4, FORWARDED_SOURCE, "up" }))) {
+              && route({ "-q", "-n", "add", "-host", LAN.host, "-interface", up })
+              && route({ "-q", "-n", "add", "-host", HIJACKED.host, "-interface", up })
+              && route({ "-q", "-n", "add", "-inet6", "-host", INTERNET_V6.host, "-interface", up })
+              && ifconfig({ side, "inet", CLIENT_V4, FORWARDED_SOURCE, "up" }))) {
             m_skipReason = "could not set up the fake uplink and the client side utuns";
             return;
         }
+        m_uplinkIfIndex = ::if_nametoindex(up.c_str());
+        if (m_uplinkIfIndex == 0) {
+            m_skipReason = "could not look up the fake uplink " + up;
+            return;
+        }
+
+        if (!route({ "-q", "-n", "change", "default", FAKE_UPLINK_PEER })) {
+            m_skipReason = "could not move the default route to the fake uplink";
+            return;
+        }
+        m_originalGateway = gateway;
 
         m_restoreForwarding = getForwarding() == 0 && setForwarding(1);
         m_ifName = PROBE_IFACE;
         pf::flushRules(ANCHOR);
+
+        m_uplinkReader = std::thread([this] {
+            ::pollfd ready { m_uplinkFd.get(), POLLIN, 0 };
+            std::array<std::byte, 2048> buffer {};
+            while (!m_stopReader) {
+                if (::poll(&ready, 1, static_cast<int>(PROBE_SLICE.count())) <= 0) {
+                    continue;
+                }
+                const ssize_t size = ::read(m_uplinkFd.get(), buffer.data(), buffer.size());
+                if (size <= static_cast<ssize_t>(UTUN_HEADER_SIZE)) {
+                    continue;
+                }
+                const std::vector<std::byte> reply = handleUplinkPacket(
+                        std::span(buffer.data() + UTUN_HEADER_SIZE, static_cast<std::size_t>(size) - UTUN_HEADER_SIZE));
+                if (!reply.empty()) {
+                    const std::vector<std::byte> frame = utunFrame(reply);
+                    [[maybe_unused]] const ssize_t written = ::write(m_uplinkFd.get(), frame.data(), frame.size());
+                }
+            }
+        });
     }
 
     KillswitchEnv::~KillswitchEnv()
     {
+        if (m_uplinkReader.joinable()) {
+            m_stopReader = true;
+            m_uplinkReader.join();
+        }
+        if (!m_originalGateway.empty()) {
+            route({ "-q", "-n", "change", "default", m_originalGateway });
+        }
         if (m_skipReason.empty()) {
             pf::flushRules(ANCHOR);
         }
@@ -287,72 +296,52 @@ namespace libxtun::test
         return count;
     }
 
-    SendResult KillswitchEnv::send(const std::string &host, std::uint16_t port, Sender sender, const Nonce &nonce) const
+    std::optional<ProbeResult> KillswitchEnv::connect(const std::string &host, std::uint16_t port, Sender sender) const
     {
-        drain(m_tap);
-        drain(m_uplinkFd);
-
-        int error = 0;
-        switch (sender) {
-        case Sender::App: error = sendAsForeignGroup(host, port, nonce); break;
-        case Sender::Proxy: error = sendBound(host, port, m_defaultIfIndex, nonce); break;
-        case Sender::Forwarded: {
-            if (getForwarding() != 1) {
-                ADD_FAILURE() << "IPv4 forwarding is off";
-                return SendResult::Failed;
+        int code = 0;
+        if (sender == Sender::App) {
+            code = connectAsForeignGroup(host, port);
+        } else {
+            const ConnectedSocket tcp = tcpConnect(host, port, PROBE_TIMEOUT, m_uplinkIfIndex);
+            code = tcp.error;
+            if (code == 0) {
+                code = localAddress(tcp.fd) == DEFAULT_IFADDR ? CONNECTED_VIA_TUNNEL : CONNECTED_ELSEWHERE;
             }
-            const std::optional<net::IpAddress> destination = net::IpAddress::parse(host);
-            if (!destination || destination->family() != AF_INET) {
-                ADD_FAILURE() << "forwarded probes are IPv4 only, got " << host;
-                return SendResult::Failed;
-            }
-
-            const std::uint32_t family = htonl(AF_INET);
-            std::vector<std::byte> packet(UTUN_HEADER_SIZE);
-            std::memcpy(packet.data(), &family, sizeof(family));
-            const std::vector<std::byte> datagram = forwardedPacket(*destination, port, nonce);
-            packet.insert(packet.end(), datagram.begin(), datagram.end());
-            if (::write(m_clientFd.get(), packet.data(), packet.size()) != static_cast<ssize_t>(packet.size())) {
-                error = errno;
-            }
-            break;
-        }
         }
 
-        if (error == 0) {
-            return SendResult::Out;
-        }
-        if (error == EPERM) {
-            return SendResult::Refused;
+        switch (code) {
+        case CONNECTED_VIA_TUNNEL: return ProbeResult::Tunnel;
+        case CONNECTED_ELSEWHERE: return ProbeResult::Uplink;
+        case ECONNREFUSED:
+        case EHOSTUNREACH:
+        case EINVAL:
+        case EPERM:
+        case ETIMEDOUT: return ProbeResult::Blocked;
+        default: break;
         }
 
-        ADD_FAILURE() << "the probe to " << host << ' ' << sender << " failed: " << std::strerror(error);
-        return SendResult::Failed;
+        ADD_FAILURE() << "the probe to " << host << ' ' << sender << " failed: " << std::strerror(code);
+        return std::nullopt;
     }
 
-    std::optional<ProbeResult> KillswitchEnv::pollUplink(const Destination &to, const Nonce &nonce) const
+    bool KillswitchEnv::injectSyn(const net::IpAddress &destination, std::uint16_t sport) const
     {
-        const ScopedFd &source = to.viaDefault ? m_tap : m_uplinkFd;
-        ::pollfd ready { source.get(), POLLIN, 0 };
-        std::vector<std::byte> buffer(TAP_BUFFER_SIZE);
-        int wait = static_cast<int>(PROBE_SLICE.count());
-        while (::poll(&ready, 1, wait) > 0) {
-            const ssize_t size = ::read(source.get(), buffer.data(), buffer.size());
-            if (size > static_cast<ssize_t>(UTUN_HEADER_SIZE)) {
-                const std::span<const std::byte> data(buffer.data(), static_cast<std::size_t>(size));
-                if (to.viaDefault ? containsNonce(data, nonce)
-                                  : udpPktContainsNonce(data.subspan(UTUN_HEADER_SIZE), nonce)) {
-                    return ProbeResult::Uplink;
-                }
-            }
-            wait = 0;
+        if (getForwarding() != 1) {
+            ADD_FAILURE() << "IPv4 forwarding is off";
+            return false;
         }
-        return std::nullopt;
+
+        const std::vector<std::byte> frame = utunFrame(forwardedSyn(destination, sport));
+        if (::write(m_clientFd.get(), frame.data(), frame.size()) != static_cast<ssize_t>(frame.size())) {
+            ADD_FAILURE() << "could not inject the forwarded probe: " << std::strerror(errno);
+            return false;
+        }
+        return true;
     }
 
     bool KillswitchEnv::removeTunnelRoutes(const std::vector<std::string> &routes) const
     {
-        const std::string tunnel = ifnameFromAddr(TUNNEL_ADDRESS);
+        const std::string tunnel = ifnameFromAddr(DEFAULT_IFADDR);
         if (tunnel.empty()) {
             return false;
         }

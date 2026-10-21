@@ -2,6 +2,7 @@
 #include "net/ip.h"
 #include "net/wfp.h"
 #include "tun_device.h"
+#include "util/config.h"
 #include "util/killswitch_env.h"
 #include "util/os.h"
 
@@ -18,9 +19,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <mutex>
 #include <optional>
-#include <sstream>
+#include <span>
 #include <string>
 #include <thread>
 #include <vector>
@@ -30,9 +30,10 @@ namespace libxtun::test
     namespace
     {
         constexpr const char *POWERSHELL = "powershell -NoProfile -NonInteractive -Command ";
-        constexpr const char *SEND_SCRIPT =
-                "$c = [System.Net.Sockets.UdpClient]::new($a.AddressFamily); "
-                "try { $c.Connect($a, $port); [void]$c.Send($bytes, $bytes.Length); exit 0 } "
+        constexpr const char *CONNECT_SCRIPT =
+                "$c = [System.Net.Sockets.TcpClient]::new($a.AddressFamily); "
+                "try { if (-not $c.ConnectAsync($a, $port).Wait($ms)) { exit $timedOut }; "
+                "if ($c.Client.LocalEndPoint.Address.Equals($tunnel)) { exit $viaTunnel }; exit $elsewhere } "
                 "catch { $e = $_.Exception; "
                 "while ($e -and -not ($e -is [System.Net.Sockets.SocketException])) { $e = $e.InnerException }; "
                 "if (-not $e) { exit 1 }; exit $e.ErrorCode }";
@@ -95,15 +96,6 @@ namespace libxtun::test
             return found;
         }
 
-        std::string byteList(const Nonce &nonce)
-        {
-            std::ostringstream out;
-            for (std::size_t at = 0; at < nonce.size(); ++at) {
-                out << (at == 0 ? "" : ",") << std::to_integer<unsigned>(nonce[at]);
-            }
-            return out.str();
-        }
-
         int runProcess(std::string commandLine)
         {
             SECURITY_ATTRIBUTES inheritable { sizeof(inheritable), nullptr, TRUE };
@@ -127,44 +119,14 @@ namespace libxtun::test
             return static_cast<int>(code);
         }
 
-        int sendFromPowerShell(const std::string &host, std::uint16_t port, const Nonce &nonce)
+        int connectFromPowerShell(const std::string &host, std::uint16_t port)
         {
-            const std::string script = "$a = [System.Net.IPAddress]::Parse('" + host + "'); $port = "
-                    + std::to_string(port) + "; $bytes = [byte[]](" + byteList(nonce) + "); " + SEND_SCRIPT;
+            const std::string script = "$a = [System.Net.IPAddress]::Parse('" + host
+                    + "'); $port = " + std::to_string(port) + "; $ms = " + std::to_string(PROBE_TIMEOUT.count())
+                    + "; $tunnel = [System.Net.IPAddress]::Parse('" + DEFAULT_IFADDR + "'); $viaTunnel = "
+                    + std::to_string(CONNECTED_VIA_TUNNEL) + "; $elsewhere = " + std::to_string(CONNECTED_ELSEWHERE)
+                    + "; $timedOut = " + std::to_string(WSAETIMEDOUT) + "; " + CONNECT_SCRIPT;
             return runProcess(POWERSHELL + ("\"" + script + "\""));
-        }
-
-        int sendBound(const std::string &host, std::uint16_t port, unsigned long ifIndex, const Nonce &nonce)
-        {
-            ::addrinfo hints {};
-            hints.ai_socktype = SOCK_DGRAM;
-            hints.ai_protocol = IPPROTO_UDP;
-            hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV;
-
-            ::addrinfo *resolved = nullptr;
-            if (::getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &resolved) != 0) {
-                return WSAEINVAL;
-            }
-            const std::unique_ptr<::addrinfo, decltype(&::freeaddrinfo)> owner(resolved, ::freeaddrinfo);
-
-            const ScopedFd sock(
-                    static_cast<int>(::socket(resolved->ai_family, resolved->ai_socktype, resolved->ai_protocol)));
-            if (!sock) {
-                return ::WSAGetLastError();
-            }
-
-            const SOCKET handle = static_cast<SOCKET>(sock.get());
-            const bool v6 = resolved->ai_family == AF_INET6;
-            const DWORD bound = v6 ? static_cast<DWORD>(ifIndex) : ::htonl(static_cast<u_long>(ifIndex));
-            if (::setsockopt(handle, v6 ? IPPROTO_IPV6 : IPPROTO_IP, v6 ? IPV6_UNICAST_IF : IP_UNICAST_IF,
-                             reinterpret_cast<const char *>(&bound), sizeof(bound))
-                        != 0
-                || ::connect(handle, resolved->ai_addr, static_cast<int>(resolved->ai_addrlen)) != 0
-                || ::send(handle, reinterpret_cast<const char *>(nonce.data()), static_cast<int>(nonce.size()), 0)
-                        < 0) {
-                return ::WSAGetLastError();
-            }
-            return 0;
         }
     }
 
@@ -208,11 +170,10 @@ namespace libxtun::test
             "netsh interface ipv4 add address name=" + uplinkIndex + " address=" + FAKE_UPLINK_V4 + " store=active",
             "netsh interface ipv6 add address interface=" + uplinkIndex + " address=" + FAKE_UPLINK_V6 + " store=active",
             "netsh interface ipv4 add route prefix=0.0.0.0/0 interface=" + uplinkIndex + " metric=0 store=active",
-            "netsh interface ipv4 add route prefix=" + std::string(HIJACKED_PREFIX) + " interface=" + uplinkIndex
+            "netsh interface ipv4 add route prefix=" + HIJACKED.host + "/32 interface=" + uplinkIndex + " store=active",
+            "netsh interface ipv6 add route prefix=" + INTERNET_V6.host + "/128 interface=" + uplinkIndex
                     + " store=active",
-            "netsh interface ipv6 add route prefix=" + std::string(TEST_NET_V6_PREFIX) + " interface=" + uplinkIndex
-                    + " store=active",
-            "netsh interface ipv4 add address name=" + clientIndex + " address=" + CLIENT_SIDE_V4 + " store=active",
+            "netsh interface ipv4 add address name=" + clientIndex + " address=" + CLIENT_V4 + " store=active",
             "netsh interface ipv4 set interface " + clientIndex + " forwarding=enabled",
         };
         if (!std::ranges::all_of(setup, [](const std::string &command) { return runProcess(command) == 0; })) {
@@ -228,9 +189,11 @@ namespace libxtun::test
                     return;
                 }
                 if (size > 0) {
-                    const std::lock_guard<std::mutex> lock(m_mutex);
-                    m_uplinkPackets.emplace_back(packet.begin(), packet.begin() + size);
-                    m_arrived.notify_all();
+                    const std::vector<std::byte> reply =
+                            handleUplinkPacket(std::span(packet.data(), static_cast<std::size_t>(size)));
+                    if (!reply.empty()) {
+                        m_uplinkTun->write(reply);
+                    }
                 }
             }
         });
@@ -257,64 +220,46 @@ namespace libxtun::test
         return static_cast<int>(installedFilters().size());
     }
 
-    SendResult KillswitchEnv::send(const std::string &host, std::uint16_t port, Sender sender, const Nonce &nonce) const
+    std::optional<ProbeResult> KillswitchEnv::connect(const std::string &host, std::uint16_t port, Sender sender) const
     {
-        {
-            const std::lock_guard<std::mutex> lock(m_mutex);
-            m_uplinkPackets.clear();
-        }
-
-        int error = 0;
-        switch (sender) {
-        case Sender::App: error = sendFromPowerShell(host, port, nonce); break;
-        case Sender::Proxy:
-            error = sendBound(host, port, static_cast<unsigned long>(m_uplinkTun->ifIndex()), nonce);
-            break;
-        case Sender::Forwarded: {
-            const std::optional<net::IpAddress> destination = net::IpAddress::parse(host);
-            if (!destination || destination->family() != AF_INET) {
-                ADD_FAILURE() << "forwarded probes are IPv4 only, got " << host;
-                return SendResult::Failed;
+        int code = 0;
+        if (sender == Sender::App) {
+            code = connectFromPowerShell(host, port);
+        } else {
+            const ConnectedSocket tcp =
+                    tcpConnect(host, port, PROBE_TIMEOUT, static_cast<unsigned>(m_uplinkTun->ifIndex()));
+            code = tcp.error;
+            if (code == 0) {
+                code = localAddress(tcp.fd) == DEFAULT_IFADDR ? CONNECTED_VIA_TUNNEL : CONNECTED_ELSEWHERE;
             }
-            const std::vector<std::byte> packet = forwardedPacket(*destination, port, nonce);
-            if (m_clientTun->write(packet) != static_cast<int>(packet.size())) {
-                ADD_FAILURE() << "could not inject the forwarded probe";
-                return SendResult::Failed;
-            }
-            break;
-        }
         }
 
-        if (error == 0) {
-            return SendResult::Out;
-        }
-        if (error == WSAEACCES) {
-            return SendResult::Refused;
+        switch (code) {
+        case CONNECTED_VIA_TUNNEL: return ProbeResult::Tunnel;
+        case CONNECTED_ELSEWHERE: return ProbeResult::Uplink;
+        case WSAEACCES:
+        case WSAETIMEDOUT:
+        case ETIMEDOUT: return ProbeResult::Blocked;
+        default: break;
         }
 
-        ADD_FAILURE() << "the probe to " << host << ' ' << sender << " failed: " << error;
-        return SendResult::Failed;
+        ADD_FAILURE() << "the probe to " << host << ' ' << sender << " failed: " << code;
+        return std::nullopt;
     }
 
-    std::optional<ProbeResult> KillswitchEnv::pollUplink(const Destination &to, const Nonce &nonce) const
+    bool KillswitchEnv::injectSyn(const net::IpAddress &destination, std::uint16_t sport) const
     {
-        (void)to;
-
-        std::unique_lock<std::mutex> lock(m_mutex);
-        m_arrived.wait_for(lock, PROBE_SLICE, [this] { return !m_uplinkPackets.empty(); });
-        while (!m_uplinkPackets.empty()) {
-            const std::vector<std::byte> packet = std::move(m_uplinkPackets.front());
-            m_uplinkPackets.pop_front();
-            if (udpPktContainsNonce(packet, nonce)) {
-                return ProbeResult::Uplink;
-            }
+        const std::vector<std::byte> syn = forwardedSyn(destination, sport);
+        if (m_clientTun->write(syn) != static_cast<int>(syn.size())) {
+            ADD_FAILURE() << "could not inject the forwarded probe";
+            return false;
         }
-        return std::nullopt;
+        return true;
     }
 
     bool KillswitchEnv::removeTunnelRoutes(const std::vector<std::string> &routes) const
     {
-        const std::optional<NET_IFINDEX> tunnel = ifindexFromAddr(TUNNEL_ADDRESS);
+        const std::optional<NET_IFINDEX> tunnel = ifindexFromAddr(DEFAULT_IFADDR);
         if (!tunnel) {
             return false;
         }

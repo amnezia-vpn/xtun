@@ -4,7 +4,7 @@
 #include "killswitch.h"
 #include "net/ip.h"
 #include "net/packet_builder.h"
-#include "net/udp.h"
+#include "net/tcp.h"
 #include "os.h"
 #include "tun_device.h"
 #include "util/noncopyable.h"
@@ -14,8 +14,8 @@
     #include <ifaddrs.h>
 #endif
 
-#include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
@@ -37,38 +37,35 @@
 
 namespace libxtun::test
 {
-    class MemTun;
-
-    constexpr const char *TEST_NET_V4 = "203.0.113.1";
-    constexpr const char *TEST_NET_V6 = "2001:db8::1";
-    constexpr const char *TEST_NET_V6_PREFIX = "2001:db8::/32";
-    constexpr const char *HIJACKED_PREFIX = "198.51.100.0/24";
-    constexpr const char *LAN_PREFIX = "10.10.0.0/24";
     constexpr const char *FAKE_UPLINK_V4 = "10.10.0.2/24";
     constexpr const char *FAKE_UPLINK_V6 = "fd00:10::2/64";
-    constexpr const char *CLIENT_SIDE_V4 = "10.20.0.1/24";
-    constexpr const char *CLIENT_SIDE_PREFIX = "10.20.0.0/24";
+    constexpr const char *CLIENT_V4 = "10.20.0.1/24";
     constexpr const char *FORWARDED_SOURCE = "10.20.0.2";
-    constexpr const char *TUNNEL_ADDRESS = "10.9.10.2";
     constexpr const char *LOOPBACK_V4 = "127.0.0.1";
-    constexpr std::uint16_t PROBE_PORT = 53;
-    constexpr auto BLOCKED_TIMEOUT = std::chrono::milliseconds(500);
-    constexpr auto DELIVERY_TIMEOUT = std::chrono::milliseconds(1500);
+    constexpr const char *PROBE_HOST = "example.com";
+    constexpr std::uint16_t PROBE_PORT = 443;
+    constexpr auto PROBE_TIMEOUT = std::chrono::milliseconds(500);
     constexpr auto PROBE_SLICE = std::chrono::milliseconds(10);
+    constexpr int CONNECTED_VIA_TUNNEL = 200;
+    constexpr int CONNECTED_ELSEWHERE = 201;
 
-    using Nonce = std::array<std::byte, 16>;
+    const std::vector<std::string> PROBE_ADDRS = resolve(PROBE_HOST);
+
+    static std::string probeAddress(std::size_t index)
+    {
+        return index < PROBE_ADDRS.size() ? PROBE_ADDRS[index] : std::string {};
+    }
 
     struct Destination
     {
         const char *name;
-        const char *host;
-        bool viaDefault;
+        std::string host;
     };
 
-    constexpr Destination INTERNET_V4 { "internet v4", TEST_NET_V4, true };
-    constexpr Destination INTERNET_V6 { "internet v6", TEST_NET_V6, false };
-    constexpr Destination LAN { "LAN", "10.10.0.5", false };
-    constexpr Destination HIJACKED { "hijacked route", "198.51.100.1", false };
+    const Destination INTERNET_V4 { "internet v4", probeAddress(1) };
+    const Destination INTERNET_V6 { "internet v6", "2001:db8::1" };
+    const Destination LAN { "LAN", "10.10.0.5" };
+    const Destination HIJACKED { "hijacked route", "198.51.100.1" };
 
     enum class Sender {
         App,
@@ -76,90 +73,62 @@ namespace libxtun::test
         Forwarded
     };
 
-    enum class SendResult {
-        Out,
-        Refused,
-        Failed
-    };
-
     enum class ProbeResult {
         Tunnel,
         Uplink,
+        NotUplink,
         Blocked
     };
 
-    inline Nonce randomNonce()
+    inline std::uint16_t randomPort()
     {
         std::random_device device;
-        Nonce nonce {};
-        for (std::byte &octet : nonce) {
-            octet = static_cast<std::byte>(device() & 0xffu);
-        }
-        return nonce;
+        return static_cast<std::uint16_t>(40000 + device() % 20000);
     }
 
-    inline bool containsNonce(std::span<const std::byte> data, const Nonce &nonce)
+    inline std::vector<std::byte> forwardedSyn(const net::IpAddress &destination, std::uint16_t sport)
     {
-        return !std::ranges::search(data, nonce).empty();
-    }
-
-    inline bool udpPktContainsNonce(std::span<const std::byte> packet, const Nonce &nonce)
-    {
-        if (packet.empty()) {
-            return false;
-        }
-
-        std::size_t udpOffset = 0;
-        switch (std::to_integer<unsigned>(packet[0]) >> 4) {
-        case 4: {
-            if (packet.size() < net::IpView::HEADER_LEN) {
-                return false;
-            }
-            const net::IpView ip(packet.first<net::IpView::HEADER_LEN>());
-            if (ip.protocol() != IPPROTO_UDP) {
-                return false;
-            }
-            udpOffset = ip.ihlBytes();
-            break;
-        }
-        case 6: {
-            if (packet.size() < net::Ip6View::HEADER_LEN) {
-                return false;
-            }
-            const net::Ip6View ip6(packet.first<net::Ip6View::HEADER_LEN>());
-            if (ip6.nextHeader() != IPPROTO_UDP) {
-                return false;
-            }
-            udpOffset = net::Ip6View::HEADER_LEN;
-            break;
-        }
-        default: return false;
-        }
-
-        const std::size_t payloadOffset = udpOffset + net::UdpView::HEADER_LEN;
-        return packet.size() > payloadOffset && containsNonce(packet.subspan(payloadOffset), nonce);
-    }
-
-    inline std::uint16_t fwdSrcPort(const Nonce &nonce)
-    {
-        const unsigned seed = std::to_integer<unsigned>(nonce[0]) * 256 + std::to_integer<unsigned>(nonce[1]);
-        return static_cast<std::uint16_t>(40000 + seed % 20000);
-    }
-
-    inline std::vector<std::byte> forwardedPacket(const net::IpAddress &destination, std::uint16_t port,
-                                                  const Nonce &nonce)
-    {
-        std::vector<std::byte> buffer(net::IpView::HEADER_LEN + net::UdpView::HEADER_LEN + nonce.size());
-        const auto packet = net::PacketBuilder(buffer)
-                                    .ip(*net::IpAddress::parse(FORWARDED_SOURCE), destination)
-                                    .udp(fwdSrcPort(nonce), port)
-                                    .withPayload([&](std::span<std::byte> space) -> std::optional<std::size_t> {
-                                        std::ranges::copy(nonce, space.begin());
-                                        return nonce.size();
-                                    })
-                                    .finish();
+        std::vector<std::byte> buffer(net::IpView::HEADER_LEN + net::TcpView::HEADER_LEN);
+        const auto packet =
+                net::PacketBuilder(buffer)
+                        .ip(*net::IpAddress::parse(FORWARDED_SOURCE), destination)
+                        .tcp(sport, PROBE_PORT)
+                        .withHeader([](net::TcpRef &tcp) { tcp.setFlags(net::TcpFlag::SYN).setWindow(65535); })
+                        .finish();
         buffer.resize(packet ? packet->size() : 0);
         return buffer;
+    }
+
+    inline bool isForwardedSyn(std::span<const std::byte> packet, std::uint16_t sport)
+    {
+        if (packet.size() < net::IpView::HEADER_LEN || std::to_integer<unsigned>(packet[0]) >> 4 != 4) {
+            return false;
+        }
+        const net::IpView ip(packet.first<net::IpView::HEADER_LEN>());
+        if (ip.protocol() != IPPROTO_TCP || packet.size() < ip.ihlBytes() + net::TcpView::HEADER_LEN) {
+            return false;
+        }
+        const net::TcpView tcp(packet.subspan(ip.ihlBytes()).first<net::TcpView::HEADER_LEN>());
+        return tcp.sport() == sport && tcp.dport() == PROBE_PORT && tcp.flags() == net::TcpFlag::SYN;
+    }
+
+    inline std::string localAddress(const ScopedFd &sock)
+    {
+        ::sockaddr_storage local {};
+        ::socklen_t size = sizeof(local);
+        std::array<char, INET6_ADDRSTRLEN> address {};
+#if defined(_WIN32)
+        const auto handle = static_cast<SOCKET>(sock.get());
+#else
+        const int handle = sock.get();
+#endif
+        if (::getsockname(handle, reinterpret_cast<::sockaddr *>(&local), &size) != 0
+            || ::getnameinfo(reinterpret_cast<::sockaddr *>(&local), size, address.data(),
+                             static_cast<::socklen_t>(address.size()), nullptr, 0, NI_NUMERICHOST)
+                    != 0) {
+            return {};
+        }
+        return address.data();
     }
 
 #if !defined(_WIN32)
@@ -199,6 +168,7 @@ namespace libxtun::test
         switch (result) {
         case ProbeResult::Tunnel: return out << "tunnel";
         case ProbeResult::Uplink: return out << "uplink";
+        case ProbeResult::NotUplink: return out << "not on the uplink";
         case ProbeResult::Blocked: return out << "blocked";
         }
         return out;
@@ -217,36 +187,38 @@ namespace libxtun::test
         [[nodiscard]] std::unique_ptr<Killswitch> create(libxtun_killswitch_mode mode) const;
         [[nodiscard]] libxtun_error update(Killswitch &killswitch) const;
         [[nodiscard]] int ruleCount() const;
-        [[nodiscard]] SendResult send(const std::string &host, std::uint16_t port, Sender sender,
-                                     const Nonce &nonce) const;
-        [[nodiscard]] std::optional<ProbeResult> probe(const Destination &to, Sender sender, ProbeResult expected,
-                                                       MemTun *server = nullptr) const;
+        [[nodiscard]] std::optional<ProbeResult> connect(const std::string &host, std::uint16_t port, Sender sender) const;
+        [[nodiscard]] std::optional<ProbeResult> probe(const Destination &to, Sender sender) const;
         [[nodiscard]] bool removeTunnelRoutes(const std::vector<std::string> &routes) const;
 
     private:
-        [[nodiscard]] std::optional<ProbeResult> pollUplink(const Destination &to, const Nonce &nonce) const;
+        [[nodiscard]] bool injectSyn(const net::IpAddress &destination, std::uint16_t sport) const;
+        [[nodiscard]] std::vector<std::byte> handleUplinkPacket(std::span<const std::byte> packet) const;
+        [[nodiscard]] bool synSeenOnUplink(std::uint16_t sport) const;
 
         std::string m_skipReason;
         int m_ifIndex = 0;
         std::string m_ifName;
+        std::thread m_uplinkReader;
+        mutable std::mutex m_mutex;
+        mutable std::condition_variable m_arrived;
+        mutable std::deque<std::vector<std::byte>> m_uplinkPackets;
 #if defined(__linux__)
         int m_netnsFd = -1;
         ScopedFd m_uplinkFd;
         ScopedFd m_clientFd;
         bool m_forwarding = false;
+        std::atomic<bool> m_stopReader = false;
 #elif defined(__APPLE__)
         ScopedFd m_uplinkFd;
         ScopedFd m_clientFd;
-        ScopedFd m_tap;
-        unsigned m_defaultIfIndex = 0;
+        unsigned m_uplinkIfIndex = 0;
+        std::string m_originalGateway;
         bool m_restoreForwarding = false;
+        std::atomic<bool> m_stopReader = false;
 #elif defined(_WIN32)
         std::unique_ptr<TunDevice> m_uplinkTun;
         std::unique_ptr<TunDevice> m_clientTun;
-        std::thread m_uplinkReader;
-        mutable std::mutex m_mutex;
-        mutable std::condition_variable m_arrived;
-        mutable std::deque<std::vector<std::byte>> m_uplinkPackets;
 #endif
     };
 
@@ -258,10 +230,11 @@ namespace libxtun::test
             if (!m_env.skipReason().empty()) {
                 GTEST_SKIP() << "skipped: " << m_env.skipReason();
             }
+            ASSERT_GE(PROBE_ADDRS.size(), 2u) << "could not resolve two addresses of " << PROBE_HOST;
         }
         void expectProbeResult(const Destination &to, Sender sender, ProbeResult wanted, std::string_view phase = {})
         {
-            if (const std::optional<ProbeResult> result = m_env.probe(to, sender, wanted)) {
+            if (const std::optional<ProbeResult> result = m_env.probe(to, sender)) {
                 EXPECT_EQ(*result, wanted) << to.name << ", " << sender << ' ' << phase;
             }
         }

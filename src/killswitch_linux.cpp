@@ -14,10 +14,10 @@ namespace libxtun
         std::string iptablesRules(int family, const std::string &ifName, const std::vector<net::IpPrefix> &prefixes)
         {
             std::ostringstream input;
-            const auto drop = [&](const char *chain) {
+            const auto block = [&](const char *chain, const char *target) {
                 for (const net::IpPrefix &prefix : prefixes) {
                     if (prefix.address().family() == family) {
-                        input << "-A " << chain << " -d " << prefix.toString() << " -j DROP\n";
+                        input << "-A " << chain << " -d " << prefix.toString() << " -j " << target << '\n';
                     }
                 }
             };
@@ -32,12 +32,12 @@ namespace libxtun
                     input << "-A " << CHAIN << " -p ipv6-icmp --icmpv6-type " << type << " -j ACCEPT\n";
                 }
             }
-            drop(CHAIN);
+            block(CHAIN, "REJECT");
             input << "COMMIT\n"
                   << "*mangle\n"
                   << ':' << FORWARD_CHAIN << " - [0:0]\n"
                   << "-A " << FORWARD_CHAIN << " -o " << ifName << " -j ACCEPT\n";
-            drop(FORWARD_CHAIN);
+            block(FORWARD_CHAIN, "DROP");
             input << "COMMIT\n";
             return input.str();
         }
