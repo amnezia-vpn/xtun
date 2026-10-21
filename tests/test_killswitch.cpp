@@ -1,4 +1,5 @@
 #include "killswitch.h"
+#include "mock/responder.h"
 #include "util/config.h"
 #include "util/killswitch_env.h"
 #include "util/log.h"
@@ -6,15 +7,13 @@
 #include "util/status.h"
 #include "xtun.h"
 
-#if !defined(_WIN32)
-    #include <sys/select.h>
-#endif
-
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -56,48 +55,61 @@ namespace libxtun::test
         return killswitch.update(m_ifIndex, m_ifName);
     }
 
-    std::optional<ProbeResult> KillswitchEnv::probe(const Destination &to, Sender sender, ProbeResult expected,
-                                                    MemTun *server) const
+    std::optional<ProbeResult> KillswitchEnv::probe(const Destination &to, Sender sender) const
     {
-        const Nonce nonce = randomNonce();
-        switch (send(to.host, PROBE_PORT, sender, nonce)) {
-        case SendResult::Refused: return ProbeResult::Blocked;
-        case SendResult::Failed: return std::nullopt;
-        case SendResult::Out: break;
+        if (sender != Sender::Forwarded) {
+            return connect(to.host, PROBE_PORT, sender);
         }
 
-        std::array<std::byte, 2048> packet {};
-        const auto deadline = std::chrono::steady_clock::now()
-                + (expected == ProbeResult::Blocked ? BLOCKED_TIMEOUT : DELIVERY_TIMEOUT);
-        while (std::chrono::steady_clock::now() < deadline) {
-            if (server != nullptr) {
-                const int size = server->waitForArrival(packet, PROBE_SLICE);
-                if (size > 0 && udpPktContainsNonce(std::span(packet.data(), static_cast<std::size_t>(size)), nonce)) {
-                    return ProbeResult::Tunnel;
-                }
-            }
-            if (const std::optional<ProbeResult> seen = pollUplink(to, nonce)) {
-                return *seen;
-            }
+        const std::optional<net::IpAddress> destination = net::IpAddress::parse(to.host);
+        if (!destination || destination->family() != AF_INET) {
+            ADD_FAILURE() << "forwarded probes are IPv4 only, got " << to.host;
+            return std::nullopt;
         }
-        return ProbeResult::Blocked;
+
+        {
+            const std::lock_guard<std::mutex> lock(m_mutex);
+            m_uplinkPackets.clear();
+        }
+        const std::uint16_t sport = randomPort();
+        if (!injectSyn(*destination, sport)) {
+            return std::nullopt;
+        }
+        return synSeenOnUplink(sport) ? ProbeResult::Uplink : ProbeResult::NotUplink;
+    }
+
+    std::vector<std::byte> KillswitchEnv::handleUplinkPacket(std::span<const std::byte> packet) const
+    {
+        {
+            const std::lock_guard<std::mutex> lock(m_mutex);
+            m_uplinkPackets.emplace_back(packet.begin(), packet.end());
+        }
+        m_arrived.notify_all();
+        return Responder::replyTcpSyn(packet);
+    }
+
+    bool KillswitchEnv::synSeenOnUplink(std::uint16_t sport) const
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        return m_arrived.wait_for(lock, PROBE_TIMEOUT, [this, sport] {
+            return std::ranges::any_of(m_uplinkPackets, [sport](const std::vector<std::byte> &packet) {
+                return isForwardedSyn(packet, sport);
+            });
+        });
     }
 }
 
 namespace
 {
-    using libxtun::test::DELIVERY_TIMEOUT;
     using libxtun::test::Destination;
     using libxtun::test::HIJACKED;
     using libxtun::test::INTERNET_V4;
     using libxtun::test::INTERNET_V6;
     using libxtun::test::LAN;
     using libxtun::test::LOOPBACK_V4;
-    using libxtun::test::Nonce;
     using libxtun::test::ProbeResult;
     using libxtun::test::ScopedFd;
     using libxtun::test::Sender;
-    using libxtun::test::SendResult;
     using enum libxtun::test::ProbeResult;
 
     struct LoopbackSocket
@@ -108,34 +120,17 @@ namespace
 
     LoopbackSocket openLoopbackSocket()
     {
-        ScopedFd sock(static_cast<int>(::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)));
+        ScopedFd sock(static_cast<int>(::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)));
         ::sockaddr_in address {};
         address.sin_family = AF_INET;
         ::inet_pton(AF_INET, LOOPBACK_V4, &address.sin_addr);
         ::socklen_t size = sizeof(address);
         if (!sock || ::bind(sock.get(), reinterpret_cast<::sockaddr *>(&address), sizeof(address)) != 0
+            || ::listen(sock.get(), 1) != 0
             || ::getsockname(sock.get(), reinterpret_cast<::sockaddr *>(&address), &size) != 0) {
             return {};
         }
         return { std::move(sock), ntohs(address.sin_port) };
-    }
-
-    bool nonceReceived(const ScopedFd &loopback, const Nonce &nonce)
-    {
-        ::fd_set ready;
-        FD_ZERO(&ready);
-        FD_SET(loopback.get(), &ready);
-        constexpr auto timeoutMicros = std::chrono::duration_cast<std::chrono::microseconds>(DELIVERY_TIMEOUT).count();
-        ::timeval timeout { timeoutMicros / 1000000, timeoutMicros % 1000000 };
-        if (::select(loopback.get() + 1, &ready, nullptr, nullptr, &timeout) <= 0) {
-            return false;
-        }
-
-        std::array<std::byte, 64> datagram {};
-        const auto size = ::recv(loopback.get(), reinterpret_cast<char *>(datagram.data()),
-                                 static_cast<int>(datagram.size()), 0);
-        return size > 0
-            && libxtun::test::containsNonce(std::span(datagram.data(), static_cast<std::size_t>(size)), nonce);
     }
 
     std::string modeName(libxtun_killswitch_mode mode)
@@ -168,53 +163,39 @@ namespace
         std::array<ProbeResult, TUNNEL_STATE_COUNT> expected;
     };
 
-    constexpr Destination SPLIT_DESTINATION { "split destination", "10.8.0.5", true };
-    constexpr const char *SPLIT_PREFIX = "10.8.0.0/24";
+    const Destination SPLIT_DESTINATION { "split destination", libxtun::test::probeAddress(0) };
+    const std::string SPLIT_PREFIX = libxtun::test::probeAddress(0) + "/32";
     const std::vector<std::string> FULL_ROUTES { "0.0.0.0/0" };
     const std::vector<std::string> SPLIT_ROUTES { SPLIT_PREFIX };
 
-    std::vector<libxtun::test::Setup> profileSetups(const std::vector<std::string> &routes)
-    {
-        return libxtun::test::SetupBuilder()
-                .withRoutes(routes)
-                .withServerAllowedIps({ std::string(libxtun::test::TUNNEL_ADDRESS) + "/32",
-                                        libxtun::test::CLIENT_SIDE_PREFIX })
-                .build();
-    }
-
-    std::string setupName(const testing::TestParamInfo<std::tuple<libxtun_killswitch_mode, libxtun::test::Setup>> &info)
-    {
-        return modeName(std::get<0>(info.param)) + "_" + std::get<1>(info.param).name;
-    }
-
     const std::array FULL_PROFILE {
-        //                                                before   up       no route detached freed
+        //                                                before     up         no route   detached   freed
         // disabled
         std::array {
-            ProbeCase { INTERNET_V4, Sender::App,       { Uplink,  Tunnel,  Uplink,  Uplink,  Uplink  } },
-            ProbeCase { INTERNET_V6, Sender::App,       { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
-            ProbeCase { LAN,         Sender::App,       { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
-            ProbeCase { HIJACKED,    Sender::App,       { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
-            ProbeCase { INTERNET_V4, Sender::Proxy,     { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
-            ProbeCase { INTERNET_V4, Sender::Forwarded, { Uplink,  Tunnel,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { INTERNET_V4, Sender::App,       { Uplink,    Tunnel,    Uplink,    Uplink,    Uplink    } },
+            ProbeCase { INTERNET_V6, Sender::App,       { Uplink,    Uplink,    Uplink,    Uplink,    Uplink    } },
+            ProbeCase { LAN,         Sender::App,       { Uplink,    Uplink,    Uplink,    Uplink,    Uplink    } },
+            ProbeCase { HIJACKED,    Sender::App,       { Uplink,    Uplink,    Uplink,    Uplink,    Uplink    } },
+            ProbeCase { INTERNET_V4, Sender::Proxy,     { Uplink,    Uplink,    Uplink,    Uplink,    Uplink    } },
+            ProbeCase { INTERNET_V4, Sender::Forwarded, { Uplink,    NotUplink, Uplink,    Uplink,    Uplink    } },
         },
         // soft
         std::array {
-            ProbeCase { INTERNET_V4, Sender::App,       { Blocked, Tunnel,  Blocked, Blocked, Uplink  } },
-            ProbeCase { INTERNET_V6, Sender::App,       { Blocked, Blocked, Blocked, Blocked, Uplink  } },
-            ProbeCase { LAN,         Sender::App,       { Blocked, Blocked, Blocked, Blocked, Uplink  } },
-            ProbeCase { HIJACKED,    Sender::App,       { Blocked, Blocked, Blocked, Blocked, Uplink  } },
-            ProbeCase { INTERNET_V4, Sender::Proxy,     { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
-            ProbeCase { INTERNET_V4, Sender::Forwarded, { Blocked, Tunnel,  Blocked, Blocked, Uplink  } },
+            ProbeCase { INTERNET_V4, Sender::App,       { Blocked,   Tunnel,    Blocked,   Blocked,   Uplink    } },
+            ProbeCase { INTERNET_V6, Sender::App,       { Blocked,   Blocked,   Blocked,   Blocked,   Uplink    } },
+            ProbeCase { LAN,         Sender::App,       { Blocked,   Blocked,   Blocked,   Blocked,   Uplink    } },
+            ProbeCase { HIJACKED,    Sender::App,       { Blocked,   Blocked,   Blocked,   Blocked,   Uplink    } },
+            ProbeCase { INTERNET_V4, Sender::Proxy,     { Uplink,    Uplink,    Uplink,    Uplink,    Uplink    } },
+            ProbeCase { INTERNET_V4, Sender::Forwarded, { NotUplink, NotUplink, NotUplink, NotUplink, Uplink    } },
         },
         // hard
         std::array {
-            ProbeCase { INTERNET_V4, Sender::App,       { Blocked, Tunnel,  Blocked, Blocked, Blocked } },
-            ProbeCase { INTERNET_V6, Sender::App,       { Blocked, Blocked, Blocked, Blocked, Blocked } },
-            ProbeCase { LAN,         Sender::App,       { Blocked, Blocked, Blocked, Blocked, Blocked } },
-            ProbeCase { HIJACKED,    Sender::App,       { Blocked, Blocked, Blocked, Blocked, Blocked } },
-            ProbeCase { INTERNET_V4, Sender::Proxy,     { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
-            ProbeCase { INTERNET_V4, Sender::Forwarded, { Blocked, Tunnel,  Blocked, Blocked, Blocked } },
+            ProbeCase { INTERNET_V4, Sender::App,       { Blocked,   Tunnel,    Blocked,   Blocked,   Blocked   } },
+            ProbeCase { INTERNET_V6, Sender::App,       { Blocked,   Blocked,   Blocked,   Blocked,   Blocked   } },
+            ProbeCase { LAN,         Sender::App,       { Blocked,   Blocked,   Blocked,   Blocked,   Blocked   } },
+            ProbeCase { HIJACKED,    Sender::App,       { Blocked,   Blocked,   Blocked,   Blocked,   Blocked   } },
+            ProbeCase { INTERNET_V4, Sender::Proxy,     { Uplink,    Uplink,    Uplink,    Uplink,    Uplink    } },
+            ProbeCase { INTERNET_V4, Sender::Forwarded, { NotUplink, NotUplink, NotUplink, NotUplink, NotUplink } },
         },
     };
 
@@ -254,10 +235,10 @@ TEST_P(KillswitchMode, LoopbackStaysUsable)
     ASSERT_NE(killswitch, nullptr);
 
     const LoopbackSocket loopback = openLoopbackSocket();
-    ASSERT_TRUE(loopback.fd) << "could not open a socket on " << LOOPBACK_V4;
-    const Nonce nonce = libxtun::test::randomNonce();
-    ASSERT_TRUE(m_env.send(LOOPBACK_V4, loopback.port, Sender::App, nonce) == SendResult::Out);
-    EXPECT_TRUE(nonceReceived(loopback.fd, nonce)) << "loopback traffic did not arrive";
+    ASSERT_TRUE(loopback.fd) << "could not listen on " << LOOPBACK_V4;
+    const std::optional<ProbeResult> result = m_env.connect(LOOPBACK_V4, loopback.port, Sender::App);
+    ASSERT_TRUE(result);
+    EXPECT_NE(*result, Blocked) << "loopback traffic was blocked";
 }
 
 TEST_P(KillswitchMode, HardLeftoversCleanedUp)
@@ -315,15 +296,14 @@ protected:
         }
 
         libxtun::test::TunOpts opts;
-        opts.killswitchMode(mode).ifaddrs({ std::string(libxtun::test::TUNNEL_ADDRESS) + "/32" });
+        opts.killswitchMode(mode);
 
         libxtun::test::Logger log("client");
         libxtun::test::StatusChecker status;
 
         const auto check = [&](TunnelState state) {
             for (const ProbeCase &probeCase : cases) {
-                if (const std::optional<ProbeResult> result =
-                            m_env.probe(probeCase.to, probeCase.sender, probeCase.expected[state], &srv->tun())) {
+                if (const std::optional<ProbeResult> result = m_env.probe(probeCase.to, probeCase.sender)) {
                     EXPECT_EQ(*result, probeCase.expected[state])
                             << probeCase.to.name << ' ' << probeCase.sender << ", " << TUNNEL_STATE_NAMES[state];
                 }
@@ -367,8 +347,12 @@ TEST_P(KillswitchFullTunnel, Lifecycle)
 
 INSTANTIATE_TEST_SUITE_P(Killswitch, KillswitchFullTunnel,
                          testing::Combine(testing::ValuesIn(libxtun::test::allKillswitchModes()),
-                                          testing::ValuesIn(profileSetups(FULL_ROUTES))),
-                         setupName);
+                                          testing::ValuesIn(test::SetupBuilder().withRoutes(FULL_ROUTES).build())),
+                         [](const auto &info) {
+                             const auto mode = std::get<0>(info.param);
+                             const auto &setup = std::get<1>(info.param);
+                             return modeName(mode) + "_" + setup.name;
+                         });
 
 class KillswitchSplitTunnel : public KillswitchProfile
 {
@@ -381,5 +365,9 @@ TEST_P(KillswitchSplitTunnel, Lifecycle)
 
 INSTANTIATE_TEST_SUITE_P(Killswitch, KillswitchSplitTunnel,
                          testing::Combine(testing::ValuesIn(libxtun::test::allKillswitchModes()),
-                                          testing::ValuesIn(profileSetups(SPLIT_ROUTES))),
-                         setupName);
+                                          testing::ValuesIn(test::SetupBuilder().withRoutes(SPLIT_ROUTES).build())),
+                         [](const auto &info) {
+                             const auto mode = std::get<0>(info.param);
+                             const auto &setup = std::get<1>(info.param);
+                             return modeName(mode) + "_" + setup.name;
+                         });

@@ -2,6 +2,7 @@
 #include "killswitch_linux.h"
 #include "net/ip.h"
 #include "net/iptables.h"
+#include "util/config.h"
 #include "util/killswitch_env.h"
 #include "util/os.h"
 #include "util/spawn.h"
@@ -79,8 +80,8 @@ namespace libxtun::test
             { "link", "set", up, "up" },
             { "route", "add", "default", "dev", up },
             { "-6", "route", "add", "default", "dev", up },
-            { "route", "add", HIJACKED_PREFIX, "dev", up },
-            { "addr", "add", CLIENT_SIDE_V4, "dev", client },
+            { "route", "add", HIJACKED.host, "dev", up },
+            { "addr", "add", CLIENT_V4, "dev", client },
             { "link", "set", client, "up" },
             { "link", "add", tun, "type", "dummy" },
             { "link", "set", tun, "up" },
@@ -92,11 +93,34 @@ namespace libxtun::test
 
         std::ofstream("/proc/sys/net/ipv4/ip_forward") << '1';
         m_forwarding = std::ifstream("/proc/sys/net/ipv4/ip_forward").get() == '1';
+
+        m_uplinkReader = std::thread([this] {
+            ::pollfd ready { m_uplinkFd.get(), POLLIN, 0 };
+            std::array<std::byte, 2048> packet {};
+            while (!m_stopReader) {
+                if (::poll(&ready, 1, static_cast<int>(PROBE_SLICE.count())) <= 0) {
+                    continue;
+                }
+                const ssize_t size = ::read(m_uplinkFd.get(), packet.data(), packet.size());
+                if (size <= 0) {
+                    continue;
+                }
+                const std::vector<std::byte> reply =
+                        handleUplinkPacket(std::span(packet.data(), static_cast<std::size_t>(size)));
+                if (!reply.empty()) {
+                    [[maybe_unused]] const ssize_t written = ::write(m_uplinkFd.get(), reply.data(), reply.size());
+                }
+            }
+        });
         m_ifName = tun;
     }
 
     KillswitchEnv::~KillswitchEnv()
     {
+        if (m_uplinkReader.joinable()) {
+            m_stopReader = true;
+            m_uplinkReader.join();
+        }
         if (m_netnsFd >= 0) {
             ::setns(m_netnsFd, CLONE_NEWNET);
             ::close(m_netnsFd);
@@ -125,62 +149,38 @@ namespace libxtun::test
         return count;
     }
 
-    SendResult KillswitchEnv::send(const std::string &host, std::uint16_t port, Sender sender, const Nonce &nonce) const
+    std::optional<ProbeResult> KillswitchEnv::connect(const std::string &host, std::uint16_t port, Sender sender) const
     {
-        if (sender == Sender::Forwarded) {
-            if (!m_forwarding) {
-                ADD_FAILURE() << "IPv4 forwarding stayed off, /proc/sys may be read-only";
-                return SendResult::Failed;
-            }
-            const std::optional<net::IpAddress> destination = net::IpAddress::parse(host);
-            if (!destination || destination->family() != AF_INET) {
-                ADD_FAILURE() << "forwarded probes are IPv4 only, got " << host;
-                return SendResult::Failed;
-            }
-            const std::vector<std::byte> packet = forwardedPacket(*destination, port, nonce);
-            if (::write(m_clientFd.get(), packet.data(), packet.size()) != static_cast<ssize_t>(packet.size())) {
-                ADD_FAILURE() << "could not inject the forwarded probe: " << std::strerror(errno);
-                return SendResult::Failed;
-            }
-            return SendResult::Out;
+        const ConnectedSocket tcp = tcpConnect(host, port, PROBE_TIMEOUT, sender == Sender::Proxy ? PROXY_FWMARK : 0);
+        if (tcp.error == 0) {
+            return localAddress(tcp.fd) == DEFAULT_IFADDR ? ProbeResult::Tunnel : ProbeResult::Uplink;
+        }
+        if (tcp.error == ECONNREFUSED || tcp.error == ETIMEDOUT) {
+            return ProbeResult::Blocked;
         }
 
-        const ConnectedSocket udp = udpConnect(host, port, sender == Sender::Proxy ? PROXY_FWMARK : 0);
-        int error = udp.error;
-        if (error == 0 && ::send(udp.fd.get(), nonce.data(), nonce.size(), 0) < 0) {
-            error = errno;
-        }
-        if (error == 0) {
-            return SendResult::Out;
-        }
-        if (error == EPERM) {
-            return SendResult::Refused;
-        }
-
-        ADD_FAILURE() << "the probe to " << host << " failed for an unrelated reason: " << std::strerror(error);
-        return SendResult::Failed;
+        ADD_FAILURE() << "the probe to " << host << ' ' << sender << " failed: " << std::strerror(tcp.error);
+        return std::nullopt;
     }
 
-    std::optional<ProbeResult> KillswitchEnv::pollUplink(const Destination &to, const Nonce &nonce) const
+    bool KillswitchEnv::injectSyn(const net::IpAddress &destination, std::uint16_t sport) const
     {
-        (void)to;
-
-        ::pollfd ready { m_uplinkFd.get(), POLLIN, 0 };
-        std::array<std::byte, 2048> packet {};
-        int wait = static_cast<int>(PROBE_SLICE.count());
-        while (::poll(&ready, 1, wait) > 0) {
-            const ssize_t size = ::read(m_uplinkFd.get(), packet.data(), packet.size());
-            if (size > 0 && udpPktContainsNonce(std::span(packet.data(), static_cast<std::size_t>(size)), nonce)) {
-                return ProbeResult::Uplink;
-            }
-            wait = 0;
+        if (!m_forwarding) {
+            ADD_FAILURE() << "IPv4 forwarding stayed off, /proc/sys may be read-only";
+            return false;
         }
-        return std::nullopt;
+
+        const std::vector<std::byte> syn = forwardedSyn(destination, sport);
+        if (::write(m_clientFd.get(), syn.data(), syn.size()) != static_cast<ssize_t>(syn.size())) {
+            ADD_FAILURE() << "could not inject the forwarded probe: " << std::strerror(errno);
+            return false;
+        }
+        return true;
     }
 
     bool KillswitchEnv::removeTunnelRoutes(const std::vector<std::string> &routes) const
     {
-        const std::string tunnel = ifnameFromAddr(TUNNEL_ADDRESS);
+        const std::string tunnel = ifnameFromAddr(DEFAULT_IFADDR);
         if (tunnel.empty()) {
             return false;
         }
