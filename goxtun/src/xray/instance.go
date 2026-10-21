@@ -7,6 +7,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/xtls/xray-core/core"
+	"github.com/xtls/xray-core/features/routing"
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/link/channel"
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
@@ -35,13 +37,23 @@ type Instance struct {
 	nicID     tcpip.NICID
 	callbacks Callbacks
 
-	cancel    context.CancelFunc
-	closeOnce sync.Once
-	workers   sync.WaitGroup
+	cancel      context.CancelFunc
+	closeOnce   sync.Once
+	workers     sync.WaitGroup
+	socketCalls sync.WaitGroup
 
-	up     atomic.Bool
-	events chan Event
-	done   <-chan struct{}
+	up       atomic.Bool
+	upNotify chan struct{}
+	events   chan Event
+	done     <-chan struct{}
+
+	engine     *core.Instance
+	dispatcher routing.Dispatcher
+
+	tcpMu       sync.Mutex
+	tcpStopping bool
+	tcpActive   int
+	tcpDone     chan struct{}
 }
 
 func NewInstance(
@@ -50,7 +62,17 @@ func NewInstance(
 	endpoint *channel.Endpoint,
 	nicID tcpip.NICID,
 	callbacks Callbacks,
-) *Instance {
+	config Config,
+) (*Instance, error) {
+	conf, err := config.Build()
+	if err != nil {
+		return nil, err
+	}
+
+	if err := registerSocketHook(); err != nil {
+		return nil, err
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 
 	i := &Instance{
@@ -60,7 +82,48 @@ func NewInstance(
 		callbacks: callbacks,
 		cancel:    cancel,
 		events:    make(chan Event),
+		upNotify:  make(chan struct{}, 1),
 		done:      ctx.Done(),
+		tcpDone:   make(chan struct{}),
+	}
+
+	if err := claimSocketOwner(i); err != nil {
+		cancel()
+		return nil, err
+	}
+
+	ready := false
+	defer func() {
+		if ready {
+			return
+		}
+
+		i.Stop()
+
+		if i.engine != nil {
+			if err := i.engine.Close(); err != nil {
+				i.callbacks.Error(err.Error())
+			}
+		}
+
+		i.waitSocketCallbacks()
+		i.releaseSocketOwner()
+	}()
+
+	i.engine, err = core.NewWithContext(ctx, conf)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+
+	err = i.engine.Start()
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+
+	if err := i.initTCP(ctx); err != nil {
+		return nil, err
 	}
 
 	i.workers.Go(func() {
@@ -75,12 +138,28 @@ func NewInstance(
 		i.runWrite(ctx)
 	})
 
-	return i
+	ready = true
+	return i, nil
 }
 
 // Stop requests shutdown without interrupting callbacks or waiting for workers.
 func (i *Instance) Stop() {
+	i.tcpMu.Lock()
+	defer i.tcpMu.Unlock()
+
+	if i.tcpStopping {
+		return
+	}
+
+	i.tcpStopping = true
 	i.cancel()
+
+	if i.tcpActive == 0 {
+		close(i.tcpDone)
+		return
+	}
+
+	i.workers.Go(i.abortTCP)
 }
 
 // TriggerEvent hands an event to the event loop; it does not wait for processing.
@@ -98,8 +177,14 @@ func (i *Instance) Close() {
 	i.closeOnce.Do(func() {
 		i.Stop()
 		i.workers.Wait()
+		err := i.engine.Close()
+		if err != nil {
+			i.callbacks.Error(err.Error())
+		}
+		i.waitSocketCallbacks()
 		i.endpoint.Close()
 		i.stack.Destroy()
+		i.releaseSocketOwner()
 	})
 }
 
@@ -150,6 +235,11 @@ func (i *Instance) runEvents(ctx context.Context) {
 
 				if event == EventUp {
 					i.up.Store(true)
+
+					select {
+					case i.upNotify <- struct{}{}:
+					default:
+					}
 				}
 			}
 		}

@@ -198,8 +198,14 @@ func goxtun_xray_new(
 	logPriv unsafe.Pointer,
 	sockCb C.goxtun_sockcb,
 	sockPriv unsafe.Pointer,
+	configJSON *C.char,
 ) C.uintptr_t {
 	logError := wrapLog(errorfCb, logPriv)
+
+	if configJSON == nil {
+		logError("xray: configJSON is required")
+		return 0
+	}
 
 	if readCb == nil || mtuCb == nil || writeCb == nil {
 		logError("xray: read, write and mtu callbacks are required")
@@ -213,6 +219,13 @@ func goxtun_xray_new(
 		Verbose: wrapLog(verbosefCb, logPriv),
 		Error:   logError,
 		Socket:  wrapSocket(sockCb, sockPriv),
+	}
+
+	confStr := C.GoString(configJSON)
+	cfg, err := xray.ParseConfig(confStr)
+	if err != nil {
+		callbacks.Error("xray: parse config: " + err.Error())
+		return 0
 	}
 
 	endpoint := channel.New(outboundQueueSize, initialMTU, "")
@@ -260,7 +273,11 @@ func goxtun_xray_new(
 		return 0
 	}
 
-	instance := xray.NewInstance(context.Background(), gStack, endpoint, nicID, callbacks)
+	instance, err := xray.NewInstance(context.Background(), gStack, endpoint, nicID, callbacks, cfg)
+	if err != nil {
+		callbacks.Error("xray: new instance: " + err.Error())
+		return 0
+	}
 
 	handle := toHandle(instance)
 
