@@ -10,6 +10,25 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
 )
 
+func (i *Instance) waitUntilUp(ctx context.Context) bool {
+	for {
+		if ctx.Err() != nil {
+			return false
+		}
+
+		if i.up.Load() {
+			return true
+		}
+
+		select {
+		case <-ctx.Done():
+			return false
+		case <-i.upNotify:
+
+		}
+	}
+}
+
 func (i *Instance) runRead(ctx context.Context) {
 	defer i.Stop()
 
@@ -18,7 +37,7 @@ func (i *Instance) runRead(ctx context.Context) {
 	buf := make([]byte, maxPacketSize)
 
 	for {
-		if ctx.Err() != nil {
+		if !i.waitUntilUp(ctx) {
 			return
 		}
 		n, err := i.callbacks.Read(buf)
