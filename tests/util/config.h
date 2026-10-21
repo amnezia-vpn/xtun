@@ -101,7 +101,7 @@ namespace libxtun::test
                                          "PrivateKey = 6MCXtO93sn3WXDWu2MqLi9EZ3Kq2BNqQX9fgIuPijUA=\n"
                                          "[Peer]\n"
                                          "PublicKey = +UXxZp+YETlS9HP/ggN/Y6Ya2sGiYSDvCqU67cdmUyc=\n"
-                                         "AllowedIPs = 10.9.10.2/32\n"
+                                         "AllowedIPs = %s\n"
                                          "[Peer]\n"
                                          "PublicKey = DQKhiAQPdzOtpJhQ57rdA2JeMbKKcfJ93NKj4e1QNUU=\n"
                                          "AllowedIPs = 10.9.10.3/32\n";
@@ -115,7 +115,7 @@ namespace libxtun::test
                 .clientB = formatString(clientTemplateB, routes.c_str(), m_port),
                 .wrapper = std::make_shared<SockBindRemover>(),
                 .createServer =
-                        [cfg = formatString(serverTemplate, m_port)](std::string log) {
+                        [cfg = formatString(serverTemplate, m_port, join(m_serverAllowedIps).c_str())](std::string log) {
                             return std::make_unique<MemServer>(log, LIBXTUN_PROXY_PROTO_AWG, cfg.c_str());
                         },
             };
@@ -161,10 +161,17 @@ namespace libxtun::test
             return res;
         }
 
+        SetupBuilder &withServerAllowedIps(std::vector<std::string> allowedIps)
+        {
+            m_serverAllowedIps = std::move(allowedIps);
+            return *this;
+        }
+
     private:
         uint16_t m_port = DEFAULT_PORT;
         std::string m_ifaddr = DEFAULT_IFADDR_PREFIX;
         std::vector<std::string> m_routes = { DEFAULT_ROUTE_PREFIX };
+        std::vector<std::string> m_serverAllowedIps = { "10.9.10.2/32" };
     };
 
     struct TunOpts : private NonCopyable

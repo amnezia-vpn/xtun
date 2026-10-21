@@ -1,12 +1,14 @@
 #ifndef LIBXTUN_KILLSWITCH_H
 #define LIBXTUN_KILLSWITCH_H
 
+#include "net/ip.h"
 #include "util/noncopyable.h"
 #include "xtun.h"
 
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 namespace libxtun
 {
@@ -16,6 +18,7 @@ namespace libxtun
         virtual ~Killswitch() = default;
 
         libxtun_error update(int ifIndex, const std::string &ifName);
+        libxtun_error protect(const std::vector<net::IpPrefix> &routes);
 
         static std::unique_ptr<Killswitch> create(libxtun_killswitch_mode mode, int macosGroup = -1);
 
@@ -35,6 +38,7 @@ namespace libxtun
         }
 
         virtual libxtun_error install(int ifIndex, const std::string &ifName) = 0;
+        virtual libxtun_error setProtected(const std::vector<net::IpPrefix> &prefixes) = 0;
         virtual void remove() noexcept = 0;
 
     private:

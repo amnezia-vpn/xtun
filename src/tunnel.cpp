@@ -127,6 +127,16 @@ namespace libxtun
             }
         }
 
+        if (m_killswitch != nullptr) {
+            if (auto rc = m_killswitch->protect(profile.routes); rc != LIBXTUN_OK) {
+                m_killswitch->protect({});
+                if (m_router != nullptr) {
+                    m_router->clearProxyRoutes();
+                }
+                return rc;
+            }
+        }
+
         // TODO(cd-amn): write DNS (if Tunnel is created via fromOpts)
         void(profile.dnsServers);
 
@@ -154,6 +164,10 @@ namespace libxtun
         if (m_router) {
             // FIXME(cd-amn): clear routes only for particular Proxy
             m_router->clearProxyRoutes();
+        }
+
+        if (m_killswitch != nullptr) {
+            m_killswitch->protect({});
         }
 
         // FIXME: this abstraction make sense for ONE to MANY model
