@@ -130,7 +130,7 @@ namespace libxtun::test
         }
     }
 
-    KillswitchEnv::KillswitchEnv()
+    KillswitchEnv::KillswitchEnv(bool realEndpoint) : m_realEndpoint(realEndpoint)
     {
         WSADATA wsa {};
         if (::WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
@@ -161,23 +161,35 @@ namespace libxtun::test
 
         const std::string uplinkIndex = std::to_string(m_uplinkTun->ifIndex());
         const std::string clientIndex = std::to_string(m_clientTun->ifIndex());
-        const std::vector<std::string> setup {
+        std::vector<std::string> setup {
             "netsh interface ipv4 set interface " + uplinkIndex + " dadtransmits=0",
             "netsh interface ipv6 set interface " + uplinkIndex + " dadtransmits=0",
             "netsh interface ipv4 set interface " + clientIndex + " dadtransmits=0",
             "netsh interface ipv6 set interface " + clientIndex + " dadtransmits=0",
-            "netsh interface ipv4 set interface " + uplinkIndex + " metric=1",
             "netsh interface ipv4 add address name=" + uplinkIndex + " address=" + FAKE_UPLINK_V4 + " store=active",
             "netsh interface ipv6 add address interface=" + uplinkIndex + " address=" + FAKE_UPLINK_V6 + " store=active",
-            "netsh interface ipv4 add route prefix=0.0.0.0/0 interface=" + uplinkIndex + " metric=0 store=active",
             "netsh interface ipv4 add route prefix=" + HIJACKED.host + "/32 interface=" + uplinkIndex + " store=active",
             "netsh interface ipv6 add route prefix=" + INTERNET_V6.host + "/128 interface=" + uplinkIndex
                     + " store=active",
             "netsh interface ipv4 add address name=" + clientIndex + " address=" + CLIENT_V4 + " store=active",
             "netsh interface ipv4 set interface " + clientIndex + " forwarding=enabled",
         };
+        if (!m_realEndpoint) {
+            setup.push_back("netsh interface ipv4 set interface " + uplinkIndex + " metric=1");
+            setup.push_back("netsh interface ipv4 add route prefix=0.0.0.0/0 interface=" + uplinkIndex
+                            + " metric=0 store=active");
+        }
         if (!std::ranges::all_of(setup, [](const std::string &command) { return runProcess(command) == 0; })) {
             m_skipReason = "could not set up the fake uplink and client adapters";
+            return;
+        }
+
+        if (!m_realEndpoint) {
+            m_uplinkIfIndex = static_cast<unsigned>(m_uplinkTun->ifIndex());
+        } else if (const std::optional<unsigned long> uplink = bestInterface(INTERNET_V4.host.c_str())) {
+            m_uplinkIfIndex = static_cast<unsigned>(*uplink);
+        } else {
+            m_skipReason = "no route to " + INTERNET_V4.host;
             return;
         }
 
@@ -226,8 +238,7 @@ namespace libxtun::test
         if (sender == Sender::App) {
             code = connectFromPowerShell(host, port);
         } else {
-            const ConnectedSocket tcp =
-                    tcpConnect(host, port, PROBE_TIMEOUT, static_cast<unsigned>(m_uplinkTun->ifIndex()));
+            const ConnectedSocket tcp = tcpConnect(host, port, PROBE_TIMEOUT, m_uplinkIfIndex);
             code = tcp.error;
             if (code == 0) {
                 code = localAddress(tcp.fd) == DEFAULT_IFADDR ? CONNECTED_VIA_TUNNEL : CONNECTED_ELSEWHERE;

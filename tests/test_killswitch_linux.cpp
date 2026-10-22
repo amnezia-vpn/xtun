@@ -41,7 +41,7 @@ namespace libxtun::test
         }
     }
 
-    KillswitchEnv::KillswitchEnv()
+    KillswitchEnv::KillswitchEnv(bool realEndpoint) : m_realEndpoint(realEndpoint)
     {
         if (!privileged()) {
             m_skipReason = "network namespaces and iptables require root";
@@ -55,10 +55,12 @@ namespace libxtun::test
             }
         }
 
-        m_netnsFd = ::open("/proc/self/ns/net", O_RDONLY | O_CLOEXEC);
-        if (m_netnsFd < 0 || ::unshare(CLONE_NEWNET) != 0) {
-            m_skipReason = "could not create a private network namespace";
-            return;
+        if (!m_realEndpoint) {
+            m_netnsFd = ::open("/proc/self/ns/net", O_RDONLY | O_CLOEXEC);
+            if (m_netnsFd < 0 || ::unshare(CLONE_NEWNET) != 0) {
+                m_skipReason = "could not create a private network namespace";
+                return;
+            }
         }
 
         auto uplinkTun = createTun();
@@ -73,26 +75,33 @@ namespace libxtun::test
         const std::string up = uplinkTun->second;
         const std::string client = clientTun->second;
         const std::string tun(TUN_DEV);
-        const std::vector<std::vector<std::string>> setup {
-            { "link", "set", "lo", "up" },
+        std::vector<std::vector<std::string>> setup {
             { "addr", "add", FAKE_UPLINK_V4, "dev", up },
             { "-6", "addr", "add", FAKE_UPLINK_V6, "dev", up, "nodad" },
             { "link", "set", up, "up" },
-            { "route", "add", "default", "dev", up },
-            { "-6", "route", "add", "default", "dev", up },
             { "route", "add", HIJACKED.host, "dev", up },
+            { "-6", "route", "add", INTERNET_V6.host, "dev", up },
             { "addr", "add", CLIENT_V4, "dev", client },
             { "link", "set", client, "up" },
-            { "link", "add", tun, "type", "dummy" },
-            { "link", "set", tun, "up" },
         };
+        if (!m_realEndpoint) {
+            setup.insert(setup.end(),
+                         {
+                                 { "link", "set", "lo", "up" },
+                                 { "route", "add", "default", "dev", up },
+                                 { "link", "add", tun, "type", "dummy" },
+                                 { "link", "set", tun, "up" },
+                         });
+        }
         if (!std::ranges::all_of(setup, ip)) {
             m_skipReason = "could not set up the fake uplink: needs the 'tun' and 'dummy' kernel modules and IPv6";
             return;
         }
 
-        std::ofstream("/proc/sys/net/ipv4/ip_forward") << '1';
-        m_forwarding = std::ifstream("/proc/sys/net/ipv4/ip_forward").get() == '1';
+        if (!m_realEndpoint) {
+            std::ofstream("/proc/sys/net/ipv4/ip_forward") << '1';
+            m_forwarding = std::ifstream("/proc/sys/net/ipv4/ip_forward").get() == '1';
+        }
 
         m_uplinkReader = std::thread([this] {
             ::pollfd ready { m_uplinkFd.get(), POLLIN, 0 };
@@ -120,6 +129,9 @@ namespace libxtun::test
         if (m_uplinkReader.joinable()) {
             m_stopReader = true;
             m_uplinkReader.join();
+        }
+        if (m_realEndpoint && m_skipReason.empty()) {
+            Killswitch::create(LIBXTUN_KILLSWITCH_MODE_DISABLED)->update(m_ifIndex, m_ifName);
         }
         if (m_netnsFd >= 0) {
             ::setns(m_netnsFd, CLONE_NEWNET);
