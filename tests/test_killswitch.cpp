@@ -60,6 +60,9 @@ namespace libxtun::test
         if (sender != Sender::Forwarded) {
             return connect(to.host, PROBE_PORT, sender);
         }
+        if (m_realEndpoint) {
+            return std::nullopt;
+        }
 
         const std::optional<net::IpAddress> destination = net::IpAddress::parse(to.host);
         if (!destination || destination->family() != AF_INET) {
@@ -287,13 +290,14 @@ class KillswitchProfile : public libxtun::test::KillswitchTest,
                           public testing::WithParamInterface<std::tuple<libxtun_killswitch_mode, test::Setup>>
 {
 protected:
+    KillswitchProfile() : KillswitchTest(std::get<1>(GetParam()).realEndpoint)
+    {
+    }
+
     void checkLifecycle(const std::vector<std::string> &routes, std::span<const ProbeCase> cases)
     {
         const auto &[mode, setup] = GetParam();
-        const auto srv = setup.createServer("server");
-        if (!srv) {
-            GTEST_SKIP() << "local server setup is required";
-        }
+        [[maybe_unused]] const auto srv = setup.createServer("server");
 
         libxtun::test::TunOpts opts;
         opts.killswitchMode(mode);

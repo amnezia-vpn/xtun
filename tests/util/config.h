@@ -59,6 +59,7 @@ namespace libxtun::test
         std::optional<std::string> clientB;
         std::shared_ptr<ProxyWrapper> wrapper;
         std::function<std::unique_ptr<MemServer>(std::string log)> createServer;
+        bool realEndpoint = false;
     };
 
     class SetupBuilder
@@ -136,6 +137,7 @@ namespace libxtun::test
                 .clientB = std::move(cfgB),
                 .wrapper = std::make_shared<DummyWrapper>(),
                 .createServer = [](std::string log) { return nullptr; },
+                .realEndpoint = true,
             };
         }
 

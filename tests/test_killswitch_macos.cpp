@@ -70,16 +70,16 @@ namespace libxtun::test
             return static_cast<bool>(spawn::run("/sbin/route", args, {}));
         }
 
-        std::string defaultGateway()
+        std::string defaultRoute(const std::string &field)
         {
             const auto output = spawn::run("/sbin/route", { "-n", "get", "default" }, {});
             std::istringstream lines(output ? output.value() : std::string {});
             for (std::string line; std::getline(lines, line);) {
-                if (const std::size_t at = line.find("gateway:"); at != std::string::npos) {
-                    std::istringstream value(line.substr(at + std::strlen("gateway:")));
-                    std::string gateway;
-                    value >> gateway;
-                    return gateway;
+                if (const std::size_t at = line.find(field + ':'); at != std::string::npos) {
+                    std::istringstream value(line.substr(at + field.size() + 1));
+                    std::string result;
+                    value >> result;
+                    return result;
                 }
             }
             return {};
@@ -176,7 +176,7 @@ namespace libxtun::test
         }
     }
 
-    KillswitchEnv::KillswitchEnv()
+    KillswitchEnv::KillswitchEnv(bool realEndpoint) : m_realEndpoint(realEndpoint)
     {
         if (!privileged()) {
             m_skipReason = "loading pf anchors requires root";
@@ -193,9 +193,9 @@ namespace libxtun::test
             return;
         }
 
-        const std::string gateway = defaultGateway();
+        const std::string gateway = defaultRoute("gateway");
         if (gateway.empty()) {
-            m_skipReason = "no IPv4 default gateway to take over";
+            m_skipReason = "no IPv4 default gateway";
             return;
         }
 
@@ -223,19 +223,22 @@ namespace libxtun::test
             m_skipReason = "could not set up the fake uplink and the client side utuns";
             return;
         }
-        m_uplinkIfIndex = ::if_nametoindex(up.c_str());
+        const std::string uplink = m_realEndpoint ? defaultRoute("interface") : up;
+        m_uplinkIfIndex = ::if_nametoindex(uplink.c_str());
         if (m_uplinkIfIndex == 0) {
-            m_skipReason = "could not look up the fake uplink " + up;
+            m_skipReason = "could not look up the uplink " + uplink;
             return;
         }
 
-        if (!route({ "-q", "-n", "change", "default", FAKE_UPLINK_PEER })) {
-            m_skipReason = "could not move the default route to the fake uplink";
-            return;
+        if (!m_realEndpoint) {
+            if (!route({ "-q", "-n", "change", "default", FAKE_UPLINK_PEER })) {
+                m_skipReason = "could not move the default route to the fake uplink";
+                return;
+            }
+            m_originalGateway = gateway;
         }
-        m_originalGateway = gateway;
 
-        m_restoreForwarding = getForwarding() == 0 && setForwarding(1);
+        m_restoreForwarding = !m_realEndpoint && getForwarding() == 0 && setForwarding(1);
         m_ifName = PROBE_IFACE;
         pf::flushRules(ANCHOR);
 

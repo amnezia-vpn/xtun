@@ -177,7 +177,7 @@ namespace libxtun::test
     class KillswitchEnv : private NonCopyable
     {
     public:
-        KillswitchEnv();
+        explicit KillswitchEnv(bool realEndpoint = false);
         ~KillswitchEnv();
 
         [[nodiscard]] std::string_view skipReason() const noexcept
@@ -196,6 +196,7 @@ namespace libxtun::test
         [[nodiscard]] std::vector<std::byte> handleUplinkPacket(std::span<const std::byte> packet) const;
         [[nodiscard]] bool synSeenOnUplink(std::uint16_t sport) const;
 
+        bool m_realEndpoint = false;
         std::string m_skipReason;
         int m_ifIndex = 0;
         std::string m_ifName;
@@ -219,12 +220,16 @@ namespace libxtun::test
 #elif defined(_WIN32)
         std::unique_ptr<TunDevice> m_uplinkTun;
         std::unique_ptr<TunDevice> m_clientTun;
+        unsigned m_uplinkIfIndex = 0;
 #endif
     };
 
     class KillswitchTest : public testing::Test
     {
     protected:
+        explicit KillswitchTest(bool realEndpoint = false) : m_env(realEndpoint)
+        {
+        }
         void SetUp() override
         {
             if (!m_env.skipReason().empty()) {
