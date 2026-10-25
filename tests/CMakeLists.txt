@@ -23,18 +23,10 @@ if(WIN32)
 
     add_custom_command(TARGET xtun_tests POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                $<TARGET_RUNTIME_DLLS:xtun_tests> $<TARGET_FILE_DIR:xtun_tests>
+                $<TARGET_RUNTIME_DLLS:xtun_tests>
+                "$<TARGET_PROPERTY:amnezia::wintun,INTERFACE_INCLUDE_DIRECTORIES>/../bin/wintun.dll"
+                $<TARGET_FILE_DIR:xtun_tests>
         COMMAND_EXPAND_LISTS)
-
-    get_target_property(_wintun_include amnezia::wintun INTERFACE_INCLUDE_DIRECTORIES)
-    find_file(WINTUN_DLL wintun.dll HINTS ${_wintun_include} PATH_SUFFIXES ../bin bin)
-    if(WINTUN_DLL)
-        add_custom_command(TARGET xtun_tests POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    ${WINTUN_DLL} $<TARGET_FILE_DIR:xtun_tests>)
-    else()
-        message(WARNING "wintun.dll not found; copy it next to xtun_tests manually.")
-    endif()
 endif()
 
 gtest_discover_tests(xtun_tests TEST_FILTER "Killswitch*" PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE)
