@@ -1,4 +1,4 @@
-find_program(GO_EXEC go REQUIRED)
+find_package(go REQUIRED)
 
 set(GOXTUN_SRC ${CMAKE_CURRENT_LIST_DIR}/src)
 set(GOXTUN_OUT ${CMAKE_CURRENT_BINARY_DIR})
@@ -44,7 +44,6 @@ else()
 endif()
 
 if(WIN32)
-    # Golang does not support MSVC, so find any mingw
     find_program(GOXTUN_CC gcc REQUIRED)
     find_program(GENDEF gendef REQUIRED)
     find_program(DLLTOOL dlltool REQUIRED)
@@ -87,6 +86,12 @@ set(_go_env
     GOCACHE=${GOXTUN_OUT}/go-cache
 )
 
+set(_go_env_mods)
+if(WIN32)
+    cmake_path(GET GOXTUN_CC PARENT_PATH _cc_dir)
+    set(_go_env_mods --modify "PATH=path_list_prepend:${_cc_dir}")
+endif()
+
 set(_ldflags -w)
 if(GOXTUN_SHARED)
     set(_buildmode c-shared)
@@ -114,10 +119,10 @@ foreach(_arch IN LISTS _archs)
     set(_out ${GOXTUN_OUT}/${_arch}/libgoxtun${_suffix})
     add_custom_command(
         OUTPUT ${_out} ${GOXTUN_OUT}/${_arch}/libgoxtun.h
-        COMMAND ${CMAKE_COMMAND} -E env ${_go_env}
+        COMMAND ${CMAKE_COMMAND} -E env ${_go_env_mods} ${_go_env}
                 GOARCH=${_goarch} GOARM=7
                 "CGO_CFLAGS=${_arch_flags}" "CGO_LDFLAGS=${_arch_flags}"
-                ${GO_EXEC} build -trimpath "-ldflags=${_ldflags}"
+                $<TARGET_FILE:golang::go> build -trimpath "-ldflags=${_ldflags}"
                     -buildmode=${_buildmode} -o ${_out} .
         WORKING_DIRECTORY ${GOXTUN_SRC}
         DEPENDS ${_go_sources}
