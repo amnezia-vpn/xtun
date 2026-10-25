@@ -15,19 +15,22 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(CMakeDependentOption)
 
+option(USE_CONAN_PROVIDER "Use conan via cmake-conan" ON)
+
 option(BUNDLE_GOXTUN "Bundle goxtun" ON)
 option(BUNDLE_WINTUN "Bundle wintun" ON)
 
-option(BINDINGS_CPP  "Build C++ bindings" OFF)
+option(BINDINGS_CPP  "Build C++ bindings" ON)
 option(BINDINGS_JAVA "Build Java bindings" OFF)
 
-cmake_dependent_option(BUILD_TESTS "Build tests" ON "BUNDLE_GOXTUN" OFF)
+cmake_dependent_option(BUILD_TESTS "Build tests" ON "BUNDLE_GOXTUN;BUNDLE_WINTUN" OFF)
 
-include(${CMAKE_SOURCE_DIR}/cmake/cmake-conan/conan_bootstrap.cmake)
-set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES
-    ${CMAKE_SOURCE_DIR}/cmake/platform_settings.cmake
-    ${CMAKE_SOURCE_DIR}/cmake/cmake-conan/conan_provider.cmake
-    CACHE STRING "" FORCE)
+if(USE_CONAN_PROVIDER)
+    include(${CMAKE_SOURCE_DIR}/cmake/cmake-conan/conan_bootstrap.cmake)
+    set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES
+        ${CMAKE_SOURCE_DIR}/cmake/cmake-conan/conan_provider.cmake
+        CACHE STRING "" FORCE)
+endif()
 
 project(xtun)
 
@@ -97,3 +100,6 @@ endif()
 if (BINDINGS_JAVA)
     add_subdirectory(java)
 endif()
+
+install(TARGETS ${PROJECT_NAME})
+install(FILES include/xtun.h DESTINATION include)
