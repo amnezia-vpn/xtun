@@ -27,6 +27,8 @@ class Xtun(ConanFile):
     
     def build_requirements(self):
         self.tool_requires("go/[>=1.27]@amnezia")
+        if self.settings.os == "Windows":
+            self.tool_requires("mingw-builds/15.1.0")
         self.test_requires("gtest/1.17.0")
 
     def validate_build(self):
