@@ -63,10 +63,10 @@ else()
     target_compile_options(${PROJECT_NAME} PRIVATE -Werror=switch)
 endif()
 
-find_package(goxtun REQUIRED)
-target_include_directories(${PROJECT_NAME} PRIVATE $<TARGET_PROPERTY:amnezia::goxtun,INTERFACE_INCLUDE_DIRECTORIES>)
+add_subdirectory(goxtun)
+target_include_directories(${PROJECT_NAME} PRIVATE $<TARGET_PROPERTY:goxtun,INTERFACE_INCLUDE_DIRECTORIES>)
 if (BUNDLE_GOXTUN)
-    target_link_libraries(${PROJECT_NAME} PRIVATE amnezia::goxtun)
+    target_link_libraries(${PROJECT_NAME} PRIVATE goxtun)
 endif()
 
 find_package(Threads REQUIRED)
