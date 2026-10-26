@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	_ "github.com/xtls/xray-core/app/proxyman/inbound"
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/routing"
 	"gvisor.dev/gvisor/pkg/tcpip"
@@ -62,13 +63,8 @@ func NewInstance(
 	endpoint *channel.Endpoint,
 	nicID tcpip.NICID,
 	callbacks Callbacks,
-	config Config,
+	config *core.Config,
 ) (*Instance, error) {
-	conf, err := config.Build()
-	if err != nil {
-		return nil, err
-	}
-
 	if err := registerSocketHook(); err != nil {
 		return nil, err
 	}
@@ -110,7 +106,8 @@ func NewInstance(
 		i.releaseSocketOwner()
 	}()
 
-	i.engine, err = core.NewWithContext(ctx, conf)
+	var err error
+	i.engine, err = core.NewWithContext(ctx, config)
 	if err != nil {
 		cancel()
 		return nil, err

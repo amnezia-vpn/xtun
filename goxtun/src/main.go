@@ -56,11 +56,13 @@ import (
 	"fmt"
 	"io"
 	"runtime/cgo"
+	"strings"
 	"unsafe"
 
 	"github.com/amnezia-vpn/amneziawg-go/v3/tun"
 	"github.com/amnezia-vpn/libxtun/goxtun/awg"
 	"github.com/amnezia-vpn/libxtun/goxtun/xray"
+	confserial "github.com/xtls/xray-core/infra/conf/serial"
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/header"
 	"gvisor.dev/gvisor/pkg/tcpip/link/channel"
@@ -222,7 +224,7 @@ func goxtun_xray_new(
 	}
 
 	confStr := C.GoString(configJSON)
-	cfg, err := xray.ParseConfig(confStr)
+	cfg, err := confserial.LoadJSONConfig(strings.NewReader(confStr))
 	if err != nil {
 		callbacks.Error("xray: parse config: " + err.Error())
 		return 0
