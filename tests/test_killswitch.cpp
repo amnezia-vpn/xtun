@@ -145,10 +145,10 @@ namespace
         },
         // soft
         std::array {
-            ProbeCase { INTERNET_V4, Sender::App,   { Blocked, Tunnel,  Blocked, Blocked, Uplink  } },
-            ProbeCase { INTERNET_V6, Sender::App,   { Blocked, Blocked, Blocked, Blocked, Uplink  } },
-            ProbeCase { LAN,         Sender::App,   { Blocked, Blocked, Blocked, Blocked, Uplink  } },
-            ProbeCase { HIJACKED,    Sender::App,   { Blocked, Blocked, Blocked, Blocked, Uplink  } },
+            ProbeCase { INTERNET_V4, Sender::App,   { Uplink,  Tunnel,  Blocked, Uplink,  Uplink  } },
+            ProbeCase { INTERNET_V6, Sender::App,   { Uplink,  Blocked, Blocked, Uplink,  Uplink  } },
+            ProbeCase { LAN,         Sender::App,   { Uplink,  Blocked, Blocked, Uplink,  Uplink  } },
+            ProbeCase { HIJACKED,    Sender::App,   { Uplink,  Blocked, Blocked, Uplink,  Uplink  } },
             ProbeCase { INTERNET_V4, Sender::Proxy, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
         },
         // hard
@@ -172,10 +172,10 @@ namespace
         },
         // soft
         std::array {
-            ProbeCase { SPLIT_DESTINATION, Sender::App, { Blocked, Tunnel,  Blocked, Blocked, Uplink  } },
-            ProbeCase { INTERNET_V4,       Sender::App, { Blocked, Uplink,  Uplink,  Blocked, Uplink  } },
-            ProbeCase { INTERNET_V6,       Sender::App, { Blocked, Blocked, Blocked, Blocked, Uplink  } },
-            ProbeCase { LAN,               Sender::App, { Blocked, Uplink,  Uplink,  Blocked, Uplink  } },
+            ProbeCase { SPLIT_DESTINATION, Sender::App, { Uplink,  Tunnel,  Blocked, Uplink,  Uplink  } },
+            ProbeCase { INTERNET_V4,       Sender::App, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { INTERNET_V6,       Sender::App, { Uplink,  Blocked, Blocked, Uplink,  Uplink  } },
+            ProbeCase { LAN,               Sender::App, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
         },
         // hard
         std::array {
@@ -205,18 +205,21 @@ TEST_P(KillswitchMode, LoopbackStaysUsable)
 
 TEST_P(KillswitchMode, HardLeftoversCleanedUp)
 {
-    int leftovers = 0;
+    int fresh = 0;
+    {
+        auto killswitch = m_env.create(GetParam());
+        ASSERT_NE(killswitch, nullptr);
+        fresh = m_env.ruleCount();
+    }
     {
         auto hard = m_env.create(LIBXTUN_KILLSWITCH_MODE_HARD);
         ASSERT_NE(hard, nullptr);
-        leftovers = m_env.ruleCount();
-        ASSERT_GT(leftovers, 0);
+        ASSERT_GT(m_env.ruleCount(), 0);
     }
 
     auto killswitch = m_env.create(GetParam());
     ASSERT_NE(killswitch, nullptr);
-    EXPECT_EQ(m_env.ruleCount(), GetParam() == LIBXTUN_KILLSWITCH_MODE_DISABLED ? 0 : leftovers)
-            << "the leftovers piled up";
+    EXPECT_EQ(m_env.ruleCount(), fresh) << "the leftovers piled up";
 }
 
 TEST_P(KillswitchMode, UpdatingTwiceChangesNothing)

@@ -27,7 +27,11 @@ namespace libxtun
             return LIBXTUN_ERR_INVALID_ARGS;
         }
 
-        std::string rules = "table <" + std::string(PROTECTED_TABLE) + "> { 0.0.0.0/0, ::/0 }\n";
+        std::string rules = "table <" + std::string(PROTECTED_TABLE) + "> {";
+        for (const net::IpPrefix &prefix : protectedSet({})) {
+            rules += ' ' + prefix.toString();
+        }
+        rules += " }\n";
         rules += "pass out quick on lo0 all no state\n";
         rules += "pass out quick on " + ifName + " all no state\n";
         rules += "pass out quick inet6 proto ipv6-icmp icmp6-type { 133, 135, 136 }\n";

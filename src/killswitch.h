@@ -37,6 +37,8 @@ namespace libxtun
             return m_installed;
         }
 
+        [[nodiscard]] std::vector<net::IpPrefix> protectedSet(const std::vector<net::IpPrefix> &routes) const;
+
         virtual libxtun_error install(int ifIndex, const std::string &ifName) = 0;
         virtual libxtun_error setProtected(const std::vector<net::IpPrefix> &prefixes) = 0;
         virtual void remove() noexcept = 0;
