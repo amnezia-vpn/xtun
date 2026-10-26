@@ -7,24 +7,24 @@
 #include "util/spawn.h"
 
 #include <arpa/inet.h>
-#include <fcntl.h>
 #include <net/if.h>
 #include <netdb.h>
 #include <netinet/in.h>
-#include <poll.h>
+#include <sys/poll.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <optional>
-#include <span>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace libxtun::test
@@ -32,19 +32,9 @@ namespace libxtun::test
     namespace
     {
         constexpr const char *PROBE_IFACE = "utun9";
-        constexpr const char *FAKE_UPLINK_PEER = "10.10.0.1";
         constexpr ::gid_t FOREIGN_GID = 1;
-        constexpr std::size_t UTUN_HEADER_SIZE = 4;
-
-        std::vector<std::byte> utunFrame(std::span<const std::byte> packet)
-        {
-            const bool v6 = !packet.empty() && std::to_integer<unsigned>(packet[0]) >> 4 == 6;
-            const std::uint32_t family = htonl(v6 ? AF_INET6 : AF_INET);
-            std::vector<std::byte> frame(UTUN_HEADER_SIZE);
-            std::memcpy(frame.data(), &family, sizeof(family));
-            frame.insert(frame.end(), packet.begin(), packet.end());
-            return frame;
-        }
+        constexpr const char *UPLINK_ULA = "fd00:7874::2";
+        constexpr auto PF_REJECTION_WAIT = std::chrono::milliseconds(50);
 
         bool ifconfig(const std::vector<std::string> &args)
         {
@@ -54,21 +44,6 @@ namespace libxtun::test
         bool route(const std::vector<std::string> &args)
         {
             return static_cast<bool>(spawn::run("/sbin/route", args, {}));
-        }
-
-        std::string defaultRoute(const std::string &field)
-        {
-            const auto output = spawn::run("/sbin/route", { "-n", "get", "default" }, {});
-            std::istringstream lines(output ? output.value() : std::string {});
-            for (std::string line; std::getline(lines, line);) {
-                if (const std::size_t at = line.find(field + ':'); at != std::string::npos) {
-                    std::istringstream value(line.substr(at + field.size() + 1));
-                    std::string result;
-                    value >> result;
-                    return result;
-                }
-            }
-            return {};
         }
 
         std::string anchorRules()
@@ -83,41 +58,34 @@ namespace libxtun::test
             return entries ? entries.value() : std::string {};
         }
 
-        int connectInChild(const ::addrinfo &target, const in_addr &tunnel, int timeoutMs)
+        int connectInChild(const ::addrinfo &target, const in_addr &tunnel)
         {
             if (::setegid(FOREIGN_GID) != 0) {
                 return errno;
             }
             const ScopedFd sock(::socket(target.ai_family, target.ai_socktype, target.ai_protocol));
-            if (!sock || ::fcntl(sock.get(), F_SETFL, ::fcntl(sock.get(), F_GETFL) | O_NONBLOCK) != 0) {
+            if (!sock || ::connect(sock.get(), target.ai_addr, target.ai_addrlen) != 0) {
                 return errno;
-            }
-            if (::connect(sock.get(), target.ai_addr, target.ai_addrlen) != 0) {
-                if (errno != EINPROGRESS) {
-                    return errno;
-                }
-                ::pollfd ready { sock.get(), POLLOUT, 0 };
-                const int events = ::poll(&ready, 1, timeoutMs);
-                if (events == 0) {
-                    return ETIMEDOUT;
-                }
-                if (events < 0) {
-                    return errno;
-                }
-                int error = 0;
-                ::socklen_t errorSize = sizeof(error);
-                if (::getsockopt(sock.get(), SOL_SOCKET, SO_ERROR, &error, &errorSize) != 0) {
-                    return errno;
-                }
-                if (error != 0) {
-                    return error;
-                }
             }
 
             ::sockaddr_storage local {};
             ::socklen_t localSize = sizeof(local);
             if (::getsockname(sock.get(), reinterpret_cast<::sockaddr *>(&local), &localSize) != 0) {
                 return errno;
+            }
+            const char byte = 0;
+            if (::send(sock.get(), &byte, 1, 0) != 1) {
+                return errno;
+            }
+            ::pollfd ready { sock.get(), POLLIN, 0 };
+            ::poll(&ready, 1, static_cast<int>(PF_REJECTION_WAIT.count()));
+            int error = 0;
+            ::socklen_t errorSize = sizeof(error);
+            if (::getsockopt(sock.get(), SOL_SOCKET, SO_ERROR, &error, &errorSize) != 0) {
+                return errno;
+            }
+            if (error != 0) {
+                return error;
             }
             const bool viaTunnel = local.ss_family == AF_INET
                     && reinterpret_cast<const ::sockaddr_in &>(local).sin_addr.s_addr == tunnel.s_addr;
@@ -127,7 +95,7 @@ namespace libxtun::test
         int connectAsForeignGroup(const std::string &host, std::uint16_t port)
         {
             ::addrinfo hints {};
-            hints.ai_socktype = SOCK_STREAM;
+            hints.ai_socktype = SOCK_DGRAM;
             hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV;
 
             ::addrinfo *resolved = nullptr;
@@ -139,7 +107,7 @@ namespace libxtun::test
 
             const ::pid_t child = ::fork();
             if (child == 0) {
-                ::_exit(connectInChild(*resolved, tunnel, static_cast<int>(PROBE_TIMEOUT.count())));
+                ::_exit(connectInChild(*resolved, tunnel));
             }
 
             const int forkError = child < 0 ? errno : 0;
@@ -160,9 +128,37 @@ namespace libxtun::test
             }
             return WEXITSTATUS(status);
         }
+
+        std::string defaultInterface()
+        {
+            const auto output = spawn::run("/sbin/route", { "-n", "get", "default" }, {});
+            std::istringstream words(output ? output.value() : std::string {});
+            for (std::string word; words >> word;) {
+                if (word == "interface:" && words >> word) {
+                    return word;
+                }
+            }
+            return {};
+        }
+
+        bool waitForUla()
+        {
+            ::sockaddr_in6 ula {};
+            ula.sin6_len = sizeof(ula);
+            ula.sin6_family = AF_INET6;
+            ::inet_pton(AF_INET6, UPLINK_ULA, &ula.sin6_addr);
+            const ScopedFd sock(::socket(AF_INET6, SOCK_DGRAM, 0));
+            for (int attempt = 0; attempt < 30; ++attempt) {
+                if (::bind(sock.get(), reinterpret_cast<const ::sockaddr *>(&ula), sizeof(ula)) == 0) {
+                    return true;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            return false;
+        }
     }
 
-    KillswitchEnv::KillswitchEnv(bool realEndpoint) : m_realEndpoint(realEndpoint)
+    KillswitchEnv::KillswitchEnv()
     {
         if (!privileged()) {
             m_skipReason = "loading pf anchors requires root";
@@ -179,82 +175,35 @@ namespace libxtun::test
             return;
         }
 
-        const std::string gateway = defaultRoute("gateway");
-        if (gateway.empty()) {
-            m_skipReason = "no IPv4 default gateway";
-            return;
-        }
-
-        auto fake = createTun();
-        if (!fake || !fake->first) {
-            m_skipReason = "could not open the utun for the fake uplink";
-            return;
-        }
-        if (fake->second == PROBE_IFACE) {
-            m_skipReason = "the fake uplink took the name the killswitch exempts";
-            return;
-        }
-        m_uplinkFd = std::move(fake->first);
-
-        const std::string up = fake->second;
-        if (!(ifconfig({ up, "inet", FAKE_UPLINK_V4, FAKE_UPLINK_PEER, "up" })
-              && ifconfig({ up, "inet6", FAKE_UPLINK_V6, "alias" })
-              && route({ "-q", "-n", "add", "-host", LAN.host, "-interface", up })
-              && route({ "-q", "-n", "add", "-host", HIJACKED.host, "-interface", up })
-              && route({ "-q", "-n", "add", "-inet6", "-host", INTERNET_V6.host, "-interface", up }))) {
-            m_skipReason = "could not set up the fake uplink utun";
-            return;
-        }
-        const std::string uplink = m_realEndpoint ? defaultRoute("interface") : up;
+        const std::string uplink = defaultInterface();
         m_uplinkIfIndex = ::if_nametoindex(uplink.c_str());
         if (m_uplinkIfIndex == 0) {
-            m_skipReason = "could not look up the uplink " + uplink;
+            m_skipReason = "no IPv4 default route";
             return;
         }
-
-        if (!m_realEndpoint) {
-            if (!route({ "-q", "-n", "change", "default", FAKE_UPLINK_PEER })) {
-                m_skipReason = "could not move the default route to the fake uplink";
-                return;
-            }
-            m_originalGateway = gateway;
+        route({ "-q", "-n", "delete", "-inet6", "-host", INTERNET_V6.host });
+        if (!route({ "-q", "-n", "add", "-inet6", "-host", INTERNET_V6.host, "-interface", uplink })) {
+            m_skipReason = "could not route " + INTERNET_V6.host + " through " + uplink + ", IPv6 may be disabled";
+            return;
+        }
+        ifconfig({ uplink, "inet6", UPLINK_ULA, "delete" });
+        if (!ifconfig({ uplink, "inet6", std::string(UPLINK_ULA) + "/64", "alias" }) || !waitForUla()) {
+            m_skipReason = "could not add a usable " + std::string(UPLINK_ULA) + " to " + uplink;
+            return;
         }
 
         m_ifName = PROBE_IFACE;
         pf::flushRules(ANCHOR);
-
-        m_uplinkReader = std::thread([this] {
-            ::pollfd ready { m_uplinkFd.get(), POLLIN, 0 };
-            std::array<std::byte, 2048> buffer {};
-            while (!m_stopReader) {
-                if (::poll(&ready, 1, static_cast<int>(PROBE_SLICE.count())) <= 0) {
-                    continue;
-                }
-                const ssize_t size = ::read(m_uplinkFd.get(), buffer.data(), buffer.size());
-                if (size <= static_cast<ssize_t>(UTUN_HEADER_SIZE)) {
-                    continue;
-                }
-                const std::vector<std::byte> reply = handleUplinkPacket(
-                        std::span(buffer.data() + UTUN_HEADER_SIZE, static_cast<std::size_t>(size) - UTUN_HEADER_SIZE));
-                if (!reply.empty()) {
-                    const std::vector<std::byte> frame = utunFrame(reply);
-                    [[maybe_unused]] const ssize_t written = ::write(m_uplinkFd.get(), frame.data(), frame.size());
-                }
-            }
-        });
     }
 
     KillswitchEnv::~KillswitchEnv()
     {
-        if (m_uplinkReader.joinable()) {
-            m_stopReader = true;
-            m_uplinkReader.join();
-        }
-        if (!m_originalGateway.empty()) {
-            route({ "-q", "-n", "change", "default", m_originalGateway });
-        }
         if (m_skipReason.empty()) {
             pf::flushRules(ANCHOR);
+            route({ "-q", "-n", "delete", "-inet6", "-host", INTERNET_V6.host });
+            std::array<char, IF_NAMESIZE> uplink {};
+            ::if_indextoname(m_uplinkIfIndex, uplink.data());
+            ifconfig({ uplink.data(), "inet6", UPLINK_ULA, "delete" });
         }
     }
 
@@ -277,31 +226,21 @@ namespace libxtun::test
         return count;
     }
 
-    std::optional<ProbeResult> KillswitchEnv::connect(const std::string &host, std::uint16_t port, Sender sender) const
+    std::optional<ProbeResult> KillswitchEnv::probe(const Destination &to, Sender sender) const
     {
-        int code = 0;
-        if (sender == Sender::App) {
-            code = connectAsForeignGroup(host, port);
-        } else {
-            const ConnectedSocket tcp = tcpConnect(host, port, PROBE_TIMEOUT, m_uplinkIfIndex);
-            code = tcp.error;
-            if (code == 0) {
-                code = localAddress(tcp.fd) == DEFAULT_IFADDR ? CONNECTED_VIA_TUNNEL : CONNECTED_ELSEWHERE;
-            }
-        }
-
+        const int code = sender == Sender::App ? connectAsForeignGroup(to.host, PROBE_PORT)
+                                               : udpProbe(to.host, PROBE_PORT, m_uplinkIfIndex, PF_REJECTION_WAIT);
         switch (code) {
         case CONNECTED_VIA_TUNNEL: return ProbeResult::Tunnel;
         case CONNECTED_ELSEWHERE: return ProbeResult::Uplink;
         case ECONNREFUSED:
         case EHOSTUNREACH:
         case EINVAL:
-        case EPERM:
-        case ETIMEDOUT: return ProbeResult::Blocked;
+        case EPERM: return ProbeResult::Blocked;
         default: break;
         }
 
-        ADD_FAILURE() << "the probe to " << host << ' ' << sender << " failed: " << std::strerror(code);
+        ADD_FAILURE() << "the probe to " << to.host << ' ' << sender << " failed: " << std::strerror(code);
         return std::nullopt;
     }
 

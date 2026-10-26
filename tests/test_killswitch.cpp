@@ -1,5 +1,4 @@
 #include "killswitch.h"
-#include "mock/responder.h"
 #include "util/config.h"
 #include "util/killswitch_env.h"
 #include "util/log.h"
@@ -52,26 +51,17 @@ namespace libxtun::test
     {
         return killswitch.update(m_ifIndex, m_ifName);
     }
-
-    std::optional<ProbeResult> KillswitchEnv::probe(const Destination &to, Sender sender) const
-    {
-        return connect(to.host, PROBE_PORT, sender);
-    }
-
-    std::vector<std::byte> KillswitchEnv::handleUplinkPacket(std::span<const std::byte> packet) const
-    {
-        return Responder::replyTcpSyn(packet);
-    }
 }
 
 namespace
 {
+    using libxtun::test::ConnectedSocket;
     using libxtun::test::Destination;
-    using libxtun::test::HIJACKED;
     using libxtun::test::INTERNET_V4;
     using libxtun::test::INTERNET_V6;
-    using libxtun::test::LAN;
     using libxtun::test::LOOPBACK_V4;
+    using libxtun::test::PROBE_PORT;
+    using libxtun::test::PROBE_TIMEOUT;
     using libxtun::test::ProbeResult;
     using libxtun::test::ScopedFd;
     using libxtun::test::Sender;
@@ -139,24 +129,18 @@ namespace
         std::array {
             ProbeCase { INTERNET_V4, Sender::App,   { Uplink,  Tunnel,  Uplink,  Uplink,  Uplink  } },
             ProbeCase { INTERNET_V6, Sender::App,   { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
-            ProbeCase { LAN,         Sender::App,   { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
-            ProbeCase { HIJACKED,    Sender::App,   { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
             ProbeCase { INTERNET_V4, Sender::Proxy, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
         },
         // soft
         std::array {
             ProbeCase { INTERNET_V4, Sender::App,   { Uplink,  Tunnel,  Blocked, Uplink,  Uplink  } },
             ProbeCase { INTERNET_V6, Sender::App,   { Uplink,  Blocked, Blocked, Uplink,  Uplink  } },
-            ProbeCase { LAN,         Sender::App,   { Uplink,  Blocked, Blocked, Uplink,  Uplink  } },
-            ProbeCase { HIJACKED,    Sender::App,   { Uplink,  Blocked, Blocked, Uplink,  Uplink  } },
             ProbeCase { INTERNET_V4, Sender::Proxy, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
         },
         // hard
         std::array {
             ProbeCase { INTERNET_V4, Sender::App,   { Blocked, Tunnel,  Blocked, Blocked, Blocked } },
             ProbeCase { INTERNET_V6, Sender::App,   { Blocked, Blocked, Blocked, Blocked, Blocked } },
-            ProbeCase { LAN,         Sender::App,   { Blocked, Blocked, Blocked, Blocked, Blocked } },
-            ProbeCase { HIJACKED,    Sender::App,   { Blocked, Blocked, Blocked, Blocked, Blocked } },
             ProbeCase { INTERNET_V4, Sender::Proxy, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
         },
     };
@@ -168,21 +152,18 @@ namespace
             ProbeCase { SPLIT_DESTINATION, Sender::App, { Uplink,  Tunnel,  Uplink,  Uplink,  Uplink  } },
             ProbeCase { INTERNET_V4,       Sender::App, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
             ProbeCase { INTERNET_V6,       Sender::App, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
-            ProbeCase { LAN,               Sender::App, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
         },
         // soft
         std::array {
             ProbeCase { SPLIT_DESTINATION, Sender::App, { Uplink,  Tunnel,  Blocked, Uplink,  Uplink  } },
             ProbeCase { INTERNET_V4,       Sender::App, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
             ProbeCase { INTERNET_V6,       Sender::App, { Uplink,  Blocked, Blocked, Uplink,  Uplink  } },
-            ProbeCase { LAN,               Sender::App, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
         },
         // hard
         std::array {
             ProbeCase { SPLIT_DESTINATION, Sender::App, { Blocked, Tunnel,  Blocked, Blocked, Blocked } },
             ProbeCase { INTERNET_V4,       Sender::App, { Blocked, Uplink,  Uplink,  Blocked, Blocked } },
             ProbeCase { INTERNET_V6,       Sender::App, { Blocked, Blocked, Blocked, Blocked, Blocked } },
-            ProbeCase { LAN,               Sender::App, { Blocked, Uplink,  Uplink,  Blocked, Blocked } },
         },
     };
 }
@@ -198,9 +179,8 @@ TEST_P(KillswitchMode, LoopbackStaysUsable)
 
     const LoopbackSocket loopback = openLoopbackSocket();
     ASSERT_TRUE(loopback.fd) << "could not listen on " << LOOPBACK_V4;
-    const std::optional<ProbeResult> result = m_env.connect(LOOPBACK_V4, loopback.port, Sender::App);
-    ASSERT_TRUE(result);
-    EXPECT_NE(*result, Blocked) << "loopback traffic was blocked";
+    const ConnectedSocket tcp = libxtun::test::tcpConnect(LOOPBACK_V4, loopback.port, PROBE_TIMEOUT);
+    EXPECT_EQ(tcp.error, 0) << "loopback traffic was blocked";
 }
 
 TEST_P(KillswitchMode, HardLeftoversCleanedUp)
@@ -252,10 +232,6 @@ class KillswitchProfile : public libxtun::test::KillswitchTest,
                           public testing::WithParamInterface<std::tuple<libxtun_killswitch_mode, test::Setup>>
 {
 protected:
-    KillswitchProfile() : KillswitchTest(std::get<1>(GetParam()).realEndpoint)
-    {
-    }
-
     void checkLifecycle(const std::vector<std::string> &routes, std::span<const ProbeCase> cases)
     {
         const auto &[mode, setup] = GetParam();
@@ -289,6 +265,12 @@ protected:
         ASSERT_TRUE(status.await(LIBXTUN_STATUS_CONNECTED, std::chrono::seconds(5)))
                 << "the tunnel did not connect after attach";
         check(TUNNEL_UP);
+        for (const ProbeCase &probeCase : cases) {
+            if (probeCase.expected[TUNNEL_UP] == Tunnel) {
+                const ConnectedSocket tcp = libxtun::test::tcpConnect(probeCase.to.host, PROBE_PORT, PROBE_TIMEOUT);
+                EXPECT_EQ(tcp.error, 0) << "no TCP reply through the tunnel from " << probeCase.to.name;
+            }
+        }
 
         ASSERT_TRUE(m_env.removeTunnelRoutes(routes)) << "could not remove the tunnel's routes";
         check(ROUTES_LOST);

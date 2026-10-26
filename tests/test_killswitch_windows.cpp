@@ -1,6 +1,5 @@
 #include "killswitch_windows.h"
 #include "net/wfp.h"
-#include "tun_device.h"
 #include "util/config.h"
 #include "util/killswitch_env.h"
 #include "util/os.h"
@@ -14,25 +13,26 @@
 #include <netioapi.h>
 
 #include <algorithm>
-#include <array>
-#include <cstddef>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <optional>
-#include <span>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace libxtun::test
 {
     namespace
     {
+        constexpr auto BLOCK_WAIT = std::chrono::milliseconds(200);
         constexpr const char *POWERSHELL = "powershell -NoProfile -NonInteractive -Command ";
         constexpr const char *CONNECT_SCRIPT =
-                "$c = [System.Net.Sockets.TcpClient]::new($a.AddressFamily); "
-                "try { if (-not $c.ConnectAsync($a, $port).Wait($ms)) { exit $timedOut }; "
-                "if ($c.Client.LocalEndPoint.Address.Equals($tunnel)) { exit $viaTunnel }; exit $elsewhere } "
+                "$c = [System.Net.Sockets.UdpClient]::new($a.AddressFamily); "
+                "$t = [System.Net.Sockets.TcpClient]::new($a.AddressFamily); "
+                "try { $c.Connect($a, $port); $local = $c.Client.LocalEndPoint.Address; "
+                "try { [void]$t.ConnectAsync($a, $port).Wait($ms) } "
+                "catch { if ($_.Exception.GetBaseException().ErrorCode -eq $blocked) { exit $blocked } }; "
+                "if ($local.Equals($tunnel)) { exit $viaTunnel }; exit $elsewhere } "
                 "catch { $e = $_.Exception; "
                 "while ($e -and -not ($e -is [System.Net.Sockets.SocketException])) { $e = $e.InnerException }; "
                 "if (-not $e) { exit 1 }; exit $e.ErrorCode }";
@@ -118,18 +118,33 @@ namespace libxtun::test
             return static_cast<int>(code);
         }
 
+        bool ipv6Route(const char *action, unsigned ifIndex)
+        {
+            return runProcess(std::string("netsh interface ipv6 ") + action + " route prefix=" + INTERNET_V6.host
+                              + "/128 interface=" + std::to_string(ifIndex) + " store=active")
+                    == 0;
+        }
+
         int connectFromPowerShell(const std::string &host, std::uint16_t port)
         {
             const std::string script = "$a = [System.Net.IPAddress]::Parse('" + host
-                    + "'); $port = " + std::to_string(port) + "; $ms = " + std::to_string(PROBE_TIMEOUT.count())
-                    + "; $tunnel = [System.Net.IPAddress]::Parse('" + DEFAULT_IFADDR + "'); $viaTunnel = "
-                    + std::to_string(CONNECTED_VIA_TUNNEL) + "; $elsewhere = " + std::to_string(CONNECTED_ELSEWHERE)
-                    + "; $timedOut = " + std::to_string(WSAETIMEDOUT) + "; " + CONNECT_SCRIPT;
+                    + "'); $port = " + std::to_string(port) + "; $tunnel = [System.Net.IPAddress]::Parse('"
+                    + DEFAULT_IFADDR + "'); $viaTunnel = " + std::to_string(CONNECTED_VIA_TUNNEL) + "; $elsewhere = "
+                    + std::to_string(CONNECTED_ELSEWHERE) + "; $ms = " + std::to_string(BLOCK_WAIT.count())
+                    + "; $blocked = " + std::to_string(WSAEACCES) + "; " + CONNECT_SCRIPT;
             return runProcess(POWERSHELL + ("\"" + script + "\""));
+        }
+
+        int connectFromProxy(const std::string &host, std::uint16_t port, unsigned ifIndex)
+        {
+            if (tcpConnect(host, port, BLOCK_WAIT, ifIndex).error == WSAEACCES) {
+                return WSAEACCES;
+            }
+            return udpProbe(host, port, ifIndex);
         }
     }
 
-    KillswitchEnv::KillswitchEnv(bool realEndpoint) : m_realEndpoint(realEndpoint)
+    KillswitchEnv::KillswitchEnv()
     {
         WSADATA wsa {};
         if (::WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
@@ -151,57 +166,18 @@ namespace libxtun::test
             return;
         }
 
-        m_uplinkTun = createTunDevice();
-        if (m_uplinkTun->open() != LIBXTUN_OK) {
-            m_skipReason = "could not create the fake uplink adapter";
-            return;
-        }
-
-        const std::string uplinkIndex = std::to_string(m_uplinkTun->ifIndex());
-        std::vector<std::string> setup {
-            "netsh interface ipv4 set interface " + uplinkIndex + " dadtransmits=0",
-            "netsh interface ipv6 set interface " + uplinkIndex + " dadtransmits=0",
-            "netsh interface ipv4 add address name=" + uplinkIndex + " address=" + FAKE_UPLINK_V4 + " store=active",
-            "netsh interface ipv6 add address interface=" + uplinkIndex + " address=" + FAKE_UPLINK_V6 + " store=active",
-            "netsh interface ipv4 add route prefix=" + HIJACKED.host + "/32 interface=" + uplinkIndex + " store=active",
-            "netsh interface ipv6 add route prefix=" + INTERNET_V6.host + "/128 interface=" + uplinkIndex
-                    + " store=active",
-        };
-        if (!m_realEndpoint) {
-            setup.push_back("netsh interface ipv4 set interface " + uplinkIndex + " metric=1");
-            setup.push_back("netsh interface ipv4 add route prefix=0.0.0.0/0 interface=" + uplinkIndex
-                            + " metric=0 store=active");
-        }
-        if (!std::ranges::all_of(setup, [](const std::string &command) { return runProcess(command) == 0; })) {
-            m_skipReason = "could not set up the fake uplink and client adapters";
-            return;
-        }
-
-        if (!m_realEndpoint) {
-            m_uplinkIfIndex = static_cast<unsigned>(m_uplinkTun->ifIndex());
-        } else if (const std::optional<unsigned long> uplink = bestInterface(INTERNET_V4.host.c_str())) {
-            m_uplinkIfIndex = static_cast<unsigned>(*uplink);
-        } else {
+        const std::optional<unsigned long> uplink = bestInterface(INTERNET_V4.host.c_str());
+        if (!uplink) {
             m_skipReason = "no route to " + INTERNET_V4.host;
             return;
         }
-
-        m_uplinkReader = std::thread([this] {
-            std::array<std::byte, 2048> packet {};
-            for (;;) {
-                const int size = m_uplinkTun->read(packet);
-                if (size == IO_FATAL) {
-                    return;
-                }
-                if (size > 0) {
-                    const std::vector<std::byte> reply =
-                            handleUplinkPacket(std::span(packet.data(), static_cast<std::size_t>(size)));
-                    if (!reply.empty()) {
-                        m_uplinkTun->write(reply);
-                    }
-                }
-            }
-        });
+        m_uplinkIfIndex = static_cast<unsigned>(*uplink);
+        ipv6Route("delete", m_uplinkIfIndex);
+        if (!ipv6Route("add", m_uplinkIfIndex)) {
+            m_skipReason = "could not route " + INTERNET_V6.host + " through interface " + std::to_string(*uplink)
+                    + ", IPv6 may be disabled";
+            return;
+        }
 
         m_ifIndex = static_cast<int>(*loopback);
         m_ifName = "xtun";
@@ -210,12 +186,9 @@ namespace libxtun::test
 
     KillswitchEnv::~KillswitchEnv()
     {
-        if (m_uplinkReader.joinable()) {
-            m_uplinkTun->cancelRead();
-            m_uplinkReader.join();
-        }
         if (m_ifIndex != 0) {
             cleanup();
+            ipv6Route("delete", m_uplinkIfIndex);
         }
         ::WSACleanup();
     }
@@ -225,29 +198,18 @@ namespace libxtun::test
         return static_cast<int>(installedFilters().size());
     }
 
-    std::optional<ProbeResult> KillswitchEnv::connect(const std::string &host, std::uint16_t port, Sender sender) const
+    std::optional<ProbeResult> KillswitchEnv::probe(const Destination &to, Sender sender) const
     {
-        int code = 0;
-        if (sender == Sender::App) {
-            code = connectFromPowerShell(host, port);
-        } else {
-            const ConnectedSocket tcp = tcpConnect(host, port, PROBE_TIMEOUT, m_uplinkIfIndex);
-            code = tcp.error;
-            if (code == 0) {
-                code = localAddress(tcp.fd) == DEFAULT_IFADDR ? CONNECTED_VIA_TUNNEL : CONNECTED_ELSEWHERE;
-            }
-        }
-
+        const int code = sender == Sender::App ? connectFromPowerShell(to.host, PROBE_PORT)
+                                               : connectFromProxy(to.host, PROBE_PORT, m_uplinkIfIndex);
         switch (code) {
         case CONNECTED_VIA_TUNNEL: return ProbeResult::Tunnel;
         case CONNECTED_ELSEWHERE: return ProbeResult::Uplink;
-        case WSAEACCES:
-        case WSAETIMEDOUT:
-        case ETIMEDOUT: return ProbeResult::Blocked;
+        case WSAEACCES: return ProbeResult::Blocked;
         default: break;
         }
 
-        ADD_FAILURE() << "the probe to " << host << ' ' << sender << " failed: " << code;
+        ADD_FAILURE() << "the probe to " << to.host << ' ' << sender << " failed: " << code;
         return std::nullopt;
     }
 
