@@ -14,14 +14,6 @@ namespace libxtun
         std::string iptablesRules(int family, const std::string &ifName, const std::vector<net::IpPrefix> &prefixes)
         {
             std::ostringstream input;
-            const auto block = [&](const char *chain, const char *target) {
-                for (const net::IpPrefix &prefix : prefixes) {
-                    if (prefix.address().family() == family) {
-                        input << "-A " << chain << " -d " << prefix.toString() << " -j " << target << '\n';
-                    }
-                }
-            };
-
             input << "*filter\n"
                   << ':' << CHAIN << " - [0:0]\n"
                   << "-A " << CHAIN << " -o lo -j ACCEPT\n"
@@ -32,12 +24,11 @@ namespace libxtun
                     input << "-A " << CHAIN << " -p ipv6-icmp --icmpv6-type " << type << " -j ACCEPT\n";
                 }
             }
-            block(CHAIN, "REJECT");
-            input << "COMMIT\n"
-                  << "*mangle\n"
-                  << ':' << FORWARD_CHAIN << " - [0:0]\n"
-                  << "-A " << FORWARD_CHAIN << " -o " << ifName << " -j ACCEPT\n";
-            block(FORWARD_CHAIN, "DROP");
+            for (const net::IpPrefix &prefix : prefixes) {
+                if (prefix.address().family() == family) {
+                    input << "-A " << CHAIN << " -d " << prefix.toString() << " -j REJECT\n";
+                }
+            }
             input << "COMMIT\n";
             return input.str();
         }
@@ -70,11 +61,6 @@ namespace libxtun
                 remove();
                 return LIBXTUN_ERR_SYSTEM;
             }
-            if (iptables::run(family, { "-t", "mangle", "-C", "FORWARD", "-j", FORWARD_CHAIN }) != LIBXTUN_OK
-                && iptables::run(family, { "-t", "mangle", "-I", "FORWARD", "1", "-j", FORWARD_CHAIN }) != LIBXTUN_OK) {
-                remove();
-                return LIBXTUN_ERR_SYSTEM;
-            }
         }
 
         return LIBXTUN_OK;
@@ -97,9 +83,6 @@ namespace libxtun
             iptables::run(family, { "-t", "filter", "-D", "OUTPUT", "-j", CHAIN });
             iptables::run(family, { "-t", "filter", "-F", CHAIN });
             iptables::run(family, { "-t", "filter", "-X", CHAIN });
-            iptables::run(family, { "-t", "mangle", "-D", "FORWARD", "-j", FORWARD_CHAIN });
-            iptables::run(family, { "-t", "mangle", "-F", FORWARD_CHAIN });
-            iptables::run(family, { "-t", "mangle", "-X", FORWARD_CHAIN });
         }
     }
 }

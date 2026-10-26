@@ -1,5 +1,4 @@
 #include "killswitch_windows.h"
-#include "net/ip.h"
 #include "net/wfp.h"
 #include "tun_device.h"
 #include "util/config.h"
@@ -153,26 +152,20 @@ namespace libxtun::test
         }
 
         m_uplinkTun = createTunDevice();
-        m_clientTun = createTunDevice();
-        if (m_uplinkTun->open() != LIBXTUN_OK || m_clientTun->open() != LIBXTUN_OK) {
-            m_skipReason = "could not create the fake uplink and client side adapters";
+        if (m_uplinkTun->open() != LIBXTUN_OK) {
+            m_skipReason = "could not create the fake uplink adapter";
             return;
         }
 
         const std::string uplinkIndex = std::to_string(m_uplinkTun->ifIndex());
-        const std::string clientIndex = std::to_string(m_clientTun->ifIndex());
         std::vector<std::string> setup {
             "netsh interface ipv4 set interface " + uplinkIndex + " dadtransmits=0",
             "netsh interface ipv6 set interface " + uplinkIndex + " dadtransmits=0",
-            "netsh interface ipv4 set interface " + clientIndex + " dadtransmits=0",
-            "netsh interface ipv6 set interface " + clientIndex + " dadtransmits=0",
             "netsh interface ipv4 add address name=" + uplinkIndex + " address=" + FAKE_UPLINK_V4 + " store=active",
             "netsh interface ipv6 add address interface=" + uplinkIndex + " address=" + FAKE_UPLINK_V6 + " store=active",
             "netsh interface ipv4 add route prefix=" + HIJACKED.host + "/32 interface=" + uplinkIndex + " store=active",
             "netsh interface ipv6 add route prefix=" + INTERNET_V6.host + "/128 interface=" + uplinkIndex
                     + " store=active",
-            "netsh interface ipv4 add address name=" + clientIndex + " address=" + CLIENT_V4 + " store=active",
-            "netsh interface ipv4 set interface " + clientIndex + " forwarding=enabled",
         };
         if (!m_realEndpoint) {
             setup.push_back("netsh interface ipv4 set interface " + uplinkIndex + " metric=1");
@@ -256,16 +249,6 @@ namespace libxtun::test
 
         ADD_FAILURE() << "the probe to " << host << ' ' << sender << " failed: " << code;
         return std::nullopt;
-    }
-
-    bool KillswitchEnv::injectSyn(const net::IpAddress &destination, std::uint16_t sport) const
-    {
-        const std::vector<std::byte> syn = forwardedSyn(destination, sport);
-        if (m_clientTun->write(syn) != static_cast<int>(syn.size())) {
-            ADD_FAILURE() << "could not inject the forwarded probe";
-            return false;
-        }
-        return true;
     }
 
     bool KillswitchEnv::removeTunnelRoutes(const std::vector<std::string> &routes) const

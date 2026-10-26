@@ -9,7 +9,6 @@
 namespace libxtun
 {
     constexpr const char *CHAIN = "XTUN";
-    constexpr const char *FORWARD_CHAIN = "XTUN_FWD";
 
     class LinuxKillswitch final : public Killswitch
     {

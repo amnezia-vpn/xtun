@@ -7,13 +7,11 @@
 #include "util/status.h"
 #include "xtun.h"
 
-#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -57,48 +55,12 @@ namespace libxtun::test
 
     std::optional<ProbeResult> KillswitchEnv::probe(const Destination &to, Sender sender) const
     {
-        if (sender != Sender::Forwarded) {
-            return connect(to.host, PROBE_PORT, sender);
-        }
-        if (m_realEndpoint) {
-            return std::nullopt;
-        }
-
-        const std::optional<net::IpAddress> destination = net::IpAddress::parse(to.host);
-        if (!destination || destination->family() != AF_INET) {
-            ADD_FAILURE() << "forwarded probes are IPv4 only, got " << to.host;
-            return std::nullopt;
-        }
-
-        {
-            const std::lock_guard<std::mutex> lock(m_mutex);
-            m_uplinkPackets.clear();
-        }
-        const std::uint16_t sport = randomPort();
-        if (!injectSyn(*destination, sport)) {
-            return std::nullopt;
-        }
-        return synSeenOnUplink(sport) ? ProbeResult::Uplink : ProbeResult::NotUplink;
+        return connect(to.host, PROBE_PORT, sender);
     }
 
     std::vector<std::byte> KillswitchEnv::handleUplinkPacket(std::span<const std::byte> packet) const
     {
-        {
-            const std::lock_guard<std::mutex> lock(m_mutex);
-            m_uplinkPackets.emplace_back(packet.begin(), packet.end());
-        }
-        m_arrived.notify_all();
         return Responder::replyTcpSyn(packet);
-    }
-
-    bool KillswitchEnv::synSeenOnUplink(std::uint16_t sport) const
-    {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        return m_arrived.wait_for(lock, PROBE_TIMEOUT, [this, sport] {
-            return std::ranges::any_of(m_uplinkPackets, [sport](const std::vector<std::byte> &packet) {
-                return isForwardedSyn(packet, sport);
-            });
-        });
     }
 }
 
@@ -172,33 +134,30 @@ namespace
     const std::vector<std::string> SPLIT_ROUTES { SPLIT_PREFIX };
 
     const std::array FULL_PROFILE {
-        //                                                before     up         no route   detached   freed
+        //                                            before   up       no route detached freed
         // disabled
         std::array {
-            ProbeCase { INTERNET_V4, Sender::App,       { Uplink,    Tunnel,    Uplink,    Uplink,    Uplink    } },
-            ProbeCase { INTERNET_V6, Sender::App,       { Uplink,    Uplink,    Uplink,    Uplink,    Uplink    } },
-            ProbeCase { LAN,         Sender::App,       { Uplink,    Uplink,    Uplink,    Uplink,    Uplink    } },
-            ProbeCase { HIJACKED,    Sender::App,       { Uplink,    Uplink,    Uplink,    Uplink,    Uplink    } },
-            ProbeCase { INTERNET_V4, Sender::Proxy,     { Uplink,    Uplink,    Uplink,    Uplink,    Uplink    } },
-            ProbeCase { INTERNET_V4, Sender::Forwarded, { Uplink,    NotUplink, Uplink,    Uplink,    Uplink    } },
+            ProbeCase { INTERNET_V4, Sender::App,   { Uplink,  Tunnel,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { INTERNET_V6, Sender::App,   { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { LAN,         Sender::App,   { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { HIJACKED,    Sender::App,   { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { INTERNET_V4, Sender::Proxy, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
         },
         // soft
         std::array {
-            ProbeCase { INTERNET_V4, Sender::App,       { Blocked,   Tunnel,    Blocked,   Blocked,   Uplink    } },
-            ProbeCase { INTERNET_V6, Sender::App,       { Blocked,   Blocked,   Blocked,   Blocked,   Uplink    } },
-            ProbeCase { LAN,         Sender::App,       { Blocked,   Blocked,   Blocked,   Blocked,   Uplink    } },
-            ProbeCase { HIJACKED,    Sender::App,       { Blocked,   Blocked,   Blocked,   Blocked,   Uplink    } },
-            ProbeCase { INTERNET_V4, Sender::Proxy,     { Uplink,    Uplink,    Uplink,    Uplink,    Uplink    } },
-            ProbeCase { INTERNET_V4, Sender::Forwarded, { NotUplink, NotUplink, NotUplink, NotUplink, Uplink    } },
+            ProbeCase { INTERNET_V4, Sender::App,   { Blocked, Tunnel,  Blocked, Blocked, Uplink  } },
+            ProbeCase { INTERNET_V6, Sender::App,   { Blocked, Blocked, Blocked, Blocked, Uplink  } },
+            ProbeCase { LAN,         Sender::App,   { Blocked, Blocked, Blocked, Blocked, Uplink  } },
+            ProbeCase { HIJACKED,    Sender::App,   { Blocked, Blocked, Blocked, Blocked, Uplink  } },
+            ProbeCase { INTERNET_V4, Sender::Proxy, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
         },
         // hard
         std::array {
-            ProbeCase { INTERNET_V4, Sender::App,       { Blocked,   Tunnel,    Blocked,   Blocked,   Blocked   } },
-            ProbeCase { INTERNET_V6, Sender::App,       { Blocked,   Blocked,   Blocked,   Blocked,   Blocked   } },
-            ProbeCase { LAN,         Sender::App,       { Blocked,   Blocked,   Blocked,   Blocked,   Blocked   } },
-            ProbeCase { HIJACKED,    Sender::App,       { Blocked,   Blocked,   Blocked,   Blocked,   Blocked   } },
-            ProbeCase { INTERNET_V4, Sender::Proxy,     { Uplink,    Uplink,    Uplink,    Uplink,    Uplink    } },
-            ProbeCase { INTERNET_V4, Sender::Forwarded, { NotUplink, NotUplink, NotUplink, NotUplink, NotUplink } },
+            ProbeCase { INTERNET_V4, Sender::App,   { Blocked, Tunnel,  Blocked, Blocked, Blocked } },
+            ProbeCase { INTERNET_V6, Sender::App,   { Blocked, Blocked, Blocked, Blocked, Blocked } },
+            ProbeCase { LAN,         Sender::App,   { Blocked, Blocked, Blocked, Blocked, Blocked } },
+            ProbeCase { HIJACKED,    Sender::App,   { Blocked, Blocked, Blocked, Blocked, Blocked } },
+            ProbeCase { INTERNET_V4, Sender::Proxy, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
         },
     };
 
