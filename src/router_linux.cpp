@@ -241,6 +241,10 @@ namespace libxtun
     libxtun_error LinuxRouter::updateRule(bool add, int family, bool invert, uint32_t fwmark, uint32_t table,
                                           int suppressPrefixLen, uint32_t priority)
     {
+        if (add) {
+            updateRule(false, family, invert, fwmark, table, suppressPrefixLen, priority);
+        }
+
         struct
         {
             struct nlmsghdr nlh;
