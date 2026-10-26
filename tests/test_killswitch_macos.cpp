@@ -13,7 +13,6 @@
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
-#include <sys/sysctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -34,7 +33,6 @@ namespace libxtun::test
     {
         constexpr const char *PROBE_IFACE = "utun9";
         constexpr const char *FAKE_UPLINK_PEER = "10.10.0.1";
-        constexpr const char *FORWARDING = "net.inet.ip.forwarding";
         constexpr ::gid_t FOREIGN_GID = 1;
         constexpr std::size_t UTUN_HEADER_SIZE = 4;
 
@@ -46,18 +44,6 @@ namespace libxtun::test
             std::memcpy(frame.data(), &family, sizeof(family));
             frame.insert(frame.end(), packet.begin(), packet.end());
             return frame;
-        }
-
-        int getForwarding()
-        {
-            int value = 0;
-            std::size_t size = sizeof(value);
-            return ::sysctlbyname(FORWARDING, &value, &size, nullptr, 0) == 0 ? value : -1;
-        }
-
-        bool setForwarding(int value)
-        {
-            return ::sysctlbyname(FORWARDING, nullptr, nullptr, &value, sizeof(value)) == 0;
         }
 
         bool ifconfig(const std::vector<std::string> &args)
@@ -200,27 +186,23 @@ namespace libxtun::test
         }
 
         auto fake = createTun();
-        auto client = createTun();
-        if (!fake || !fake->first || !client || !client->first) {
-            m_skipReason = "could not open the utuns for the fake uplink and the client side";
+        if (!fake || !fake->first) {
+            m_skipReason = "could not open the utun for the fake uplink";
             return;
         }
-        if (fake->second == PROBE_IFACE || client->second == PROBE_IFACE) {
-            m_skipReason = "a test utun took the name the killswitch exempts";
+        if (fake->second == PROBE_IFACE) {
+            m_skipReason = "the fake uplink took the name the killswitch exempts";
             return;
         }
         m_uplinkFd = std::move(fake->first);
-        m_clientFd = std::move(client->first);
 
         const std::string up = fake->second;
-        const std::string side = client->second;
         if (!(ifconfig({ up, "inet", FAKE_UPLINK_V4, FAKE_UPLINK_PEER, "up" })
               && ifconfig({ up, "inet6", FAKE_UPLINK_V6, "alias" })
               && route({ "-q", "-n", "add", "-host", LAN.host, "-interface", up })
               && route({ "-q", "-n", "add", "-host", HIJACKED.host, "-interface", up })
-              && route({ "-q", "-n", "add", "-inet6", "-host", INTERNET_V6.host, "-interface", up })
-              && ifconfig({ side, "inet", CLIENT_V4, FORWARDED_SOURCE, "up" }))) {
-            m_skipReason = "could not set up the fake uplink and the client side utuns";
+              && route({ "-q", "-n", "add", "-inet6", "-host", INTERNET_V6.host, "-interface", up }))) {
+            m_skipReason = "could not set up the fake uplink utun";
             return;
         }
         const std::string uplink = m_realEndpoint ? defaultRoute("interface") : up;
@@ -238,7 +220,6 @@ namespace libxtun::test
             m_originalGateway = gateway;
         }
 
-        m_restoreForwarding = !m_realEndpoint && getForwarding() == 0 && setForwarding(1);
         m_ifName = PROBE_IFACE;
         pf::flushRules(ANCHOR);
 
@@ -274,9 +255,6 @@ namespace libxtun::test
         }
         if (m_skipReason.empty()) {
             pf::flushRules(ANCHOR);
-        }
-        if (m_restoreForwarding) {
-            setForwarding(0);
         }
     }
 
@@ -325,21 +303,6 @@ namespace libxtun::test
 
         ADD_FAILURE() << "the probe to " << host << ' ' << sender << " failed: " << std::strerror(code);
         return std::nullopt;
-    }
-
-    bool KillswitchEnv::injectSyn(const net::IpAddress &destination, std::uint16_t sport) const
-    {
-        if (getForwarding() != 1) {
-            ADD_FAILURE() << "IPv4 forwarding is off";
-            return false;
-        }
-
-        const std::vector<std::byte> frame = utunFrame(forwardedSyn(destination, sport));
-        if (::write(m_clientFd.get(), frame.data(), frame.size()) != static_cast<ssize_t>(frame.size())) {
-            ADD_FAILURE() << "could not inject the forwarded probe: " << std::strerror(errno);
-            return false;
-        }
-        return true;
     }
 
     bool KillswitchEnv::removeTunnelRoutes(const std::vector<std::string> &routes) const

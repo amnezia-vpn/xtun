@@ -113,11 +113,10 @@ namespace libxtun
             int family;
             GUID connect;
             GUID recvAccept;
-            GUID forward;
         };
         const std::array<FamilyLayers, 2> families { {
-            { AF_INET, FWPM_LAYER_ALE_AUTH_CONNECT_V4, FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4, FWPM_LAYER_IPFORWARD_V4 },
-            { AF_INET6, FWPM_LAYER_ALE_AUTH_CONNECT_V6, FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V6, FWPM_LAYER_IPFORWARD_V6 },
+            { AF_INET, FWPM_LAYER_ALE_AUTH_CONNECT_V4, FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4 },
+            { AF_INET6, FWPM_LAYER_ALE_AUTH_CONNECT_V6, FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V6 },
         } };
         for (const FamilyLayers &layers : families) {
             for (const GUID &layer : { layers.connect, layers.recvAccept }) {
@@ -135,15 +134,6 @@ namespace libxtun
                     result != LIBXTUN_OK) {
                     return result;
                 }
-            }
-            if (auto result = allowTunnel(layers.forward, FWPM_CONDITION_IP_FORWARD_INTERFACE, luidValue);
-                result != LIBXTUN_OK) {
-                return result;
-            }
-            if (auto result = blockProtected(layers.forward, FWPM_CONDITION_IP_DESTINATION_ADDRESS, layers.family,
-                                             prefixes);
-                result != LIBXTUN_OK) {
-                return result;
             }
         }
 

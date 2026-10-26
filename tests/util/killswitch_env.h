@@ -2,9 +2,6 @@
 #define TEST_KILLSWITCH_ENV_H
 
 #include "killswitch.h"
-#include "net/ip.h"
-#include "net/packet_builder.h"
-#include "net/tcp.h"
 #include "os.h"
 #include "tun_device.h"
 #include "util/noncopyable.h"
@@ -17,16 +14,12 @@
 #include <array>
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <deque>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <ostream>
-#include <random>
 #include <span>
 #include <string>
 #include <string_view>
@@ -39,8 +32,6 @@ namespace libxtun::test
 {
     constexpr const char *FAKE_UPLINK_V4 = "10.10.0.2/24";
     constexpr const char *FAKE_UPLINK_V6 = "fd00:10::2/64";
-    constexpr const char *CLIENT_V4 = "10.20.0.1/24";
-    constexpr const char *FORWARDED_SOURCE = "10.20.0.2";
     constexpr const char *LOOPBACK_V4 = "127.0.0.1";
     constexpr const char *PROBE_HOST = "example.com";
     constexpr std::uint16_t PROBE_PORT = 443;
@@ -69,48 +60,14 @@ namespace libxtun::test
 
     enum class Sender {
         App,
-        Proxy,
-        Forwarded
+        Proxy
     };
 
     enum class ProbeResult {
         Tunnel,
         Uplink,
-        NotUplink,
         Blocked
     };
-
-    inline std::uint16_t randomPort()
-    {
-        std::random_device device;
-        return static_cast<std::uint16_t>(40000 + device() % 20000);
-    }
-
-    inline std::vector<std::byte> forwardedSyn(const net::IpAddress &destination, std::uint16_t sport)
-    {
-        std::vector<std::byte> buffer(net::IpView::HEADER_LEN + net::TcpView::HEADER_LEN);
-        const auto packet =
-                net::PacketBuilder(buffer)
-                        .ip(*net::IpAddress::parse(FORWARDED_SOURCE), destination)
-                        .tcp(sport, PROBE_PORT)
-                        .withHeader([](net::TcpRef &tcp) { tcp.setFlags(net::TcpFlag::SYN).setWindow(65535); })
-                        .finish();
-        buffer.resize(packet ? packet->size() : 0);
-        return buffer;
-    }
-
-    inline bool isForwardedSyn(std::span<const std::byte> packet, std::uint16_t sport)
-    {
-        if (packet.size() < net::IpView::HEADER_LEN || std::to_integer<unsigned>(packet[0]) >> 4 != 4) {
-            return false;
-        }
-        const net::IpView ip(packet.first<net::IpView::HEADER_LEN>());
-        if (ip.protocol() != IPPROTO_TCP || packet.size() < ip.ihlBytes() + net::TcpView::HEADER_LEN) {
-            return false;
-        }
-        const net::TcpView tcp(packet.subspan(ip.ihlBytes()).first<net::TcpView::HEADER_LEN>());
-        return tcp.sport() == sport && tcp.dport() == PROBE_PORT && tcp.flags() == net::TcpFlag::SYN;
-    }
 
     inline std::string localAddress(const ScopedFd &sock)
     {
@@ -158,7 +115,6 @@ namespace libxtun::test
         switch (sender) {
         case Sender::App: return out << "from an app";
         case Sender::Proxy: return out << "from the proxy";
-        case Sender::Forwarded: return out << "forwarded";
         }
         return out;
     }
@@ -168,7 +124,6 @@ namespace libxtun::test
         switch (result) {
         case ProbeResult::Tunnel: return out << "tunnel";
         case ProbeResult::Uplink: return out << "uplink";
-        case ProbeResult::NotUplink: return out << "not on the uplink";
         case ProbeResult::Blocked: return out << "blocked";
         }
         return out;
@@ -192,34 +147,24 @@ namespace libxtun::test
         [[nodiscard]] bool removeTunnelRoutes(const std::vector<std::string> &routes) const;
 
     private:
-        [[nodiscard]] bool injectSyn(const net::IpAddress &destination, std::uint16_t sport) const;
         [[nodiscard]] std::vector<std::byte> handleUplinkPacket(std::span<const std::byte> packet) const;
-        [[nodiscard]] bool synSeenOnUplink(std::uint16_t sport) const;
 
         bool m_realEndpoint = false;
         std::string m_skipReason;
         int m_ifIndex = 0;
         std::string m_ifName;
         std::thread m_uplinkReader;
-        mutable std::mutex m_mutex;
-        mutable std::condition_variable m_arrived;
-        mutable std::deque<std::vector<std::byte>> m_uplinkPackets;
 #if defined(__linux__)
         int m_netnsFd = -1;
         ScopedFd m_uplinkFd;
-        ScopedFd m_clientFd;
-        bool m_forwarding = false;
         std::atomic<bool> m_stopReader = false;
 #elif defined(__APPLE__)
         ScopedFd m_uplinkFd;
-        ScopedFd m_clientFd;
         unsigned m_uplinkIfIndex = 0;
         std::string m_originalGateway;
-        bool m_restoreForwarding = false;
         std::atomic<bool> m_stopReader = false;
 #elif defined(_WIN32)
         std::unique_ptr<TunDevice> m_uplinkTun;
-        std::unique_ptr<TunDevice> m_clientTun;
         unsigned m_uplinkIfIndex = 0;
 #endif
     };

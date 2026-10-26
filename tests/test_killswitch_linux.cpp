@@ -1,6 +1,5 @@
 #include "fwmark.h"
 #include "killswitch_linux.h"
-#include "net/ip.h"
 #include "net/iptables.h"
 #include "util/config.h"
 #include "util/killswitch_env.h"
@@ -18,7 +17,6 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstring>
-#include <fstream>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -64,16 +62,13 @@ namespace libxtun::test
         }
 
         auto uplinkTun = createTun();
-        auto clientTun = createTun();
-        if (!uplinkTun || !uplinkTun->first || !clientTun || !clientTun->first) {
-            m_skipReason = "could not open the tun devices for the fake uplink and the client side";
+        if (!uplinkTun || !uplinkTun->first) {
+            m_skipReason = "could not open the tun device for the fake uplink";
             return;
         }
         m_uplinkFd = std::move(uplinkTun->first);
-        m_clientFd = std::move(clientTun->first);
 
         const std::string up = uplinkTun->second;
-        const std::string client = clientTun->second;
         const std::string tun(TUN_DEV);
         std::vector<std::vector<std::string>> setup {
             { "addr", "add", FAKE_UPLINK_V4, "dev", up },
@@ -81,8 +76,6 @@ namespace libxtun::test
             { "link", "set", up, "up" },
             { "route", "add", HIJACKED.host, "dev", up },
             { "-6", "route", "add", INTERNET_V6.host, "dev", up },
-            { "addr", "add", CLIENT_V4, "dev", client },
-            { "link", "set", client, "up" },
         };
         if (!m_realEndpoint) {
             setup.insert(setup.end(),
@@ -96,11 +89,6 @@ namespace libxtun::test
         if (!std::ranges::all_of(setup, ip)) {
             m_skipReason = "could not set up the fake uplink: needs the 'tun' and 'dummy' kernel modules and IPv6";
             return;
-        }
-
-        if (!m_realEndpoint) {
-            std::ofstream("/proc/sys/net/ipv4/ip_forward") << '1';
-            m_forwarding = std::ifstream("/proc/sys/net/ipv4/ip_forward").get() == '1';
         }
 
         m_uplinkReader = std::thread([this] {
@@ -156,7 +144,6 @@ namespace libxtun::test
         int count = 0;
         for (const int family : { AF_INET, AF_INET6 }) {
             count += chainCount(family, "filter", "OUTPUT", CHAIN);
-            count += chainCount(family, "mangle", "FORWARD", FORWARD_CHAIN);
         }
         return count;
     }
@@ -173,21 +160,6 @@ namespace libxtun::test
 
         ADD_FAILURE() << "the probe to " << host << ' ' << sender << " failed: " << std::strerror(tcp.error);
         return std::nullopt;
-    }
-
-    bool KillswitchEnv::injectSyn(const net::IpAddress &destination, std::uint16_t sport) const
-    {
-        if (!m_forwarding) {
-            ADD_FAILURE() << "IPv4 forwarding stayed off, /proc/sys may be read-only";
-            return false;
-        }
-
-        const std::vector<std::byte> syn = forwardedSyn(destination, sport);
-        if (::write(m_clientFd.get(), syn.data(), syn.size()) != static_cast<ssize_t>(syn.size())) {
-            ADD_FAILURE() << "could not inject the forwarded probe: " << std::strerror(errno);
-            return false;
-        }
-        return true;
     }
 
     bool KillswitchEnv::removeTunnelRoutes(const std::vector<std::string> &routes) const
