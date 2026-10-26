@@ -46,11 +46,7 @@ namespace libxtun
         (void)ifIndex;
 
         m_ifName = ifName;
-        const std::vector<net::IpPrefix> everything {
-            net::IpPrefix(net::IpAddress::fromV4(in_addr {}), 0),
-            net::IpPrefix(net::IpAddress::fromV6(in6_addr {}), 0),
-        };
-        if (const auto rc = setProtected(everything); rc != LIBXTUN_OK) {
+        if (const auto rc = setProtected(protectedSet({})); rc != LIBXTUN_OK) {
             remove();
             return rc;
         }

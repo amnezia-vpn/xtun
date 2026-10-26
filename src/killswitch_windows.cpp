@@ -56,11 +56,7 @@ namespace libxtun
         m_wfp = std::move(engine).value();
         m_luid = luid.Value;
 
-        const std::vector<net::IpPrefix> everything {
-            net::IpPrefix(net::IpAddress::fromV4(in_addr {}), 0),
-            net::IpPrefix(net::IpAddress::fromV6(in6_addr {}), 0),
-        };
-        if (const auto result = installFilters(m_luid, everything); result != LIBXTUN_OK) {
+        if (const auto result = installFilters(m_luid, protectedSet({})); result != LIBXTUN_OK) {
             m_wfp.reset();
             return result;
         }

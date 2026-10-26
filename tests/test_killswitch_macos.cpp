@@ -330,7 +330,7 @@ namespace libxtun::test
     TEST_F(KillswitchMacos, ConfiguredGroupIsExcluded)
     {
         {
-            const auto killswitch = Killswitch::create(LIBXTUN_KILLSWITCH_MODE_SOFT, static_cast<int>(::getegid()));
+            const auto killswitch = Killswitch::create(LIBXTUN_KILLSWITCH_MODE_HARD, static_cast<int>(::getegid()));
             ASSERT_NE(killswitch, nullptr);
             ASSERT_EQ(m_env.update(*killswitch), LIBXTUN_OK);
 
@@ -338,7 +338,7 @@ namespace libxtun::test
             expectProbeResult(INTERNET_V4, Sender::App, ProbeResult::Blocked, "with the process's group");
         }
         {
-            const auto killswitch = Killswitch::create(LIBXTUN_KILLSWITCH_MODE_SOFT, static_cast<int>(FOREIGN_GID));
+            const auto killswitch = Killswitch::create(LIBXTUN_KILLSWITCH_MODE_HARD, static_cast<int>(FOREIGN_GID));
             ASSERT_NE(killswitch, nullptr);
             ASSERT_EQ(m_env.update(*killswitch), LIBXTUN_OK);
 
