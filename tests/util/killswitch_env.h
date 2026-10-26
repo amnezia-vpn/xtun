@@ -1,9 +1,9 @@
 #ifndef TEST_KILLSWITCH_ENV_H
 #define TEST_KILLSWITCH_ENV_H
 
+#include "config.h"
 #include "killswitch.h"
 #include "os.h"
-#include "tun_device.h"
 #include "util/noncopyable.h"
 #include "xtun.h"
 
@@ -12,7 +12,6 @@
 #endif
 
 #include <array>
-#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -20,23 +19,18 @@
 #include <memory>
 #include <optional>
 #include <ostream>
-#include <span>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <vector>
 
 #include "gtest/gtest.h"
 
 namespace libxtun::test
 {
-    constexpr const char *FAKE_UPLINK_V4 = "10.10.0.2/24";
-    constexpr const char *FAKE_UPLINK_V6 = "fd00:10::2/64";
     constexpr const char *LOOPBACK_V4 = "127.0.0.1";
     constexpr const char *PROBE_HOST = "example.com";
     constexpr std::uint16_t PROBE_PORT = 443;
-    constexpr auto PROBE_TIMEOUT = std::chrono::milliseconds(500);
-    constexpr auto PROBE_SLICE = std::chrono::milliseconds(10);
+    constexpr auto PROBE_TIMEOUT = std::chrono::milliseconds(2000);
     constexpr int CONNECTED_VIA_TUNNEL = 200;
     constexpr int CONNECTED_ELSEWHERE = 201;
 
@@ -55,8 +49,6 @@ namespace libxtun::test
 
     const Destination INTERNET_V4 { "internet v4", probeAddress(1) };
     const Destination INTERNET_V6 { "internet v6", "2001:db8::1" };
-    const Destination LAN { "LAN", "10.10.0.5" };
-    const Destination HIJACKED { "hijacked route", "198.51.100.1" };
 
     enum class Sender {
         App,
@@ -86,6 +78,38 @@ namespace libxtun::test
             return {};
         }
         return address.data();
+    }
+
+    inline int udpProbe(const std::string &host, std::uint16_t port, unsigned bypass,
+                        std::chrono::milliseconds rejectionWait = std::chrono::milliseconds(0))
+    {
+        const ConnectedSocket udp = udpConnect(host, port, bypass);
+        if (udp.error != 0) {
+            return udp.error;
+        }
+#if defined(_WIN32)
+        const auto handle = static_cast<SOCKET>(udp.fd.get());
+#else
+        const int handle = udp.fd.get();
+#endif
+        const bool viaTunnel = localAddress(udp.fd) == DEFAULT_IFADDR;
+        const char byte = 0;
+        if (::send(handle, &byte, 1, 0) != 1) {
+            return lastSocketError();
+        }
+        if (rejectionWait.count() > 0) {
+            ::pollfd ready { handle, POLLIN, 0 };
+            ::poll(&ready, 1, static_cast<int>(rejectionWait.count()));
+            int error = 0;
+            ::socklen_t size = sizeof(error);
+            if (::getsockopt(handle, SOL_SOCKET, SO_ERROR, reinterpret_cast<char *>(&error), &size) != 0) {
+                return lastSocketError();
+            }
+            if (error != 0) {
+                return error;
+            }
+        }
+        return viaTunnel ? CONNECTED_VIA_TUNNEL : CONNECTED_ELSEWHERE;
     }
 
 #if !defined(_WIN32)
@@ -132,7 +156,7 @@ namespace libxtun::test
     class KillswitchEnv : private NonCopyable
     {
     public:
-        explicit KillswitchEnv(bool realEndpoint = false);
+        KillswitchEnv();
         ~KillswitchEnv();
 
         [[nodiscard]] std::string_view skipReason() const noexcept
@@ -142,29 +166,14 @@ namespace libxtun::test
         [[nodiscard]] std::unique_ptr<Killswitch> create(libxtun_killswitch_mode mode) const;
         [[nodiscard]] libxtun_error update(Killswitch &killswitch) const;
         [[nodiscard]] int ruleCount() const;
-        [[nodiscard]] std::optional<ProbeResult> connect(const std::string &host, std::uint16_t port, Sender sender) const;
         [[nodiscard]] std::optional<ProbeResult> probe(const Destination &to, Sender sender) const;
         [[nodiscard]] bool removeTunnelRoutes(const std::vector<std::string> &routes) const;
 
     private:
-        [[nodiscard]] std::vector<std::byte> handleUplinkPacket(std::span<const std::byte> packet) const;
-
-        bool m_realEndpoint = false;
         std::string m_skipReason;
         int m_ifIndex = 0;
         std::string m_ifName;
-        std::thread m_uplinkReader;
-#if defined(__linux__)
-        int m_netnsFd = -1;
-        ScopedFd m_uplinkFd;
-        std::atomic<bool> m_stopReader = false;
-#elif defined(__APPLE__)
-        ScopedFd m_uplinkFd;
-        unsigned m_uplinkIfIndex = 0;
-        std::string m_originalGateway;
-        std::atomic<bool> m_stopReader = false;
-#elif defined(_WIN32)
-        std::unique_ptr<TunDevice> m_uplinkTun;
+#if defined(__APPLE__) || defined(_WIN32)
         unsigned m_uplinkIfIndex = 0;
 #endif
     };
@@ -172,9 +181,6 @@ namespace libxtun::test
     class KillswitchTest : public testing::Test
     {
     protected:
-        explicit KillswitchTest(bool realEndpoint = false) : m_env(realEndpoint)
-        {
-        }
         void SetUp() override
         {
             if (!m_env.skipReason().empty()) {

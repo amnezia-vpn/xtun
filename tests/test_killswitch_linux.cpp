@@ -6,17 +6,13 @@
 #include "util/os.h"
 #include "util/spawn.h"
 
-#include <fcntl.h>
-#include <poll.h>
-#include <sched.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
 #include <algorithm>
-#include <array>
 #include <cerrno>
-#include <cstddef>
 #include <cstring>
+#include <fstream>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -37,12 +33,30 @@ namespace libxtun::test
             }
             return false;
         }
+
+        void cleanup()
+        {
+            Killswitch::create(LIBXTUN_KILLSWITCH_MODE_DISABLED)->update(0, {});
+        }
+
+        std::string defaultInterface()
+        {
+            std::ifstream table("/proc/net/route");
+            std::string line;
+            std::getline(table, line);
+            for (std::string iface, destination; table >> iface >> destination; std::getline(table, line)) {
+                if (destination == "00000000") {
+                    return iface;
+                }
+            }
+            return {};
+        }
     }
 
-    KillswitchEnv::KillswitchEnv(bool realEndpoint) : m_realEndpoint(realEndpoint)
+    KillswitchEnv::KillswitchEnv()
     {
         if (!privileged()) {
-            m_skipReason = "network namespaces and iptables require root";
+            m_skipReason = "iptables requires root";
             return;
         }
 
@@ -53,77 +67,25 @@ namespace libxtun::test
             }
         }
 
-        if (!m_realEndpoint) {
-            m_netnsFd = ::open("/proc/self/ns/net", O_RDONLY | O_CLOEXEC);
-            if (m_netnsFd < 0 || ::unshare(CLONE_NEWNET) != 0) {
-                m_skipReason = "could not create a private network namespace";
-                return;
-            }
-        }
-
-        auto uplinkTun = createTun();
-        if (!uplinkTun || !uplinkTun->first) {
-            m_skipReason = "could not open the tun device for the fake uplink";
+        const std::string uplink = defaultInterface();
+        if (uplink.empty()) {
+            m_skipReason = "no IPv4 default route";
             return;
         }
-        m_uplinkFd = std::move(uplinkTun->first);
-
-        const std::string up = uplinkTun->second;
-        const std::string tun(TUN_DEV);
-        std::vector<std::vector<std::string>> setup {
-            { "addr", "add", FAKE_UPLINK_V4, "dev", up },
-            { "-6", "addr", "add", FAKE_UPLINK_V6, "dev", up, "nodad" },
-            { "link", "set", up, "up" },
-            { "route", "add", HIJACKED.host, "dev", up },
-            { "-6", "route", "add", INTERNET_V6.host, "dev", up },
-        };
-        if (!m_realEndpoint) {
-            setup.insert(setup.end(),
-                         {
-                                 { "link", "set", "lo", "up" },
-                                 { "route", "add", "default", "dev", up },
-                                 { "link", "add", tun, "type", "dummy" },
-                                 { "link", "set", tun, "up" },
-                         });
-        }
-        if (!std::ranges::all_of(setup, ip)) {
-            m_skipReason = "could not set up the fake uplink: needs the 'tun' and 'dummy' kernel modules and IPv6";
+        if (!ip({ "-6", "route", "replace", INTERNET_V6.host, "dev", uplink })) {
+            m_skipReason = "could not route " + INTERNET_V6.host + " through " + uplink + ", IPv6 may be disabled";
             return;
         }
 
-        m_uplinkReader = std::thread([this] {
-            ::pollfd ready { m_uplinkFd.get(), POLLIN, 0 };
-            std::array<std::byte, 2048> packet {};
-            while (!m_stopReader) {
-                if (::poll(&ready, 1, static_cast<int>(PROBE_SLICE.count())) <= 0) {
-                    continue;
-                }
-                const ssize_t size = ::read(m_uplinkFd.get(), packet.data(), packet.size());
-                if (size <= 0) {
-                    continue;
-                }
-                const std::vector<std::byte> reply =
-                        handleUplinkPacket(std::span(packet.data(), static_cast<std::size_t>(size)));
-                if (!reply.empty()) {
-                    [[maybe_unused]] const ssize_t written = ::write(m_uplinkFd.get(), reply.data(), reply.size());
-                }
-            }
-        });
-        m_ifName = tun;
+        m_ifName = TUN_DEV;
+        cleanup();
     }
 
     KillswitchEnv::~KillswitchEnv()
     {
-        if (m_uplinkReader.joinable()) {
-            m_stopReader = true;
-            m_uplinkReader.join();
-        }
-        if (m_realEndpoint && m_skipReason.empty()) {
-            Killswitch::create(LIBXTUN_KILLSWITCH_MODE_DISABLED)->update(m_ifIndex, m_ifName);
-        }
-        if (m_netnsFd >= 0) {
-            ::setns(m_netnsFd, CLONE_NEWNET);
-            ::close(m_netnsFd);
+        if (m_skipReason.empty()) {
+            cleanup();
+            ip({ "-6", "route", "del", INTERNET_V6.host });
         }
     }
 
@@ -148,17 +110,17 @@ namespace libxtun::test
         return count;
     }
 
-    std::optional<ProbeResult> KillswitchEnv::connect(const std::string &host, std::uint16_t port, Sender sender) const
+    std::optional<ProbeResult> KillswitchEnv::probe(const Destination &to, Sender sender) const
     {
-        const ConnectedSocket tcp = tcpConnect(host, port, PROBE_TIMEOUT, sender == Sender::Proxy ? PROXY_FWMARK : 0);
-        if (tcp.error == 0) {
-            return localAddress(tcp.fd) == DEFAULT_IFADDR ? ProbeResult::Tunnel : ProbeResult::Uplink;
-        }
-        if (tcp.error == ECONNREFUSED || tcp.error == ETIMEDOUT) {
-            return ProbeResult::Blocked;
+        const int code = udpProbe(to.host, PROBE_PORT, sender == Sender::Proxy ? PROXY_FWMARK : 0);
+        switch (code) {
+        case CONNECTED_VIA_TUNNEL: return ProbeResult::Tunnel;
+        case CONNECTED_ELSEWHERE: return ProbeResult::Uplink;
+        case EPERM: return ProbeResult::Blocked;
+        default: break;
         }
 
-        ADD_FAILURE() << "the probe to " << host << ' ' << sender << " failed: " << std::strerror(tcp.error);
+        ADD_FAILURE() << "the probe to " << to.host << ' ' << sender << " failed: " << std::strerror(code);
         return std::nullopt;
     }
 
