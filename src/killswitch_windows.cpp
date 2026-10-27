@@ -56,7 +56,7 @@ namespace libxtun
         m_wfp = std::move(engine).value();
         m_luid = luid.Value;
 
-        if (const auto result = installFilters(m_luid, protectedSet({})); result != LIBXTUN_OK) {
+        if (const auto result = installFilters(m_luid, {}); result != LIBXTUN_OK) {
             m_wfp.reset();
             return result;
         }
