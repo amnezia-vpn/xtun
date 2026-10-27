@@ -6,26 +6,29 @@
 
 namespace libxtun
 {
-    std::vector<net::IpPrefix> Killswitch::protectedSet(const std::vector<net::IpPrefix> &routes) const
+    namespace
     {
-        if (routes.empty() && m_mode == LIBXTUN_KILLSWITCH_MODE_SOFT) {
-            return {};
-        }
+        std::vector<net::IpPrefix> protectedSet(const std::vector<net::IpPrefix> &routes)
+        {
+            if (routes.empty()) {
+                return {};
+            }
 
-        const auto included = [&routes](int family) {
-            return std::ranges::any_of(routes, [family](const net::IpPrefix &route) {
-                return route.address().family() == family;
-            });
-        };
+            const auto included = [&routes](int family) {
+                return std::ranges::any_of(routes, [family](const net::IpPrefix &route) {
+                    return route.address().family() == family;
+                });
+            };
 
-        std::vector<net::IpPrefix> prefixes = routes;
-        if (!included(AF_INET)) {
-            prefixes.emplace_back(net::IpAddress::fromV4(in_addr {}), 0);
+            std::vector<net::IpPrefix> prefixes = routes;
+            if (!included(AF_INET)) {
+                prefixes.emplace_back(net::IpAddress::fromV4(in_addr {}), 0);
+            }
+            if (!included(AF_INET6)) {
+                prefixes.emplace_back(net::IpAddress::fromV6(in6_addr {}), 0);
+            }
+            return prefixes;
         }
-        if (!included(AF_INET6)) {
-            prefixes.emplace_back(net::IpAddress::fromV6(in6_addr {}), 0);
-        }
-        return prefixes;
     }
 
     libxtun_error Killswitch::update(int ifIndex, const std::string &ifName)
@@ -55,7 +58,7 @@ namespace libxtun
     {
         std::lock_guard<std::mutex> lock(m_mutex);
 
-        if (!m_installed) {
+        if (!m_installed || (routes.empty() && persistent())) {
             return LIBXTUN_OK;
         }
         return setProtected(protectedSet(routes));

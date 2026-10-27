@@ -46,7 +46,7 @@ namespace libxtun
         (void)ifIndex;
 
         m_ifName = ifName;
-        if (const auto rc = setProtected(protectedSet({})); rc != LIBXTUN_OK) {
+        if (const auto rc = setProtected({}); rc != LIBXTUN_OK) {
             remove();
             return rc;
         }

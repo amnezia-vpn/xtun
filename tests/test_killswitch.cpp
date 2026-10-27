@@ -139,8 +139,8 @@ namespace
         },
         // hard
         std::array {
-            ProbeCase { INTERNET_V4, Sender::App,   { Blocked, Tunnel,  Blocked, Blocked, Blocked } },
-            ProbeCase { INTERNET_V6, Sender::App,   { Blocked, Blocked, Blocked, Blocked, Blocked } },
+            ProbeCase { INTERNET_V4, Sender::App,   { Uplink,  Tunnel,  Blocked, Blocked, Blocked } },
+            ProbeCase { INTERNET_V6, Sender::App,   { Uplink,  Blocked, Blocked, Blocked, Blocked } },
             ProbeCase { INTERNET_V4, Sender::Proxy, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
         },
     };
@@ -161,9 +161,9 @@ namespace
         },
         // hard
         std::array {
-            ProbeCase { SPLIT_DESTINATION, Sender::App, { Blocked, Tunnel,  Blocked, Blocked, Blocked } },
-            ProbeCase { INTERNET_V4,       Sender::App, { Blocked, Uplink,  Uplink,  Blocked, Blocked } },
-            ProbeCase { INTERNET_V6,       Sender::App, { Blocked, Blocked, Blocked, Blocked, Blocked } },
+            ProbeCase { SPLIT_DESTINATION, Sender::App, { Uplink,  Tunnel,  Blocked, Blocked, Blocked } },
+            ProbeCase { INTERNET_V4,       Sender::App, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { INTERNET_V6,       Sender::App, { Uplink,  Blocked, Blocked, Blocked, Blocked } },
         },
     };
 }
@@ -218,6 +218,7 @@ TEST_P(KillswitchMode, DestructionHonoursPersistence)
     {
         auto killswitch = m_env.create(GetParam());
         ASSERT_NE(killswitch, nullptr);
+        ASSERT_EQ(killswitch->protect({ *net::IpPrefix::parse(FULL_ROUTES[0]) }), LIBXTUN_OK);
         installed = m_env.ruleCount();
         ASSERT_EQ(installed > 0, GetParam() != LIBXTUN_KILLSWITCH_MODE_DISABLED);
     }

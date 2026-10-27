@@ -107,11 +107,20 @@ namespace libxtun
         if (proxy == nullptr) {
             return LIBXTUN_ERR_INVALID_ARGS;
         }
+
+        ProxyProfile profile = proxy->profile();
+
+        if (m_killswitch != nullptr) {
+            if (auto rc = m_killswitch->protect(profile.routes); rc != LIBXTUN_OK) {
+                detachProxyLocked(m_proxy);
+                m_killswitch->protect({});
+                return rc;
+            }
+        }
+
         if (m_proxy) {
             detachProxyLocked(m_proxy);
         }
-
-        ProxyProfile profile = proxy->profile();
 
         if (m_router != nullptr) {
             // TODO(cd-amn): use net::IpPrefix in routers
@@ -123,17 +132,10 @@ namespace libxtun
             if (auto rc = m_router->setProxyRoutes(strRoutes); rc != LIBXTUN_OK) {
                 // FIXME(cd-amn): we are reverting too much in here. Should be rollback() or similar
                 m_router->revert();
-                return LIBXTUN_ERR_SYSTEM;
-            }
-        }
-
-        if (m_killswitch != nullptr) {
-            if (auto rc = m_killswitch->protect(profile.routes); rc != LIBXTUN_OK) {
-                m_killswitch->protect({});
-                if (m_router != nullptr) {
-                    m_router->clearProxyRoutes();
+                if (m_killswitch != nullptr) {
+                    m_killswitch->protect({});
                 }
-                return rc;
+                return LIBXTUN_ERR_SYSTEM;
             }
         }
 
@@ -152,7 +154,14 @@ namespace libxtun
     void Tunnel::detachProxy(Proxy *proxy)
     {
         std::lock_guard<std::mutex> lock(m_mutex);
+        if (proxy == nullptr || m_proxy != proxy) {
+            return;
+        }
+
         detachProxyLocked(proxy);
+        if (m_killswitch != nullptr) {
+            m_killswitch->protect({});
+        }
     }
 
     void Tunnel::detachProxyLocked(Proxy *proxy)
@@ -164,10 +173,6 @@ namespace libxtun
         if (m_router) {
             // FIXME(cd-amn): clear routes only for particular Proxy
             m_router->clearProxyRoutes();
-        }
-
-        if (m_killswitch != nullptr) {
-            m_killswitch->protect({});
         }
 
         // FIXME: this abstraction make sense for ONE to MANY model
