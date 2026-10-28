@@ -19,6 +19,8 @@ enum libxtun_error {
     LIBXTUN_ERR_KILLSWITCH = -5,
     /* An ancillary system call failed. */
     LIBXTUN_ERR_SYSTEM = -6,
+    /* The host's DNS resolvers could not be configured. */
+    LIBXTUN_ERR_DNS = -7,
 
     LIBXTUN_ERR_RESERVED_0 = -10000,
     LIBXTUN_ERR_RESERVED_1 = -10001,

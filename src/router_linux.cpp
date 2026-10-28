@@ -19,8 +19,6 @@
 #include <linux/rtnetlink.h>
 #include <linux/sockios.h>
 
-#include <systemd/sd-bus.h>
-
 namespace
 {
     bool splitCidr(const std::string &cidr, std::string &ip, int &prefix)
@@ -327,90 +325,6 @@ namespace libxtun
         return LIBXTUN_OK;
     }
 
-    libxtun_error LinuxRouter::setDns(const std::vector<std::string> &servers)
-    {
-        if (servers.empty()) {
-            return LIBXTUN_OK;
-        }
-
-        sd_bus *bus = nullptr;
-        int r = sd_bus_open_system(&bus);
-        if (r < 0) {
-            return LIBXTUN_ERR_SYSTEM;
-        }
-
-        sd_bus_message *msg = nullptr;
-        sd_bus_error err = SD_BUS_ERROR_NULL;
-
-        r = sd_bus_message_new_method_call(bus, &msg, "org.freedesktop.resolve1", "/org/freedesktop/resolve1",
-                                           "org.freedesktop.resolve1.Manager", "SetLinkDNS");
-        if (r >= 0) {
-            r = sd_bus_message_append(msg, "i", m_ifindex);
-        }
-        if (r >= 0) {
-            r = sd_bus_message_open_container(msg, 'a', "(iay)");
-        }
-        for (const auto &s : servers) {
-            if (r < 0) {
-                break;
-            }
-            int family;
-            unsigned char raw[16];
-            int len = parseIp(s, family, raw);
-            if (len < 0) {
-                continue;
-            }
-            r = sd_bus_message_open_container(msg, 'r', "iay");
-            if (r >= 0) {
-                r = sd_bus_message_append(msg, "i", family);
-            }
-            if (r >= 0) {
-                r = sd_bus_message_append_array(msg, 'y', raw, len);
-            }
-            if (r >= 0) {
-                r = sd_bus_message_close_container(msg);
-            }
-        }
-        if (r >= 0) {
-            r = sd_bus_message_close_container(msg);
-        }
-        if (r >= 0) {
-            r = sd_bus_call(bus, msg, 0, &err, nullptr);
-        }
-
-        if (r >= 0) {
-            m_dnsApplied = true;
-            sd_bus_error_free(&err);
-            err = SD_BUS_ERROR_NULL;
-            sd_bus_call_method(bus, "org.freedesktop.resolve1", "/org/freedesktop/resolve1",
-                               "org.freedesktop.resolve1.Manager", "SetLinkDefaultRoute", &err, nullptr, "ib",
-                               m_ifindex, 1);
-        }
-
-        sd_bus_error_free(&err);
-        sd_bus_message_unref(msg);
-        sd_bus_unref(bus);
-        return r < 0 ? LIBXTUN_ERR_SYSTEM : LIBXTUN_OK;
-    }
-
-    void LinuxRouter::revertDns()
-    {
-        if (!m_dnsApplied) {
-            return;
-        }
-        sd_bus *bus = nullptr;
-        if (sd_bus_open_system(&bus) < 0) {
-            return;
-        }
-        sd_bus_error err = SD_BUS_ERROR_NULL;
-        sd_bus_call_method(bus, "org.freedesktop.resolve1", "/org/freedesktop/resolve1",
-                           "org.freedesktop.resolve1.Manager", "RevertLink", &err, nullptr, "i", m_ifindex);
-        sd_bus_error_free(&err);
-        sd_bus_unref(bus);
-
-        m_dnsApplied = false;
-    }
-
     libxtun_error LinuxRouter::configureInterface(const std::string &ifname, int ifindex,
                                                   const std::vector<std::string> &addresses, int mtu)
     {
@@ -489,7 +403,6 @@ namespace libxtun
     void LinuxRouter::revert()
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
-        revertDns();
         clearProxyRoutes();
         for (const auto &addr : m_addresses) {
             updateAddress(addr, false);

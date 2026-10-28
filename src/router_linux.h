@@ -26,8 +26,6 @@ namespace libxtun
         libxtun_error updateFullTunnelRoutes(int family, bool add);
         libxtun_error updateRule(bool add, int family, bool invert, uint32_t fwmark, uint32_t table,
                                  int suppressPrefixLen, uint32_t priority);
-        libxtun_error setDns(const std::vector<std::string> &servers);
-        void revertDns();
 
         std::recursive_mutex m_mtx;
         int m_ifindex = -1;
@@ -36,7 +34,6 @@ namespace libxtun
         std::vector<std::string> m_routes;
         bool m_fullV4 = false;
         bool m_fullV6 = false;
-        bool m_dnsApplied = false;
     };
 }
 

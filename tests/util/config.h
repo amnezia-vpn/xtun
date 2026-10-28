@@ -228,7 +228,7 @@ namespace libxtun::test
         }
 
         libxtun_tunnel_opts m_opts {};
-        std::vector<std::string> m_dns = { "8.8.8.8", "8.8.4.4" };
+        std::vector<std::string> m_dns;
         std::vector<std::string> m_dnsExceptions;
         std::vector<std::string> m_ifaddrs = { DEFAULT_IFADDR };
         std::vector<const char *> m_dnsPtrs, m_dnsExceptionsPtrs, m_ifaddrsPtrs;

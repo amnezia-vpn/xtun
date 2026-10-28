@@ -1,3 +1,4 @@
+#include "dns.h"
 #include "killswitch.h"
 #include "router.h"
 #include "tun_device.h"
@@ -23,6 +24,8 @@
     #include "tun_device_linux.cpp"
     #include "tun_device_linux.h"
 #elif defined(__linux__)
+    #include "dns_linux.cpp"
+    #include "dns_linux.h"
     #include "router_linux.cpp"
     #include "router_linux.h"
     #include "tun_device_linux.cpp"
@@ -47,6 +50,18 @@ namespace libxtun
 #elif defined(_WIN32)
         return std::make_unique<WindowsRouter>();
 #else
+        return nullptr;
+#endif
+    }
+
+    std::unique_ptr<Dns> Dns::create(int ifIndex, const std::string &ifName)
+    {
+#if defined(__linux__) && !defined(__ANDROID__)
+        (void)ifName;
+        return LinuxDns::open(ifIndex);
+#else
+        (void)ifIndex;
+        (void)ifName;
         return nullptr;
 #endif
     }
