@@ -13,8 +13,6 @@
 
 namespace libxtun::wfp
 {
-    constexpr UINT8 WEIGHT_BLOCK = 0;
-    constexpr UINT8 WEIGHT_ALLOW = 8;
     constexpr UINT32 ENUM_BATCH = 32;
 
     WfpEngine::Transaction::Transaction(WfpEngine &engine) noexcept : m_engine(engine.m_engine)
@@ -104,7 +102,7 @@ namespace libxtun::wfp
         return LIBXTUN_OK;
     }
 
-    libxtun_error WfpEngine::addFilter(const GUID &layer, const FWP_ACTION_TYPE action,
+    libxtun_error WfpEngine::addFilter(const GUID &layer, const FWP_ACTION_TYPE action, const UINT8 weight,
                                        std::span<FWPM_FILTER_CONDITION> conditions, const wchar_t *name) noexcept
     {
         FWPM_FILTER filter {};
@@ -114,7 +112,7 @@ namespace libxtun::wfp
         filter.displayData.name = const_cast<wchar_t *>(name);
         filter.action.type = action;
         filter.weight.type = FWP_UINT8;
-        filter.weight.uint8 = action == FWP_ACTION_BLOCK ? WEIGHT_BLOCK : WEIGHT_ALLOW;
+        filter.weight.uint8 = weight;
         filter.numFilterConditions = static_cast<UINT32>(conditions.size());
         filter.filterCondition = conditions.data();
 

@@ -54,13 +54,21 @@ namespace libxtun
         return LIBXTUN_ERR_KILLSWITCH;
     }
 
-    libxtun_error Killswitch::protect(const std::vector<net::IpPrefix> &routes)
+    libxtun_error Killswitch::protect(const std::vector<net::IpPrefix> &routes,
+                                      const std::vector<net::IpAddress> &resolvers)
     {
         std::lock_guard<std::mutex> lock(m_mutex);
 
         if (!m_installed || (routes.empty() && persistent())) {
             return LIBXTUN_OK;
         }
-        return setProtected(protectedSet(routes));
+
+        std::vector<net::IpAddress> dnsServers = resolvers;
+        for (const net::IpAddress &exception : m_dnsExceptions) {
+            if (std::ranges::find(dnsServers, exception) == dnsServers.end()) {
+                dnsServers.push_back(exception);
+            }
+        }
+        return setProtected(protectedSet(routes), dnsServers);
     }
 }

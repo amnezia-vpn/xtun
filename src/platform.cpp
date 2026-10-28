@@ -88,19 +88,21 @@ namespace libxtun
 #endif
     }
 
-    std::unique_ptr<Killswitch> Killswitch::create(libxtun_killswitch_mode mode, int macosGroup)
+    std::unique_ptr<Killswitch> Killswitch::create(libxtun_killswitch_mode mode, int macosGroup,
+                                                   std::vector<net::IpAddress> dnsExceptions)
     {
 #if defined(__linux__) && !defined(__ANDROID__)
         (void)macosGroup;
-        return std::make_unique<LinuxKillswitch>(mode);
+        return std::make_unique<LinuxKillswitch>(mode, std::move(dnsExceptions));
 #elif defined(__APPLE__)
-        return std::make_unique<MacosKillswitch>(mode, macosGroup);
+        return std::make_unique<MacosKillswitch>(mode, macosGroup, std::move(dnsExceptions));
 #elif defined(_WIN32)
         (void)macosGroup;
-        return std::make_unique<WindowsKillswitch>(mode);
+        return std::make_unique<WindowsKillswitch>(mode, std::move(dnsExceptions));
 #else
         (void)mode;
         (void)macosGroup;
+        (void)dnsExceptions;
         return nullptr;
 #endif
     }

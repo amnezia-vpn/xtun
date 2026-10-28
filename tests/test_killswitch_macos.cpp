@@ -272,7 +272,7 @@ namespace libxtun::test
             const auto killswitch = Killswitch::create(LIBXTUN_KILLSWITCH_MODE_HARD, static_cast<int>(::getegid()));
             ASSERT_NE(killswitch, nullptr);
             ASSERT_EQ(m_env.update(*killswitch), LIBXTUN_OK);
-            ASSERT_EQ(killswitch->protect({ *net::IpPrefix::parse("0.0.0.0/0") }), LIBXTUN_OK);
+            ASSERT_EQ(killswitch->protect({ *net::IpPrefix::parse("0.0.0.0/0") }, {}), LIBXTUN_OK);
 
             expectProbeResult(INTERNET_V4, Sender::Proxy, ProbeResult::Uplink, "with the process's group");
             expectProbeResult(INTERNET_V4, Sender::App, ProbeResult::Blocked, "with the process's group");
@@ -281,7 +281,7 @@ namespace libxtun::test
             const auto killswitch = Killswitch::create(LIBXTUN_KILLSWITCH_MODE_HARD, static_cast<int>(FOREIGN_GID));
             ASSERT_NE(killswitch, nullptr);
             ASSERT_EQ(m_env.update(*killswitch), LIBXTUN_OK);
-            ASSERT_EQ(killswitch->protect({ *net::IpPrefix::parse("0.0.0.0/0") }), LIBXTUN_OK);
+            ASSERT_EQ(killswitch->protect({ *net::IpPrefix::parse("0.0.0.0/0") }, {}), LIBXTUN_OK);
 
             expectProbeResult(INTERNET_V4, Sender::App, ProbeResult::Uplink, "with the foreign group");
             expectProbeResult(INTERNET_V4, Sender::Proxy, ProbeResult::Blocked, "with the foreign group");
