@@ -4,6 +4,8 @@
 #include "tun_device.h"
 
 #if defined(_WIN32)
+    #include "dns_windows.cpp"
+    #include "dns_windows.h"
     #include "router_windows.cpp"
     #include "router_windows.h"
     #include "tun_device_windows.cpp"
@@ -65,6 +67,9 @@ namespace libxtun
 #elif defined(__APPLE__)
         (void)ifIndex;
         return MacosDns::open(ifName);
+#elif defined(_WIN32)
+        (void)ifName;
+        return WindowsDns::open(ifIndex);
 #else
         (void)ifIndex;
         (void)ifName;
