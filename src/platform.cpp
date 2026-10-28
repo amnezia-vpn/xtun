@@ -12,6 +12,8 @@
     #include "killswitch_windows.h"
     #include "net/wfp.cpp"
 #elif defined(__APPLE__)
+    #include "dns_macos.cpp"
+    #include "dns_macos.h"
     #include "router_macos.cpp"
     #include "router_macos.h"
     #include "tun_device_macos.cpp"
@@ -59,6 +61,9 @@ namespace libxtun
 #if defined(__linux__) && !defined(__ANDROID__)
         (void)ifName;
         return LinuxDns::open(ifIndex);
+#elif defined(__APPLE__)
+        (void)ifIndex;
+        return MacosDns::open(ifName);
 #else
         (void)ifIndex;
         (void)ifName;

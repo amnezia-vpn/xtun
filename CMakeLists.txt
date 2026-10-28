@@ -86,6 +86,8 @@ if(WIN32)
 elseif(LINUX AND NOT ANDROID)
     find_package(libsystemd REQUIRED)
     target_link_libraries(${PROJECT_NAME} PRIVATE libsystemd::libsystemd)
+elseif(APPLE)
+    target_link_libraries(${PROJECT_NAME} PRIVATE "-framework SystemConfiguration" "-framework CoreFoundation")
 endif()
 
 if(BUILD_TESTS AND NOT CMAKE_CROSSCOMPILING)
