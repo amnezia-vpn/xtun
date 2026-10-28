@@ -31,6 +31,14 @@ namespace libxtun::test
     constexpr const char *PROBE_HOST = "example.com";
     constexpr std::uint16_t PROBE_PORT = 443;
     constexpr auto PROBE_TIMEOUT = std::chrono::milliseconds(2000);
+    constexpr std::uint16_t DNS_PORT = 53;
+    constexpr std::uint16_t DNS_TLS_PORT = 853;
+    constexpr auto TCP_REJECTION_WAIT = std::chrono::milliseconds(50);
+#if defined(__APPLE__)
+    constexpr auto UDP_REJECTION_WAIT = std::chrono::milliseconds(50);
+#else
+    constexpr auto UDP_REJECTION_WAIT = std::chrono::milliseconds(0);
+#endif
     constexpr int CONNECTED_VIA_TUNNEL = 200;
     constexpr int CONNECTED_ELSEWHERE = 201;
 
@@ -61,16 +69,34 @@ namespace libxtun::test
         Blocked
     };
 
+    inline auto socketHandle(const ScopedFd &fd)
+    {
+#if defined(_WIN32)
+        return static_cast<SOCKET>(fd.get());
+#else
+        return fd.get();
+#endif
+    }
+
+    inline int waitForRejection(const ScopedFd &fd, short events, std::chrono::milliseconds timeout)
+    {
+        const auto handle = socketHandle(fd);
+        ::pollfd ready { handle, events, 0 };
+        ::poll(&ready, 1, static_cast<int>(timeout.count()));
+        int error = 0;
+        ::socklen_t size = sizeof(error);
+        if (::getsockopt(handle, SOL_SOCKET, SO_ERROR, reinterpret_cast<char *>(&error), &size) != 0) {
+            return lastSocketError();
+        }
+        return error;
+    }
+
     inline std::string localAddress(const ScopedFd &sock)
     {
         ::sockaddr_storage local {};
         ::socklen_t size = sizeof(local);
         std::array<char, INET6_ADDRSTRLEN> address {};
-#if defined(_WIN32)
-        const auto handle = static_cast<SOCKET>(sock.get());
-#else
-        const int handle = sock.get();
-#endif
+        const auto handle = socketHandle(sock);
         if (::getsockname(handle, reinterpret_cast<::sockaddr *>(&local), &size) != 0
             || ::getnameinfo(reinterpret_cast<::sockaddr *>(&local), size, address.data(),
                              static_cast<::socklen_t>(address.size()), nullptr, 0, NI_NUMERICHOST)
@@ -80,34 +106,34 @@ namespace libxtun::test
         return address.data();
     }
 
-    inline int udpProbe(const std::string &host, std::uint16_t port, unsigned bypass,
-                        std::chrono::milliseconds rejectionWait = std::chrono::milliseconds(0))
+    inline int udpProbe(const std::string &host, std::uint16_t port, unsigned bypass)
     {
         const ConnectedSocket udp = udpConnect(host, port, bypass);
         if (udp.error != 0) {
             return udp.error;
         }
-#if defined(_WIN32)
-        const auto handle = static_cast<SOCKET>(udp.fd.get());
-#else
-        const int handle = udp.fd.get();
-#endif
         const bool viaTunnel = localAddress(udp.fd) == DEFAULT_IFADDR;
         const char byte = 0;
-        if (::send(handle, &byte, 1, 0) != 1) {
+        if (::send(socketHandle(udp.fd), &byte, 1, 0) != 1) {
             return lastSocketError();
         }
-        if (rejectionWait.count() > 0) {
-            ::pollfd ready { handle, POLLIN, 0 };
-            ::poll(&ready, 1, static_cast<int>(rejectionWait.count()));
-            int error = 0;
-            ::socklen_t size = sizeof(error);
-            if (::getsockopt(handle, SOL_SOCKET, SO_ERROR, reinterpret_cast<char *>(&error), &size) != 0) {
-                return lastSocketError();
-            }
-            if (error != 0) {
+        if constexpr (UDP_REJECTION_WAIT.count() > 0) {
+            if (const int error = waitForRejection(udp.fd, POLLIN, UDP_REJECTION_WAIT); error != 0) {
                 return error;
             }
+        }
+        return viaTunnel ? CONNECTED_VIA_TUNNEL : CONNECTED_ELSEWHERE;
+    }
+
+    inline int tcpProbe(const std::string &host, std::uint16_t port, unsigned bypass)
+    {
+        const ConnectedSocket tcp = connectSocket(host, port, SOCK_STREAM, bypass);
+        if (!tcp.fd || (tcp.error != 0 && tcp.error != ERR_IN_PROGRESS && tcp.error != ERR_INTERRUPTED)) {
+            return tcp.error;
+        }
+        const bool viaTunnel = localAddress(tcp.fd) == DEFAULT_IFADDR;
+        if (const int error = waitForRejection(tcp.fd, POLLOUT, TCP_REJECTION_WAIT); error != 0) {
+            return error;
         }
         return viaTunnel ? CONNECTED_VIA_TUNNEL : CONNECTED_ELSEWHERE;
     }
@@ -166,7 +192,8 @@ namespace libxtun::test
         [[nodiscard]] std::unique_ptr<Killswitch> create(libxtun_killswitch_mode mode) const;
         [[nodiscard]] libxtun_error update(Killswitch &killswitch) const;
         [[nodiscard]] int ruleCount() const;
-        [[nodiscard]] std::optional<ProbeResult> probe(const Destination &to, Sender sender) const;
+        [[nodiscard]] std::optional<ProbeResult> probe(const Destination &to, Sender sender,
+                                                       std::uint16_t port = PROBE_PORT) const;
         [[nodiscard]] bool removeTunnelRoutes(const std::vector<std::string> &routes) const;
 
     private:

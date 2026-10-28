@@ -3,7 +3,9 @@ include(GoogleTest)
 
 set(XTUN_TEST_SOURCES
     test_contract.cpp
+    test_dns.cpp
     test_killswitch.cpp
+    test_net_dns.cpp
     test_net_ip.cpp
     test_net_socket.cpp
     test_net_packet_builder.cpp
@@ -29,5 +31,5 @@ if(WIN32)
         COMMAND_EXPAND_LISTS)
 endif()
 
-gtest_discover_tests(xtun_tests TEST_FILTER "Killswitch*" PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE)
-gtest_discover_tests(xtun_tests TEST_FILTER "-Killswitch*" PROPERTIES TIMEOUT 30)
+gtest_discover_tests(xtun_tests TEST_FILTER "Killswitch*:Dns*" PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE)
+gtest_discover_tests(xtun_tests TEST_FILTER "-Killswitch*:Dns*" PROPERTIES TIMEOUT 30)

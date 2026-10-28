@@ -82,6 +82,7 @@ namespace libxtun::test
             const char *clientTemplateA = "[Interface]\n"
                                           "Address = 10.9.10.2/32\n"
                                           "PrivateKey = eMTu4xarpbzj2RKaXO0WiLXA5Xd3coo2rcZPmnR111k=\n"
+                                          "%s"
                                           "[Peer]\n"
                                           "PublicKey = Wg8kZUNcdM6034MJwxlj02Nx9wut7QcUPyb88+j0QXY=\n"
                                           "AllowedIPs = 10.9.10.2/32, %s\n"
@@ -90,6 +91,7 @@ namespace libxtun::test
             const char *clientTemplateB = "[Interface]\n"
                                           "Address = 10.9.10.3/32\n"
                                           "PrivateKey = yH6N0U9I7Ui4KYNOWyacmDqY4KcD21mL0MdA6v7IuXI=\n"
+                                          "%s"
                                           "[Peer]\n"
                                           "PublicKey = Wg8kZUNcdM6034MJwxlj02Nx9wut7QcUPyb88+j0QXY=\n"
                                           "AllowedIPs = 10.9.10.3/32, %s\n"
@@ -107,12 +109,13 @@ namespace libxtun::test
                                          "AllowedIPs = 10.9.10.3/32\n";
 
             auto routes = join(m_routes);
+            const std::string dns = m_dns.empty() ? std::string() : "DNS = " + join(m_dns) + "\n";
 
             return {
                 .name = "awg_local",
                 .proto = LIBXTUN_PROXY_PROTO_AWG,
-                .clientA = formatString(clientTemplateA, routes.c_str(), m_port),
-                .clientB = formatString(clientTemplateB, routes.c_str(), m_port),
+                .clientA = formatString(clientTemplateA, dns.c_str(), routes.c_str(), m_port),
+                .clientB = formatString(clientTemplateB, dns.c_str(), routes.c_str(), m_port),
                 .wrapper = std::make_shared<SockBindRemover>(),
                 .createServer =
                         [cfg = formatString(serverTemplate, m_port)](std::string log) {
@@ -150,6 +153,11 @@ namespace libxtun::test
             m_routes = std::move(routes);
             return *this;
         }
+        SetupBuilder &withDns(std::vector<std::string> dns)
+        {
+            m_dns = std::move(dns);
+            return *this;
+        }
 
         std::vector<Setup> build()
         {
@@ -165,6 +173,7 @@ namespace libxtun::test
         uint16_t m_port = DEFAULT_PORT;
         std::string m_ifaddr = DEFAULT_IFADDR_PREFIX;
         std::vector<std::string> m_routes = { DEFAULT_ROUTE_PREFIX };
+        std::vector<std::string> m_dns;
     };
 
     struct TunOpts : private NonCopyable

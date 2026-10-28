@@ -188,10 +188,10 @@ namespace libxtun::test
         return static_cast<int>(installedFilters().size());
     }
 
-    std::optional<ProbeResult> KillswitchEnv::probe(const Destination &to, Sender sender) const
+    std::optional<ProbeResult> KillswitchEnv::probe(const Destination &to, Sender sender, std::uint16_t port) const
     {
-        const int code = sender == Sender::App ? connectFromPowerShell(to.host, PROBE_PORT)
-                                               : connectFromProxy(to.host, PROBE_PORT, m_uplinkIfIndex);
+        const int code = sender == Sender::App ? connectFromPowerShell(to.host, port)
+                                               : connectFromProxy(to.host, port, m_uplinkIfIndex);
         switch (code) {
         case CONNECTED_VIA_TUNNEL: return ProbeResult::Tunnel;
         case CONNECTED_ELSEWHERE: return ProbeResult::Uplink;

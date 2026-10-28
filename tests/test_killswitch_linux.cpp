@@ -110,13 +110,15 @@ namespace libxtun::test
         return count;
     }
 
-    std::optional<ProbeResult> KillswitchEnv::probe(const Destination &to, Sender sender) const
+    std::optional<ProbeResult> KillswitchEnv::probe(const Destination &to, Sender sender, std::uint16_t port) const
     {
-        const int code = udpProbe(to.host, PROBE_PORT, sender == Sender::Proxy ? PROXY_FWMARK : 0);
+        const unsigned mark = sender == Sender::Proxy ? PROXY_FWMARK : 0;
+        const int code = port == DNS_TLS_PORT ? tcpProbe(to.host, port, mark) : udpProbe(to.host, port, mark);
         switch (code) {
         case CONNECTED_VIA_TUNNEL: return ProbeResult::Tunnel;
         case CONNECTED_ELSEWHERE: return ProbeResult::Uplink;
-        case EPERM: return ProbeResult::Blocked;
+        case EPERM:
+        case ECONNREFUSED: return ProbeResult::Blocked;
         default: break;
         }
 

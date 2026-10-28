@@ -56,6 +56,11 @@ namespace libxtun::test
                 m_cond.notify_all();
             }
 
+            if (auto reply = Responder::replyDns(packet); !reply.empty()) {
+                m_in.push_back(reply);
+                m_cond.notify_all();
+            }
+
             m_out.emplace_back(packet.data(), packet.data() + packet.size());
             m_cond.notify_all();
             return static_cast<int>(packet.size());
