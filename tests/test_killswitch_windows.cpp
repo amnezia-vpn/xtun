@@ -3,6 +3,7 @@
 #include "util/config.h"
 #include "util/killswitch_env.h"
 #include "util/os.h"
+#include "util/process.h"
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -25,7 +26,7 @@ namespace libxtun::test
     namespace
     {
         constexpr auto BLOCK_WAIT = std::chrono::milliseconds(200);
-        constexpr const char *POWERSHELL = "powershell -NoProfile -NonInteractive -Command ";
+        constexpr const char *POWERSHELL = "WindowsPowerShell\\v1.0\\powershell.exe";
         constexpr const char *CONNECT_SCRIPT =
                 "$c = [System.Net.Sockets.UdpClient]::new($a.AddressFamily); "
                 "$t = [System.Net.Sockets.TcpClient]::new($a.AddressFamily); "
@@ -95,34 +96,23 @@ namespace libxtun::test
             return found;
         }
 
-        int runProcess(std::string commandLine)
+        bool netsh(const std::vector<std::string> &args)
         {
-            SECURITY_ATTRIBUTES inheritable { sizeof(inheritable), nullptr, TRUE };
-            const HANDLE nul = ::CreateFileA("NUL", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                                             &inheritable, OPEN_EXISTING, 0, nullptr);
-            STARTUPINFOA startup { sizeof(startup) };
-            startup.dwFlags = STARTF_USESTDHANDLES;
-            startup.hStdInput = startup.hStdOutput = startup.hStdError = nul;
-            PROCESS_INFORMATION process {};
-            const BOOL started = ::CreateProcessA(nullptr, commandLine.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW,
-                                                  nullptr, nullptr, &startup, &process);
-            ::CloseHandle(nul);
-            if (!started) {
-                return -1;
-            }
-            ::WaitForSingleObject(process.hProcess, INFINITE);
-            DWORD code = 1;
-            ::GetExitCodeProcess(process.hProcess, &code);
-            ::CloseHandle(process.hThread);
-            ::CloseHandle(process.hProcess);
-            return static_cast<int>(code);
+            const ResultXtun<int> result = process::run("netsh.exe", args);
+            return result && result.value() == 0;
+        }
+
+        int powershell(const std::string &script)
+        {
+            const ResultXtun<int> result =
+                    process::run(POWERSHELL, { "-NoProfile", "-NonInteractive", "-Command", script });
+            return result ? result.value() : -1;
         }
 
         bool ipv6Route(const char *action, unsigned ifIndex)
         {
-            return runProcess(std::string("netsh interface ipv6 ") + action + " route prefix=" + INTERNET_V6.host
-                              + "/128 interface=" + std::to_string(ifIndex) + " store=active")
-                    == 0;
+            return netsh({ "interface", "ipv6", action, "route", std::string("prefix=") + INTERNET_V6.host + "/128",
+                           "interface=" + std::to_string(ifIndex), "store=active" });
         }
 
         int connectFromPowerShell(const std::string &host, std::uint16_t port)
@@ -132,7 +122,7 @@ namespace libxtun::test
                     + DEFAULT_IFADDR + "'); $viaTunnel = " + std::to_string(CONNECTED_VIA_TUNNEL) + "; $elsewhere = "
                     + std::to_string(CONNECTED_ELSEWHERE) + "; $ms = " + std::to_string(BLOCK_WAIT.count())
                     + "; $blocked = " + std::to_string(WSAEACCES) + "; " + CONNECT_SCRIPT;
-            return runProcess(POWERSHELL + ("\"" + script + "\""));
+            return powershell(script);
         }
 
         int connectFromProxy(const std::string &host, std::uint16_t port, unsigned ifIndex)
@@ -155,7 +145,7 @@ namespace libxtun::test
             m_skipReason = "installing WFP filters requires Administrator";
             return;
         }
-        if (runProcess(std::string(POWERSHELL) + "exit 0") != 0) {
+        if (powershell("exit 0") != 0) {
             m_skipReason = "the app probe needs Windows PowerShell";
             return;
         }
@@ -222,9 +212,8 @@ namespace libxtun::test
 
         const std::string index = std::to_string(*tunnel);
         return std::ranges::all_of(routes, [&index](const std::string &route) {
-            return runProcess("netsh interface ipv4 delete route prefix=" + route + " interface=" + index
-                              + " store=active")
-                    == 0;
+            return netsh({ "interface", "ipv4", "delete", "route", "prefix=" + route, "interface=" + index,
+                           "store=active" });
         });
     }
 }

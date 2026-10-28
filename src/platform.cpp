@@ -11,6 +11,7 @@
     #include "killswitch_windows.cpp"
     #include "killswitch_windows.h"
     #include "net/wfp.cpp"
+    #include "util/process.cpp"
 #elif defined(__APPLE__)
     #include "dns_macos.cpp"
     #include "dns_macos.h"
