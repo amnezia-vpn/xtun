@@ -1,3 +1,4 @@
+#include "health/dns_query.h"
 #include "killswitch_macos.h"
 #include "net/ip.h"
 #include "net/pf.h"
@@ -8,7 +9,6 @@
 
 #include <arpa/inet.h>
 #include <net/if.h>
-#include <netdb.h>
 #include <netinet/in.h>
 #include <sys/poll.h>
 #include <sys/socket.h>
@@ -34,7 +34,7 @@ namespace libxtun::test
         constexpr const char *PROBE_IFACE = "utun9";
         constexpr ::gid_t FOREIGN_GID = 1;
         constexpr const char *UPLINK_ULA = "fd00:7874::2";
-        constexpr auto PF_REJECTION_WAIT = std::chrono::milliseconds(50);
+        constexpr auto ANSWER_WAIT = std::chrono::milliseconds(1000);
 
         bool ifconfig(const std::vector<std::string> &args)
         {
@@ -58,62 +58,14 @@ namespace libxtun::test
             return entries ? entries.value() : std::string {};
         }
 
-        int connectInChild(const ::addrinfo &target, const in_addr &tunnel)
+        template<typename F> int runAsForeignGroup(F &&probe)
         {
-            if (::setegid(FOREIGN_GID) != 0) {
-                return errno;
-            }
-            const ScopedFd sock(::socket(target.ai_family, target.ai_socktype, target.ai_protocol));
-            if (!sock || ::connect(sock.get(), target.ai_addr, target.ai_addrlen) != 0) {
-                return errno;
-            }
-
-            ::sockaddr_storage local {};
-            ::socklen_t localSize = sizeof(local);
-            if (::getsockname(sock.get(), reinterpret_cast<::sockaddr *>(&local), &localSize) != 0) {
-                return errno;
-            }
-            const char byte = 0;
-            if (::send(sock.get(), &byte, 1, 0) != 1) {
-                return errno;
-            }
-            ::pollfd ready { sock.get(), POLLIN, 0 };
-            ::poll(&ready, 1, static_cast<int>(PF_REJECTION_WAIT.count()));
-            int error = 0;
-            ::socklen_t errorSize = sizeof(error);
-            if (::getsockopt(sock.get(), SOL_SOCKET, SO_ERROR, &error, &errorSize) != 0) {
-                return errno;
-            }
-            if (error != 0) {
-                return error;
-            }
-            const bool viaTunnel = local.ss_family == AF_INET
-                    && reinterpret_cast<const ::sockaddr_in &>(local).sin_addr.s_addr == tunnel.s_addr;
-            return viaTunnel ? CONNECTED_VIA_TUNNEL : CONNECTED_ELSEWHERE;
-        }
-
-        int connectAsForeignGroup(const std::string &host, std::uint16_t port)
-        {
-            ::addrinfo hints {};
-            hints.ai_socktype = SOCK_DGRAM;
-            hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV;
-
-            ::addrinfo *resolved = nullptr;
-            if (::getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &resolved) != 0) {
-                return EADDRNOTAVAIL;
-            }
-            in_addr tunnel {};
-            ::inet_pton(AF_INET, DEFAULT_IFADDR, &tunnel);
-
             const ::pid_t child = ::fork();
             if (child == 0) {
-                ::_exit(connectInChild(*resolved, tunnel));
+                ::_exit(::setegid(FOREIGN_GID) != 0 ? errno : probe());
             }
-
-            const int forkError = child < 0 ? errno : 0;
-            ::freeaddrinfo(resolved);
-            if (forkError != 0) {
-                return forkError;
+            if (child < 0) {
+                return errno;
             }
 
             int status = 0;
@@ -127,6 +79,23 @@ namespace libxtun::test
                 return ECHILD;
             }
             return WEXITSTATUS(status);
+        }
+
+        bool answered(const std::string &host, std::uint16_t port, bool tcp)
+        {
+            if (tcp) {
+                return tcpConnect(host, port, ANSWER_WAIT).error == 0;
+            }
+
+            const ConnectedSocket udp = udpConnect(host, port);
+            const health::DnsQuery query(0x1234, 0xdeadbeef);
+            if (udp.error != 0 || ::send(udp.fd.get(), query.bytes().data(), query.bytes().size(), 0) < 0) {
+                return false;
+            }
+            ::pollfd ready { udp.fd.get(), POLLIN, 0 };
+            std::array<std::byte, 512> reply {};
+            return ::poll(&ready, 1, static_cast<int>(ANSWER_WAIT.count())) > 0
+                    && ::recv(udp.fd.get(), reply.data(), reply.size(), 0) > 0;
         }
 
         std::string defaultInterface()
@@ -226,10 +195,18 @@ namespace libxtun::test
         return count;
     }
 
-    std::optional<ProbeResult> KillswitchEnv::probe(const Destination &to, Sender sender) const
+    std::optional<ProbeResult> KillswitchEnv::probe(const Destination &to, Sender sender, std::uint16_t port) const
     {
-        const int code = sender == Sender::App ? connectAsForeignGroup(to.host, PROBE_PORT)
-                                               : udpProbe(to.host, PROBE_PORT, m_uplinkIfIndex, PF_REJECTION_WAIT);
+        const bool tcp = port == DNS_TLS_PORT;
+        const bool dns = tcp || port == DNS_PORT;
+        const auto sendProbe = [&](unsigned bypass) {
+            const int probeCode = tcp ? tcpProbe(to.host, port, bypass) : udpProbe(to.host, port, bypass);
+            if (dns && probeCode == CONNECTED_VIA_TUNNEL && !answered(to.host, port, tcp)) {
+                return EPERM;
+            }
+            return probeCode;
+        };
+        const int code = sender == Sender::App ? runAsForeignGroup([&] { return sendProbe(0); }) : sendProbe(m_uplinkIfIndex);
         switch (code) {
         case CONNECTED_VIA_TUNNEL: return ProbeResult::Tunnel;
         case CONNECTED_ELSEWHERE: return ProbeResult::Uplink;

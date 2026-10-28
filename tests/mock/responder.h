@@ -1,12 +1,16 @@
 #ifndef TEST_ICMP_RESPONDER
 #define TEST_ICMP_RESPONDER
 
+#include "net/dns.h"
 #include "net/icmp.h"
 #include "net/ip.h"
 #include "net/packet_builder.h"
 #include "net/tcp.h"
+#include "net/udp.h"
 #include "util/random.h"
 #include <algorithm>
+#include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace libxtun::test
@@ -117,7 +121,62 @@ namespace libxtun::test
 
         static inline std::vector<std::byte> replyDns(std::span<const std::byte> pkt)
         {
-            return {};
+            return overIp<IPPROTO_UDP>(pkt, [&](auto &&ipIn, std::span<const std::byte> rest) -> std::vector<std::byte> {
+                constexpr std::uint16_t dnsPort = 53;
+                constexpr std::uint32_t ttlSeconds = 60;
+
+                if (rest.size() < net::UdpView::HEADER_LEN) {
+                    return {};
+                }
+                net::UdpView udpIn(rest.first<net::UdpView::HEADER_LEN>());
+                if (udpIn.dport() != dnsPort || udpIn.length() < net::UdpView::HEADER_LEN
+                    || udpIn.length() > rest.size()) {
+                    return {};
+                }
+                const auto query = rest.subspan(net::UdpView::HEADER_LEN, udpIn.length() - net::UdpView::HEADER_LEN);
+                if (query.size() < net::DnsView::HEADER_LEN) {
+                    return {};
+                }
+                net::DnsView dnsIn(query.first<net::DnsView::HEADER_LEN>());
+                const auto question = net::DnsQuestion::parse(query);
+                if ((dnsIn.flags() & net::DnsFlag::RESPONSE) != 0 || dnsIn.questions() != 1 || !question
+                    || question->type != net::DnsType::A) {
+                    return {};
+                }
+
+                const net::IpAddress resolver = ipIn.dstAddress();
+                const bool answered = resolver.family() == AF_INET;
+
+                std::vector<std::byte> dns(query.begin(), query.begin() + question->end);
+                const std::span<std::byte> dnsBytes(dns);
+                net::DnsRef dnsOut(dnsBytes.first<net::DnsRef::HEADER_LEN>());
+                dnsOut.setFlags(net::DnsFlag::RESPONSE | net::DnsFlag::RECURSION_DESIRED
+                                | net::DnsFlag::RECURSION_AVAILABLE)
+                        .setAnswers(answered ? 1 : 0)
+                        .setAuthorities(0)
+                        .setAdditionals(0);
+                if (answered) {
+                    net::DnsARecord { ttlSeconds, resolver }.appendTo(dns);
+                }
+
+                std::vector<std::byte> buf(net::Ip6View::HEADER_LEN + net::UdpView::HEADER_LEN + dns.size());
+                auto res = net::PacketBuilder(buf).ipAuto(resolver, ipIn.srcAddress(), [&](auto &&ipOut) {
+                    return ipOut.udp(udpIn.dport(), udpIn.sport())
+                            .withPayload([&](std::span<std::byte> payload) -> std::optional<std::size_t> {
+                                if (payload.size() < dns.size()) {
+                                    return std::nullopt;
+                                }
+                                std::ranges::copy(dns, payload.begin());
+                                return dns.size();
+                            })
+                            .finish();
+                });
+                if (!res) {
+                    return {};
+                }
+                buf.resize(res->size());
+                return buf;
+            });
         }
     };
 }
