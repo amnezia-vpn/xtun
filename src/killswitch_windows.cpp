@@ -6,6 +6,7 @@
 #include <netioapi.h>
 #include <winerror.h>
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <span>
@@ -14,6 +15,49 @@
 
 namespace libxtun
 {
+    namespace
+    {
+        constexpr UINT16 DNS_PORT = 53;
+        constexpr UINT16 DNS_TLS_PORT = 853;
+
+        FWP_V4_ADDR_AND_MASK v4AddrMask(const net::IpPrefix &prefix)
+        {
+            ULONG mask = 0;
+            ::ConvertLengthToIpv4Mask(prefix.bits(), &mask);
+            std::uint32_t address = 0;
+            std::memcpy(&address, prefix.address().octets().data(), sizeof(address));
+            return FWP_V4_ADDR_AND_MASK { ::ntohl(address), ::ntohl(mask) };
+        }
+
+        FWP_V6_ADDR_AND_MASK v6AddrMask(const net::IpPrefix &prefix)
+        {
+            FWP_V6_ADDR_AND_MASK addrMask {};
+            std::memcpy(addrMask.addr, prefix.address().octets().data(), sizeof(addrMask.addr));
+            addrMask.prefixLength = static_cast<UINT8>(prefix.bits());
+            return addrMask;
+        }
+
+        FWPM_FILTER_CONDITION uint8Condition(const GUID &field, UINT8 value) noexcept
+        {
+            FWPM_FILTER_CONDITION condition {};
+            condition.fieldKey = field;
+            condition.matchType = FWP_MATCH_EQUAL;
+            condition.conditionValue.type = FWP_UINT8;
+            condition.conditionValue.uint8 = value;
+            return condition;
+        }
+
+        FWPM_FILTER_CONDITION uint16Condition(const GUID &field, UINT16 value) noexcept
+        {
+            FWPM_FILTER_CONDITION condition {};
+            condition.fieldKey = field;
+            condition.matchType = FWP_MATCH_EQUAL;
+            condition.conditionValue.type = FWP_UINT16;
+            condition.conditionValue.uint16 = value;
+            return condition;
+        }
+    }
+
     wfp::WfpConfig makeWfpConfig(bool persistent) noexcept {
         wfp::WfpConfig config {};
         config.provider = PROVIDER_KEY;
@@ -56,7 +100,7 @@ namespace libxtun
         m_wfp = std::move(engine).value();
         m_luid = luid.Value;
 
-        if (const auto result = installFilters(m_luid, {}); result != LIBXTUN_OK) {
+        if (const auto result = installFilters(m_luid, {}, {}); result != LIBXTUN_OK) {
             m_wfp.reset();
             return result;
         }
@@ -64,9 +108,10 @@ namespace libxtun
         return LIBXTUN_OK;
     }
 
-    libxtun_error WindowsKillswitch::setProtected(const std::vector<net::IpPrefix> &prefixes)
+    libxtun_error WindowsKillswitch::setProtected(const std::vector<net::IpPrefix> &prefixes,
+                                                  const std::vector<net::IpAddress> &dnsServers)
     {
-        return installFilters(m_luid, prefixes);
+        return installFilters(m_luid, prefixes, dnsServers);
     }
 
     void WindowsKillswitch::remove() noexcept
@@ -83,7 +128,8 @@ namespace libxtun
         }
     }
 
-    libxtun_error WindowsKillswitch::installFilters(std::uint64_t luidValue, const std::vector<net::IpPrefix> &prefixes)
+    libxtun_error WindowsKillswitch::installFilters(std::uint64_t luidValue, const std::vector<net::IpPrefix> &prefixes,
+                                                    const std::vector<net::IpAddress> &dnsServers)
     {
         wfp::WfpEngine::Transaction transaction(*m_wfp);
         if (transaction.status() != LIBXTUN_OK) {
@@ -126,8 +172,21 @@ namespace libxtun
                 if (auto result = allowAppTraffic(layer); result != LIBXTUN_OK) {
                     return result;
                 }
+                if (auto result = allowDhcp(layer, layers.family); result != LIBXTUN_OK) {
+                    return result;
+                }
                 if (auto result = blockProtected(layer, FWPM_CONDITION_IP_REMOTE_ADDRESS, layers.family, prefixes);
                     result != LIBXTUN_OK) {
+                    return result;
+                }
+            }
+
+            if (!prefixes.empty()) {
+                if (auto result = allowDns(layers.connect, layers.family, dnsServers, prefixes, luidValue);
+                    result != LIBXTUN_OK) {
+                    return result;
+                }
+                if (auto result = blockDns(layers.connect); result != LIBXTUN_OK) {
                     return result;
                 }
             }
@@ -139,20 +198,6 @@ namespace libxtun
     libxtun_error WindowsKillswitch::blockProtected(const GUID &layer, const GUID &field, int family,
                                                     const std::vector<net::IpPrefix> &prefixes)
     {
-        const auto v4AddrMask = [](const net::IpPrefix &prefix) {
-            ULONG mask = 0;
-            ::ConvertLengthToIpv4Mask(prefix.bits(), &mask);
-            std::uint32_t address = 0;
-            std::memcpy(&address, prefix.address().octets().data(), sizeof(address));
-            return FWP_V4_ADDR_AND_MASK { ::ntohl(address), ::ntohl(mask) };
-        };
-        const auto v6AddrMask = [](const net::IpPrefix &prefix) {
-            FWP_V6_ADDR_AND_MASK addrMask {};
-            std::memcpy(addrMask.addr, prefix.address().octets().data(), sizeof(addrMask.addr));
-            addrMask.prefixLength = static_cast<UINT8>(prefix.bits());
-            return addrMask;
-        };
-
         std::vector<FWP_V4_ADDR_AND_MASK> v4AddrMasks;
         std::vector<FWP_V6_ADDR_AND_MASK> v6AddrMasks;
         v4AddrMasks.reserve(prefixes.size());
@@ -164,7 +209,8 @@ namespace libxtun
                 continue;
             }
             if (prefix.isDefaultRoute()) {
-                return m_wfp->addFilter(layer, FWP_ACTION_BLOCK, {}, L"Block traffic to protected destinations");
+                return m_wfp->addFilter(layer, FWP_ACTION_BLOCK, WEIGHT_BLOCK_PROTECTED, {},
+                                        L"Block traffic to protected destinations");
             }
 
             FWPM_FILTER_CONDITION condition {};
@@ -183,7 +229,8 @@ namespace libxtun
         if (conditions.empty()) {
             return LIBXTUN_OK;
         }
-        return m_wfp->addFilter(layer, FWP_ACTION_BLOCK, conditions, L"Block traffic to protected destinations");
+        return m_wfp->addFilter(layer, FWP_ACTION_BLOCK, WEIGHT_BLOCK_PROTECTED, conditions,
+                                L"Block traffic to protected destinations");
     }
 
     libxtun_error WindowsKillswitch::allowTunnel(const GUID &layer, const GUID &field, std::uint64_t luidValue) noexcept
@@ -194,7 +241,8 @@ namespace libxtun
         condition.conditionValue.type = FWP_UINT64;
         condition.conditionValue.uint64 = &luidValue;
 
-        return m_wfp->addFilter(layer, FWP_ACTION_PERMIT, std::span(&condition, 1), L"Allow traffic via tunnel");
+        return m_wfp->addFilter(layer, FWP_ACTION_PERMIT, WEIGHT_PASS_TUNNEL, std::span(&condition, 1),
+                                L"Allow traffic via tunnel");
     }
 
     libxtun_error WindowsKillswitch::allowLoopback(const GUID &layer) noexcept
@@ -205,7 +253,8 @@ namespace libxtun
         condition.conditionValue.type = FWP_UINT32;
         condition.conditionValue.uint32 = FWP_CONDITION_FLAG_IS_LOOPBACK;
 
-        return m_wfp->addFilter(layer, FWP_ACTION_PERMIT, std::span(&condition, 1), L"Allow loopback traffic");
+        return m_wfp->addFilter(layer, FWP_ACTION_PERMIT, WEIGHT_PASS, std::span(&condition, 1),
+                                L"Allow loopback traffic");
     }
 
     libxtun_error WindowsKillswitch::allowAppTraffic(const GUID &layer) noexcept
@@ -228,6 +277,103 @@ namespace libxtun
         condition.conditionValue.type = FWP_BYTE_BLOB_TYPE;
         condition.conditionValue.byteBlob = appId.get();
 
-        return m_wfp->addFilter(layer, FWP_ACTION_PERMIT, std::span(&condition, 1), L"Allow app traffic");
+        return m_wfp->addFilter(layer, FWP_ACTION_PERMIT, WEIGHT_PASS, std::span(&condition, 1), L"Allow app traffic");
+    }
+
+    libxtun_error WindowsKillswitch::allowDhcp(const GUID &layer, int family) noexcept
+    {
+        const bool v6 = family == AF_INET6;
+        std::array<FWPM_FILTER_CONDITION, 3> conditions {
+            uint8Condition(FWPM_CONDITION_IP_PROTOCOL, IPPROTO_UDP),
+            uint16Condition(FWPM_CONDITION_IP_LOCAL_PORT, v6 ? 546 : 68),
+            uint16Condition(FWPM_CONDITION_IP_REMOTE_PORT, v6 ? 547 : 67),
+        };
+
+        return m_wfp->addFilter(layer, FWP_ACTION_PERMIT, WEIGHT_PASS, conditions, L"Allow DHCP");
+    }
+
+    libxtun_error WindowsKillswitch::allowDns(const GUID &layer, int family,
+                                              const std::vector<net::IpAddress> &dnsServers,
+                                              const std::vector<net::IpPrefix> &prefixes, std::uint64_t luidValue)
+    {
+        const auto inside = [&prefixes](const net::IpAddress &server) {
+            return std::ranges::any_of(prefixes, [&server](const net::IpPrefix &prefix) { return prefix.contains(server); });
+        };
+
+        for (const bool viaTunnel : { false, true }) {
+            std::vector<FWP_V4_ADDR_AND_MASK> v4AddrMasks;
+            std::vector<FWP_V6_ADDR_AND_MASK> v6AddrMasks;
+            v4AddrMasks.reserve(dnsServers.size());
+            v6AddrMasks.reserve(dnsServers.size());
+
+            std::vector<FWPM_FILTER_CONDITION> conditions;
+            for (const net::IpAddress &server : dnsServers) {
+                if (server.family() != family || inside(server) != viaTunnel) {
+                    continue;
+                }
+
+                const net::IpPrefix host(server, family == AF_INET ? 32 : 128);
+                FWPM_FILTER_CONDITION condition {};
+                condition.fieldKey = FWPM_CONDITION_IP_REMOTE_ADDRESS;
+                condition.matchType = FWP_MATCH_EQUAL;
+                if (family == AF_INET) {
+                    condition.conditionValue.type = FWP_V4_ADDR_MASK;
+                    condition.conditionValue.v4AddrMask = &v4AddrMasks.emplace_back(v4AddrMask(host));
+                } else {
+                    condition.conditionValue.type = FWP_V6_ADDR_MASK;
+                    condition.conditionValue.v6AddrMask = &v6AddrMasks.emplace_back(v6AddrMask(host));
+                }
+                conditions.push_back(condition);
+            }
+
+            if (conditions.empty()) {
+                continue;
+            }
+            if (viaTunnel) {
+                FWPM_FILTER_CONDITION tunnel {};
+                tunnel.fieldKey = FWPM_CONDITION_IP_LOCAL_INTERFACE;
+                tunnel.matchType = FWP_MATCH_EQUAL;
+                tunnel.conditionValue.type = FWP_UINT64;
+                tunnel.conditionValue.uint64 = &luidValue;
+                conditions.push_back(tunnel);
+            }
+
+            std::vector<FWPM_FILTER_CONDITION> udp = conditions;
+            udp.push_back(uint8Condition(FWPM_CONDITION_IP_PROTOCOL, IPPROTO_UDP));
+            udp.push_back(uint16Condition(FWPM_CONDITION_IP_REMOTE_PORT, DNS_PORT));
+            if (auto result = m_wfp->addFilter(layer, FWP_ACTION_PERMIT, WEIGHT_PASS, udp, L"Allow DNS over UDP");
+                result != LIBXTUN_OK) {
+                return result;
+            }
+
+            std::vector<FWPM_FILTER_CONDITION> tcp = conditions;
+            tcp.push_back(uint8Condition(FWPM_CONDITION_IP_PROTOCOL, IPPROTO_TCP));
+            tcp.push_back(uint16Condition(FWPM_CONDITION_IP_REMOTE_PORT, DNS_PORT));
+            tcp.push_back(uint16Condition(FWPM_CONDITION_IP_REMOTE_PORT, DNS_TLS_PORT));
+            if (auto result = m_wfp->addFilter(layer, FWP_ACTION_PERMIT, WEIGHT_PASS, tcp, L"Allow DNS over TCP");
+                result != LIBXTUN_OK) {
+                return result;
+            }
+        }
+        return LIBXTUN_OK;
+    }
+
+    libxtun_error WindowsKillswitch::blockDns(const GUID &layer) noexcept
+    {
+        std::array<FWPM_FILTER_CONDITION, 2> udp {
+            uint8Condition(FWPM_CONDITION_IP_PROTOCOL, IPPROTO_UDP),
+            uint16Condition(FWPM_CONDITION_IP_REMOTE_PORT, DNS_PORT),
+        };
+        if (auto result = m_wfp->addFilter(layer, FWP_ACTION_BLOCK, WEIGHT_BLOCK_DNS, udp, L"Block DNS over UDP");
+            result != LIBXTUN_OK) {
+            return result;
+        }
+
+        std::array<FWPM_FILTER_CONDITION, 3> tcp {
+            uint8Condition(FWPM_CONDITION_IP_PROTOCOL, IPPROTO_TCP),
+            uint16Condition(FWPM_CONDITION_IP_REMOTE_PORT, DNS_PORT),
+            uint16Condition(FWPM_CONDITION_IP_REMOTE_PORT, DNS_TLS_PORT),
+        };
+        return m_wfp->addFilter(layer, FWP_ACTION_BLOCK, WEIGHT_BLOCK_DNS, tcp, L"Block DNS over TCP");
     }
 }

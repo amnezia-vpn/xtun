@@ -64,7 +64,7 @@ namespace libxtun::wfp
 
         libxtun_error addProvider() noexcept;
         libxtun_error addSublayer() noexcept;
-        libxtun_error addFilter(const GUID &layer, const FWP_ACTION_TYPE action,
+        libxtun_error addFilter(const GUID &layer, const FWP_ACTION_TYPE action, const UINT8 weight,
                                 std::span<FWPM_FILTER_CONDITION> conditions, const wchar_t *name) noexcept;
         ResultXtun<std::vector<FilterInfo>> getInstalledFilters();
         libxtun_error deleteFilters();
