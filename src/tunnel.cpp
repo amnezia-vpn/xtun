@@ -24,6 +24,22 @@ namespace
 
 namespace libxtun
 {
+    namespace
+    {
+        ResultXtun<std::vector<net::IpAddress>> parseAddrList(const char *const *list)
+        {
+            std::vector<net::IpAddress> out;
+            for (const std::string &text : parseStrList(list)) {
+                const auto addr = net::IpAddress::parse(text);
+                if (!addr) {
+                    return fail(LIBXTUN_ERR_INVALID_ARGS);
+                }
+                out.push_back(*addr);
+            }
+            return out;
+        }
+    }
+
     Tunnel::~Tunnel()
     {
         if (m_proxy) {
@@ -31,6 +47,9 @@ namespace libxtun
         }
         m_device->stopMonitor();
         m_device->cancelRead();
+        if (m_dns != nullptr) {
+            m_dns->revert();
+        }
         if (m_router != nullptr) {
             m_router->revert();
         }
@@ -38,7 +57,17 @@ namespace libxtun
 
     ResultXtun<std::unique_ptr<Tunnel>> Tunnel::fromOpts(const libxtun_tunnel_opts &opts)
     {
+        auto dnsDefaults = parseAddrList(opts.dns);
+        if (!dnsDefaults) {
+            return fail(dnsDefaults.error());
+        }
+        const auto dnsExceptions = parseAddrList(opts.dns_exceptions);
+        if (!dnsExceptions) {
+            return fail(dnsExceptions.error());
+        }
+
         auto tun = std::unique_ptr<Tunnel>(new Tunnel());
+        tun->m_dnsDefaults = std::move(dnsDefaults).value();
         tun->m_device = createTunDevice();
         tun->m_router = Router::create();
         tun->m_killswitch = Killswitch::create(opts.killswitch_mode, opts.macos_group);
@@ -61,6 +90,8 @@ namespace libxtun
         if (auto rc = killswitch->update(dev->ifIndex(), dev->name())) {
             return fail(rc);
         }
+
+        tun->m_dns = Dns::create(dev->ifIndex(), dev->name());
 
         // FIXME(cd-amn): add a handle in router to obtain these addrs, and remove this one completely
         for (const auto &ifAddr : ifAddrs) {
@@ -109,10 +140,14 @@ namespace libxtun
         }
 
         ProxyProfile profile = proxy->profile();
+        const std::vector<net::IpAddress> &resolvers = profile.dnsServers.empty() ? m_dnsDefaults : profile.dnsServers;
 
         if (m_killswitch != nullptr) {
             if (auto rc = m_killswitch->protect(profile.routes); rc != LIBXTUN_OK) {
                 detachProxyLocked(m_proxy);
+                if (m_dns != nullptr) {
+                    m_dns->revert();
+                }
                 m_killswitch->protect({});
                 return rc;
             }
@@ -132,6 +167,9 @@ namespace libxtun
             if (auto rc = m_router->setProxyRoutes(strRoutes); rc != LIBXTUN_OK) {
                 // FIXME(cd-amn): we are reverting too much in here. Should be rollback() or similar
                 m_router->revert();
+                if (m_dns != nullptr) {
+                    m_dns->revert();
+                }
                 if (m_killswitch != nullptr) {
                     m_killswitch->protect({});
                 }
@@ -139,8 +177,18 @@ namespace libxtun
             }
         }
 
-        // TODO(cd-amn): write DNS (if Tunnel is created via fromOpts)
-        void(profile.dnsServers);
+        if (m_dns != nullptr) {
+            if (m_dns->apply(resolvers) != LIBXTUN_OK) {
+                m_dns->revert();
+                if (m_router != nullptr) {
+                    m_router->clearProxyRoutes();
+                }
+                if (m_killswitch != nullptr) {
+                    m_killswitch->protect({});
+                }
+                return LIBXTUN_ERR_DNS;
+            }
+        }
 
         m_device->resetReadCancellation();
 
@@ -158,6 +206,9 @@ namespace libxtun
             return;
         }
 
+        if (m_dns != nullptr) {
+            m_dns->revert();
+        }
         detachProxyLocked(proxy);
         if (m_killswitch != nullptr) {
             m_killswitch->protect({});
