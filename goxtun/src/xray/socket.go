@@ -11,13 +11,6 @@ import (
 	"github.com/xtls/xray-core/transport/internet"
 )
 
-// protected by once
-var socketOwner struct {
-	mu              sync.Mutex
-	instance        *Instance
-	callbacksClosed bool
-}
-
 type socketScope struct {
 	mu     sync.Mutex
 	conns  []net.Conn
@@ -53,8 +46,10 @@ func (s *socketScope) Close() {
 	}
 }
 
-type socketDialer struct {
-	internet.DefaultSystemDialer
+type socketDialer struct{}
+
+func (*socketDialer) DestIpAddress() net.IP {
+	return nil
 }
 
 func (d *socketDialer) Dial(
@@ -70,7 +65,17 @@ func (d *socketDialer) Dial(
 	if !ok || scope == nil {
 		return nil, errors.New("xray: missing socket scope")
 	}
-	conn, err := d.DefaultSystemDialer.Dial(ctx, src, dest, sockopt)
+
+	owner, err := socketOwnerFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if dest.Network != xnet.Network_TCP {
+		return nil, errors.New("UDP isn't impl yet")
+	}
+
+	conn, err := dialTCP(ctx, owner, src, dest, sockopt)
 	if err != nil {
 		return nil, err
 	}
@@ -87,28 +92,26 @@ func (d *socketDialer) Dial(
 }
 
 type socketScopeKey struct{}
+type socketOwnerKey struct{}
 
-var registerSocketHook = sync.OnceValue(func() error {
-	err := internet.RegisterDialerController(controlSocket)
-	if err != nil {
-		return err
-	}
+var registerSocketHook = sync.OnceFunc(func() {
 	internet.UseAlternativeSystemDialer(&socketDialer{})
-	return nil
 })
 
-func controlSocket(network string, address string, raw syscall.RawConn) error {
-	socketOwner.mu.Lock()
+func (i *Instance) controlSocket(
+	network string,
+	address string,
+	raw syscall.RawConn,
+) error {
+	i.socketMu.Lock()
 
-	i := socketOwner.instance
-
-	if i == nil || socketOwner.callbacksClosed {
-		socketOwner.mu.Unlock()
-		return nil
+	if i.socketCallbacksClosed {
+		i.socketMu.Unlock()
+		return net.ErrClosed
 	}
 
 	i.socketCalls.Add(1)
-	socketOwner.mu.Unlock()
+	i.socketMu.Unlock()
 
 	defer i.socketCalls.Done()
 
@@ -117,33 +120,11 @@ func controlSocket(network string, address string, raw syscall.RawConn) error {
 	})
 }
 
-func (i *Instance) waitSocketCallbacks() {
-	socketOwner.mu.Lock()
-	if socketOwner.instance == i {
-		socketOwner.callbacksClosed = true
-	}
-	socketOwner.mu.Unlock()
-	i.socketCalls.Wait()
-}
-
-func (i *Instance) releaseSocketOwner() {
-	socketOwner.mu.Lock()
-	defer socketOwner.mu.Unlock()
-
-	if socketOwner.instance == i {
-		socketOwner.instance = nil
-	}
-}
-
-func claimSocketOwner(i *Instance) error {
-	socketOwner.mu.Lock()
-	defer socketOwner.mu.Unlock()
-
-	if socketOwner.instance != nil {
-		return errors.New("xray instance already exists")
+func socketOwnerFromContext(ctx context.Context) (*Instance, error) {
+	i, ok := ctx.Value(socketOwnerKey{}).(*Instance)
+	if !ok || i == nil {
+		return nil, errors.New("xray: missing socket owner")
 	}
 
-	socketOwner.instance = i
-	socketOwner.callbacksClosed = false
-	return nil
+	return i, nil
 }
