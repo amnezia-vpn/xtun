@@ -38,10 +38,12 @@ type Instance struct {
 	nicID     tcpip.NICID
 	callbacks Callbacks
 
-	cancel      context.CancelFunc
-	closeOnce   sync.Once
-	workers     sync.WaitGroup
-	socketCalls sync.WaitGroup
+	cancel                context.CancelFunc
+	closeOnce             sync.Once
+	workers               sync.WaitGroup
+	socketMu              sync.Mutex
+	socketCallbacksClosed bool
+	socketCalls           sync.WaitGroup
 
 	up       atomic.Bool
 	upNotify chan struct{}
@@ -65,9 +67,7 @@ func NewInstance(
 	callbacks Callbacks,
 	config *core.Config,
 ) (*Instance, error) {
-	if err := registerSocketHook(); err != nil {
-		return nil, err
-	}
+	registerSocketHook()
 
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -83,10 +83,7 @@ func NewInstance(
 		tcpDone:   make(chan struct{}),
 	}
 
-	if err := claimSocketOwner(i); err != nil {
-		cancel()
-		return nil, err
-	}
+	ctx = context.WithValue(ctx, socketOwnerKey{}, i)
 
 	ready := false
 	defer func() {
@@ -103,7 +100,6 @@ func NewInstance(
 		}
 
 		i.waitSocketCallbacks()
-		i.releaseSocketOwner()
 	}()
 
 	var err error
@@ -168,6 +164,13 @@ func (i *Instance) TriggerEvent(event Event) {
 	}
 }
 
+func (i *Instance) waitSocketCallbacks() {
+	i.socketMu.Lock()
+	i.socketCallbacksClosed = true
+	i.socketMu.Unlock()
+	i.socketCalls.Wait()
+}
+
 // Close waits for callbacks and workers before releasing the stack.
 // The caller must unblock pending callbacks and keep their userdata alive until Close returns.
 func (i *Instance) Close() {
@@ -181,7 +184,6 @@ func (i *Instance) Close() {
 		i.waitSocketCallbacks()
 		i.endpoint.Close()
 		i.stack.Destroy()
-		i.releaseSocketOwner()
 	})
 }
 
