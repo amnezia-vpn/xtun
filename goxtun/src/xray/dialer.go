@@ -121,3 +121,70 @@ func dialTCP(
 
 	return dialer.DialContext(ctx, "tcp", dest.NetAddr())
 }
+
+func dialUDP(
+	ctx context.Context,
+	owner *Instance,
+	src xnet.Address,
+	dest xnet.Destination,
+	sockopt *internet.SocketConfig,
+) (net.Conn, error) {
+	srcAddr := resolveSrcAddr(xnet.Network_UDP, src)
+	if srcAddr == nil {
+		srcAddr = &net.UDPAddr{
+			IP:   net.IPv4zero,
+			Port: 0,
+		}
+	}
+
+	destAddr, err := net.ResolveUDPAddr("udp", dest.NetAddr())
+	if err != nil {
+		return nil, err
+	}
+
+	internet.ControllersLock.Lock()
+	controllers := slices.Clone(internet.Controllers)
+	internet.ControllersLock.Unlock()
+
+	var lc net.ListenConfig
+
+	lc.Control = func(network, address string, raw syscall.RawConn) error {
+		if err := owner.controlSocket(network, address, raw); err != nil {
+			return err
+		}
+
+		for _, controller := range controllers {
+			if err := controller(network, address, raw); err != nil {
+				xerrors.LogInfoInner(
+					ctx, err, "failed to apply external controller",
+				)
+			}
+		}
+
+		return raw.Control(func(fd uintptr) {
+			if sockopt == nil {
+				return
+			}
+
+			if err := applyXrayOutboundSocketOptions(network, destAddr.String(), fd, sockopt); err != nil {
+				xerrors.LogInfoInner(
+					ctx, err, "failed to apply socket options",
+				)
+			}
+		})
+	}
+
+	packetConn, err := lc.ListenPacket(
+		ctx,
+		srcAddr.Network(),
+		srcAddr.String(),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return &internet.PacketConnWrapper{
+		PacketConn: packetConn,
+		Dest:       destAddr,
+	}, nil
+}

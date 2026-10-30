@@ -71,11 +71,15 @@ func (d *socketDialer) Dial(
 		return nil, err
 	}
 
-	if dest.Network != xnet.Network_TCP {
-		return nil, errors.New("UDP isn't impl yet")
+	var conn net.Conn
+	switch dest.Network {
+	case xnet.Network_TCP:
+		conn, err = dialTCP(ctx, owner, src, dest, sockopt)
+	case xnet.Network_UDP:
+		conn, err = dialUDP(ctx, owner, src, dest, sockopt)
+	default:
+		return nil, errors.New("xray: unsupported network")
 	}
-
-	conn, err := dialTCP(ctx, owner, src, dest, sockopt)
 	if err != nil {
 		return nil, err
 	}

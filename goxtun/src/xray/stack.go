@@ -45,11 +45,11 @@ func (i *Instance) initTCP(ctx context.Context) error {
 }
 
 func (i *Instance) handleTCP(ctx context.Context, request *tcp.ForwarderRequest) {
-	if !i.beginTCP(ctx) {
+	if !i.beginFlow(ctx) {
 		request.Complete(false)
 		return
 	}
-	defer i.endTCP()
+	defer i.endFlow()
 
 	id := request.ID()
 
@@ -110,26 +110,26 @@ func (i *Instance) handleTCP(ctx context.Context, request *tcp.ForwarderRequest)
 	}
 }
 
-func (i *Instance) beginTCP(ctx context.Context) bool {
-	i.tcpMu.Lock()
-	defer i.tcpMu.Unlock()
+func (i *Instance) beginFlow(ctx context.Context) bool {
+	i.flowMu.Lock()
+	defer i.flowMu.Unlock()
 
-	if i.tcpStopping || ctx.Err() != nil {
+	if i.stopping || ctx.Err() != nil {
 		return false
 	}
 
-	i.tcpActive++
+	i.activeFlows++
 	return true
 }
 
-func (i *Instance) endTCP() {
-	i.tcpMu.Lock()
-	defer i.tcpMu.Unlock()
+func (i *Instance) endFlow() {
+	i.flowMu.Lock()
+	defer i.flowMu.Unlock()
 
-	i.tcpActive--
+	i.activeFlows--
 
-	if i.tcpStopping && i.tcpActive == 0 {
-		close(i.tcpDone)
+	if i.stopping && i.activeFlows == 0 {
+		close(i.flowsDone)
 	}
 }
 
@@ -148,13 +148,13 @@ func (i *Instance) SubmitError(err error) {
 }
 
 // expl: CreateEndpoint doesn't return ep nor takes the context. So, it's something that we could do about it.
-func (i *Instance) abortTCP() {
+func (i *Instance) abortFlows() {
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-i.tcpDone:
+		case <-i.flowsDone:
 			return
 		default:
 		}
@@ -164,7 +164,7 @@ func (i *Instance) abortTCP() {
 		}
 
 		select {
-		case <-i.tcpDone:
+		case <-i.flowsDone:
 			return
 		case <-ticker.C:
 		}
