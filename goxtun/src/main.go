@@ -84,10 +84,6 @@ func toCtx(v any) unsafe.Pointer {
 	return unsafe.Pointer(h)
 }
 
-func toHandle(v any) C.uintptr_t {
-	return C.uintptr_t(cgo.NewHandle(v))
-}
-
 func fromCtx[K any](ctx unsafe.Pointer) (*K, cgo.Handle) {
 	h := cgo.Handle(uintptr(ctx))
 	o, _ := h.Value().(*K)
@@ -201,17 +197,17 @@ func goxtun_xray_new(
 	sockCb C.goxtun_sockcb,
 	sockPriv unsafe.Pointer,
 	configJSON *C.char,
-) C.uintptr_t {
+) unsafe.Pointer {
 	logError := wrapLog(errorfCb, logPriv)
 
 	if configJSON == nil {
 		logError("xray: configJSON is required")
-		return 0
+		return nil
 	}
 
 	if readCb == nil || mtuCb == nil || writeCb == nil {
 		logError("xray: read, write and mtu callbacks are required")
-		return 0
+		return nil
 	}
 
 	callbacks := xray.Callbacks{
@@ -227,7 +223,7 @@ func goxtun_xray_new(
 	cfg, err := confserial.LoadJSONConfig(strings.NewReader(confStr))
 	if err != nil {
 		callbacks.Error("xray: parse config: " + err.Error())
-		return 0
+		return nil
 	}
 
 	endpoint := channel.New(outboundQueueSize, initialMTU, "")
@@ -257,7 +253,7 @@ func goxtun_xray_new(
 
 	if err := gStack.CreateNIC(nicID, endpoint); err != nil {
 		callbacks.Error("xray: create nic: " + err.String())
-		return 0
+		return nil
 	}
 
 	gStack.SetRouteTable([]tcpip.Route{
@@ -267,47 +263,45 @@ func goxtun_xray_new(
 
 	if err := gStack.SetPromiscuousMode(nicID, true); err != nil {
 		callbacks.Error("xray: enable promiscuous mode: " + err.String())
-		return 0
+		return nil
 	}
 
 	if err := gStack.SetSpoofing(nicID, true); err != nil {
 		callbacks.Error("xray: enable spoofing: " + err.String())
-		return 0
+		return nil
 	}
 
 	instance, err := xray.NewInstance(context.Background(), gStack, endpoint, nicID, callbacks, cfg)
 	if err != nil {
 		callbacks.Error("xray: new instance: " + err.Error())
-		return 0
+		return nil
 	}
 
-	handle := toHandle(instance)
+	handle := toCtx(instance)
 
 	transferred = true
 	return handle
 }
 
 //export goxtun_xray_free
-func goxtun_xray_free(handle C.uintptr_t) {
-	if handle == 0 {
+func goxtun_xray_free(ctx unsafe.Pointer) {
+	if ctx == nil {
 		return
 	}
 
-	h := cgo.Handle(handle)
-	instance := h.Value().(*xray.Instance)
+	instance, h := fromCtx[xray.Instance](ctx)
 
 	instance.Close()
 	h.Delete()
 }
 
 //export goxtun_xray_event
-func goxtun_xray_event(handle C.uintptr_t, event C.int) {
-	if handle == 0 {
+func goxtun_xray_event(ctx unsafe.Pointer, event C.int) {
+	if ctx == nil {
 		return
 	}
 
-	h := cgo.Handle(handle)
-	instance := h.Value().(*xray.Instance)
+	instance, _ := fromCtx[xray.Instance](ctx)
 
 	instance.TriggerEvent(xray.Event(event))
 }
