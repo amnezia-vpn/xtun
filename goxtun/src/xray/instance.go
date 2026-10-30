@@ -53,10 +53,10 @@ type Instance struct {
 	engine     *core.Instance
 	dispatcher routing.Dispatcher
 
-	tcpMu       sync.Mutex
-	tcpStopping bool
-	tcpActive   int
-	tcpDone     chan struct{}
+	flowMu      sync.Mutex
+	stopping    bool
+	activeFlows int
+	flowsDone   chan struct{}
 }
 
 func NewInstance(
@@ -80,7 +80,7 @@ func NewInstance(
 		events:    make(chan Event),
 		upNotify:  make(chan struct{}, 1),
 		done:      ctx.Done(),
-		tcpDone:   make(chan struct{}),
+		flowsDone: make(chan struct{}),
 	}
 
 	ctx = context.WithValue(ctx, socketOwnerKey{}, i)
@@ -119,6 +119,8 @@ func NewInstance(
 		return nil, err
 	}
 
+	i.initUDP(ctx)
+
 	i.workers.Go(func() {
 		i.runEvents(ctx)
 	})
@@ -137,22 +139,22 @@ func NewInstance(
 
 // Stop requests shutdown without interrupting callbacks or waiting for workers.
 func (i *Instance) Stop() {
-	i.tcpMu.Lock()
-	defer i.tcpMu.Unlock()
+	i.flowMu.Lock()
+	defer i.flowMu.Unlock()
 
-	if i.tcpStopping {
+	if i.stopping {
 		return
 	}
 
-	i.tcpStopping = true
+	i.stopping = true
 	i.cancel()
 
-	if i.tcpActive == 0 {
-		close(i.tcpDone)
+	if i.activeFlows == 0 {
+		close(i.flowsDone)
 		return
 	}
 
-	i.workers.Go(i.abortTCP)
+	i.workers.Go(i.abortFlows)
 }
 
 // TriggerEvent hands an event to the event loop; it does not wait for processing.
