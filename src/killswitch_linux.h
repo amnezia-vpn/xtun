@@ -30,6 +30,8 @@ namespace libxtun
 
     private:
         std::string m_ifName;
+        std::vector<net::IpPrefix> m_prefixes;
+        std::vector<net::IpAddress> m_dnsServers;
     };
 }
 #endif

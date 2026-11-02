@@ -82,14 +82,21 @@ namespace libxtun
         for (const int family : { AF_INET, AF_INET6 }) {
             if (const auto rc = iptables::restore(family, iptablesRules(family, m_ifName, prefixes, dnsServers));
                 rc != LIBXTUN_OK) {
+                if (family == AF_INET6) {
+                    iptables::restore(AF_INET, iptablesRules(AF_INET, m_ifName, m_prefixes, m_dnsServers));
+                }
                 return rc;
             }
         }
+        m_prefixes = prefixes;
+        m_dnsServers = dnsServers;
         return LIBXTUN_OK;
     }
 
     void LinuxKillswitch::remove() noexcept
     {
+        m_prefixes.clear();
+        m_dnsServers.clear();
         for (const int family : { AF_INET, AF_INET6 }) {
             iptables::run(family, { "-t", "filter", "-D", "OUTPUT", "-j", CHAIN });
             iptables::run(family, { "-t", "filter", "-F", CHAIN });
