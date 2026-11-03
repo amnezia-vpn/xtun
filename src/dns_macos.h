@@ -2,7 +2,6 @@
 #define LIBXTUN_DNS_MACOS_H
 
 #include "dns.h"
-#include "util/noncopyable.h"
 #include "xtun.h"
 
 #include <CoreFoundation/CoreFoundation.h>
@@ -10,39 +9,20 @@
 
 #include <memory>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 namespace libxtun
 {
-    template<typename T> class CfRef final : private NonCopyable
+    struct CfDeleter
     {
-    public:
-        CfRef() noexcept = default;
-        explicit CfRef(T ref) noexcept : m_ref(ref)
+        void operator()(CFTypeRef ref) const noexcept
         {
+            CFRelease(ref);
         }
-        CfRef(CfRef &&other) noexcept : m_ref(std::exchange(other.m_ref, nullptr))
-        {
-        }
-        ~CfRef()
-        {
-            if (m_ref != nullptr) {
-                CFRelease(m_ref);
-            }
-        }
-
-        [[nodiscard]] T get() const noexcept
-        {
-            return m_ref;
-        }
-        explicit operator bool() const noexcept
-        {
-            return m_ref != nullptr;
-        }
-
-    private:
-        T m_ref = nullptr;
     };
+
+    template<typename T> using CfRef = std::unique_ptr<std::remove_pointer_t<T>, CfDeleter>;
 
     class MacosDns final : public Dns
     {
