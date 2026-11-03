@@ -56,6 +56,7 @@ namespace libxtun
                 return LIBXTUN_ERR_DNS;
             }
         }
+        flushResolverCache();
         return LIBXTUN_OK;
     }
 
@@ -66,6 +67,18 @@ namespace libxtun
             setNameServers(AF_INET6, {});
         } catch (...) {
         }
+    }
+
+    void WindowsDns::flushResolverCache()
+    {
+        const HMODULE dnsapi = ::LoadLibraryExW(L"dnsapi.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+        if (dnsapi == nullptr) {
+            return;
+        }
+        if (const auto flush = reinterpret_cast<BOOL(WINAPI *)()>(::GetProcAddress(dnsapi, "DnsFlushResolverCache"))) {
+            flush();
+        }
+        ::FreeLibrary(dnsapi);
     }
 
     bool WindowsDns::setNameServers(int family, const std::vector<net::IpAddress> &servers)

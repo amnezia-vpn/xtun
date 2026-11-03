@@ -133,11 +133,17 @@ namespace libxtun
             revert();
             return LIBXTUN_ERR_DNS;
         }
+        flushResolverCache();
         return LIBXTUN_OK;
     }
 
     void LinuxDns::revert() noexcept
     {
         BusMessage(m_bus.get(), "RevertLink").append("i", m_ifIndex).send();
+    }
+
+    void LinuxDns::flushResolverCache()
+    {
+        BusMessage(m_bus.get(), "FlushCaches").send();
     }
 }

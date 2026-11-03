@@ -49,6 +49,8 @@ namespace libxtun
         void revert() noexcept override;
 
     private:
+        void flushResolverCache();
+
         std::unique_ptr<sd_bus, SdBusDeleter> m_bus;
         int m_ifIndex = -1;
     };
