@@ -339,34 +339,43 @@ namespace libxtun
             }
 
             struct rt_msghdr *rtm = reinterpret_cast<struct rt_msghdr *>(buf);
-            if ((rtm->rtm_type == RTM_ADD || rtm->rtm_type == RTM_DELETE || rtm->rtm_type == RTM_CHANGE)
-                && rtm->rtm_index == m_ifIndex) {
-                bool nowUp = (rtm->rtm_flags & RTF_UP) != 0;
-                if (nowUp != m_up.exchange(nowUp) && m_listener != nullptr) {
-                    m_listener->onLinkStateChanged(nowUp);
+            switch (rtm->rtm_type) {
+            case RTM_ADD:
+            case RTM_DELETE:
+            case RTM_CHANGE:
+                if (rtm->rtm_index == m_ifIndex) {
+                    bool nowUp = (rtm->rtm_flags & RTF_UP) != 0;
+                    if (nowUp != m_up.exchange(nowUp) && m_listener != nullptr) {
+                        m_listener->onLinkStateChanged(nowUp);
+                    }
+                    if (m_listener != nullptr) {
+                        m_listener->onRouteChanged();
+                    }
+                } else if ((rtm->rtm_flags & RTF_GATEWAY) && !(rtm->rtm_flags & RTF_IFSCOPE)) {
+                    if (m_listener != nullptr) {
+                        m_listener->onRouteChanged();
+                    }
                 }
-                if (m_listener != nullptr) {
-                    m_listener->onRouteChanged();
-                }
-                continue;
-            }
+                break;
+            case RTM_IFINFO:
+                if (n >= static_cast<ssize_t>(sizeof(struct if_msghdr))) {
+                    struct if_msghdr *ifm = reinterpret_cast<struct if_msghdr *>(buf);
+                    if (ifm->ifm_index != m_ifIndex) {
+                        break;
+                    }
 
-            if (n < static_cast<ssize_t>(sizeof(struct if_msghdr))) {
-                continue;
-            }
-            struct if_msghdr *ifm = reinterpret_cast<struct if_msghdr *>(buf);
+                    bool nowUp = (ifm->ifm_flags & IFF_UP) != 0;
+                    if (nowUp != m_up.exchange(nowUp) && m_listener != nullptr) {
+                        m_listener->onLinkStateChanged(nowUp);
+                    }
 
-            if (rtm->rtm_type == RTM_IFINFO && ifm->ifm_index == m_ifIndex) {
-                bool nowUp = (ifm->ifm_flags & IFF_UP) != 0;
-                if (nowUp != m_up.exchange(nowUp) && m_listener != nullptr) {
-                    m_listener->onLinkStateChanged(nowUp);
+                    int newMtu = static_cast<int>(ifm->ifm_data.ifi_mtu);
+                    if (newMtu != m_mtu.exchange(newMtu) && m_listener != nullptr) {
+                        m_listener->onMtuChanged(newMtu);
+                    }
                 }
-
-                int newMtu = static_cast<int>(ifm->ifm_data.ifi_mtu);
-                if (newMtu != m_mtu.exchange(newMtu) && m_listener != nullptr) {
-                    m_listener->onMtuChanged(newMtu);
-                }
-                continue;
+                break;
+            default: break;
             }
         }
     }

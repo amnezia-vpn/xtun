@@ -17,15 +17,15 @@ namespace libxtun
         void clearProxyRoutes() override;
         void revert() override;
         void protectSocket(int fd) override;
+        void onRouteChanged() override;
 
     private:
-        // The physical uplink a full tunnel's scoped bypass routes point at, kept so
-        // they can be removed exactly even if the uplink later changes.
-        struct ScopedBypass
+        struct Uplink
         {
-            bool active = false;
-            unsigned scope = 0;
+            unsigned ifindex = 0;
             unsigned char gw[16] = { 0 };
+
+            friend bool operator==(const Uplink &, const Uplink &) = default;
         };
 
         libxtun_error setMtu(int mtu);
@@ -38,8 +38,8 @@ namespace libxtun
                                         unsigned scope, bool add);
         libxtun_error updateRouteFor(const std::string &cidr, bool add);
         libxtun_error updateFullTunnelRoutes(int family, bool add);
-        bool getGatewayAndIface(int family, int &ifindex, unsigned char *gw);
-        unsigned physicalIfindex();
+        libxtun_error updateUplinkRoutes(int family, const Uplink &uplink, bool add);
+        Uplink getGatewayAndIface(int family);
 
         std::recursive_mutex m_mtx;
         int m_ifindex = -1;
@@ -48,8 +48,8 @@ namespace libxtun
         std::vector<std::string> m_routes;
         bool m_fullV4 = false;
         bool m_fullV6 = false;
-        ScopedBypass m_bypassV4;
-        ScopedBypass m_bypassV6;
+        Uplink m_uplinkV4;
+        Uplink m_uplinkV6;
         int m_rtseq = 1;
     };
 }

@@ -21,6 +21,7 @@ namespace libxtun
         virtual void clearProxyRoutes() = 0;
         virtual void revert() = 0;
         virtual void protectSocket(int fd) = 0;
+        virtual void onRouteChanged() {}
 
         static std::unique_ptr<Router> create();
     };

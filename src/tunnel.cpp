@@ -313,6 +313,9 @@ namespace libxtun
 
     void Tunnel::onRouteChanged()
     {
+        if (m_router != nullptr) {
+            m_router->onRouteChanged();
+        }
     }
 }
 
