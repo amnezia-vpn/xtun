@@ -25,6 +25,9 @@
 namespace
 {
 
+    const unsigned char DEFAULT_LOWER_HALF[16] = { 0x00 };
+    const unsigned char DEFAULT_UPPER_HALF[16] = { 0x80 };
+
     bool splitCidr(const std::string &cidr, std::string &ip, int &prefix)
     {
         auto slash = cidr.find('/');
@@ -289,40 +292,29 @@ namespace libxtun
 
     libxtun_error MacosRouter::updateFullTunnelRoutes(int family, bool add)
     {
-        unsigned char lo[16];
-        unsigned char hi[16];
-        std::memset(lo, 0, sizeof(lo));
-        std::memset(hi, 0, sizeof(hi));
-        hi[0] = 0x80;
-
-        if (libxtun_error err = updateRoute(family, lo, 1, add); add && err != LIBXTUN_OK) {
+        if (libxtun_error err = updateRoute(family, DEFAULT_LOWER_HALF, 1, add); add && err != LIBXTUN_OK) {
             return err;
         }
-        if (libxtun_error err = updateRoute(family, hi, 1, add); add && err != LIBXTUN_OK) {
+        if (libxtun_error err = updateRoute(family, DEFAULT_UPPER_HALF, 1, add); add && err != LIBXTUN_OK) {
             return err;
         }
 
-        ScopedBypass &sb = family == AF_INET ? m_bypassV4 : m_bypassV6;
-        if (add) {
-            int idx = 0;
-            unsigned char gw[16] = { 0 };
-            if (getGatewayAndIface(family, idx, gw)) {
-                if (libxtun_error err = updateScopedRoute(family, lo, 1, gw, static_cast<unsigned>(idx), true);
-                    err != LIBXTUN_OK) {
-                    return err;
-                }
-                if (libxtun_error err = updateScopedRoute(family, hi, 1, gw, static_cast<unsigned>(idx), true);
-                    err != LIBXTUN_OK) {
-                    return err;
-                }
-                sb.active = true;
-                sb.scope = static_cast<unsigned>(idx);
-                std::memcpy(sb.gw, gw, sizeof(sb.gw));
-            }
-        } else if (sb.active) {
-            updateScopedRoute(family, lo, 1, sb.gw, sb.scope, false);
-            updateScopedRoute(family, hi, 1, sb.gw, sb.scope, false);
-            sb.active = false;
+        return updateUplinkRoutes(family, family == AF_INET ? m_uplinkV4 : m_uplinkV6, add);
+    }
+
+    libxtun_error MacosRouter::updateUplinkRoutes(int family, const Uplink &uplink, bool add)
+    {
+        if (uplink.ifindex == 0) {
+            return LIBXTUN_OK;
+        }
+        if (libxtun_error err = updateScopedRoute(family, DEFAULT_LOWER_HALF, 1, uplink.gw, uplink.ifindex, add);
+            add && err != LIBXTUN_OK) {
+            return err;
+        }
+        if (libxtun_error err = updateScopedRoute(family, DEFAULT_UPPER_HALF, 1, uplink.gw, uplink.ifindex, add);
+            add && err != LIBXTUN_OK) {
+            updateScopedRoute(family, DEFAULT_LOWER_HALF, 1, uplink.gw, uplink.ifindex, false);
+            return err;
         }
         return LIBXTUN_OK;
     }
@@ -333,6 +325,8 @@ namespace libxtun
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
         m_ifname = ifname;
         m_ifindex = ifindex;
+        m_uplinkV4 = getGatewayAndIface(AF_INET);
+        m_uplinkV6 = getGatewayAndIface(AF_INET6);
 
         if (mtu > 0) {
             if (libxtun_error err = setMtu(mtu); err != LIBXTUN_OK) {
@@ -410,16 +404,16 @@ namespace libxtun
         m_addresses.clear();
     }
 
-    bool MacosRouter::getGatewayAndIface(int family, int &ifindex, unsigned char *gw)
+    MacosRouter::Uplink MacosRouter::getGatewayAndIface(int family)
     {
         int mib[6] = { CTL_NET, PF_ROUTE, 0, family, NET_RT_FLAGS, RTF_GATEWAY };
         size_t need = 0;
         if (::sysctl(mib, 6, nullptr, &need, nullptr, 0) < 0 || need == 0) {
-            return false;
+            return {};
         }
         std::vector<char> buf(need);
         if (::sysctl(mib, 6, buf.data(), &need, nullptr, 0) < 0) {
-            return false;
+            return {};
         }
 
         char *lim = buf.data() + need;
@@ -463,34 +457,42 @@ namespace libxtun
             }
 
             auto *gwsa = reinterpret_cast<struct sockaddr *>(reinterpret_cast<char *>(dst) + saSize(dst));
+            Uplink uplink;
+            uplink.ifindex = rtm->rtm_index;
             if (family == AF_INET && gwsa->sa_family == AF_INET) {
-                std::memcpy(gw, &reinterpret_cast<struct sockaddr_in *>(gwsa)->sin_addr, 4);
-                ifindex = rtm->rtm_index;
-                return true;
+                std::memcpy(uplink.gw, &reinterpret_cast<struct sockaddr_in *>(gwsa)->sin_addr, 4);
+                return uplink;
             }
             if (family == AF_INET6 && gwsa->sa_family == AF_INET6) {
-                std::memcpy(gw, &reinterpret_cast<struct sockaddr_in6 *>(gwsa)->sin6_addr, 16);
-                ifindex = rtm->rtm_index;
-                return true;
+                std::memcpy(uplink.gw, &reinterpret_cast<struct sockaddr_in6 *>(gwsa)->sin6_addr, 16);
+                return uplink;
             }
         }
-        return false;
+        return {};
     }
 
-    unsigned MacosRouter::physicalIfindex()
+    void MacosRouter::onRouteChanged()
     {
-        int idx = 0;
-        unsigned char gw[16] = { 0 };
-        if (!getGatewayAndIface(AF_INET, idx, gw) || idx <= 0) {
-            return 0;
+        std::lock_guard<std::recursive_mutex> lock(m_mtx);
+        for (const int family : { AF_INET, AF_INET6 }) {
+            Uplink &previous = family == AF_INET ? m_uplinkV4 : m_uplinkV6;
+            const Uplink current = getGatewayAndIface(family);
+            if (current == previous) {
+                continue;
+            }
+            const bool full = family == AF_INET ? m_fullV4 : m_fullV6;
+            if (full) {
+                updateUplinkRoutes(family, previous, false);
+                updateUplinkRoutes(family, current, true);
+            }
+            previous = current;
         }
-        return static_cast<unsigned>(idx);
     }
 
     void MacosRouter::protectSocket(int fd)
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
-        unsigned idx = physicalIfindex();
+        const unsigned idx = m_uplinkV4.ifindex;
         if (idx == 0) {
             return;
         }
