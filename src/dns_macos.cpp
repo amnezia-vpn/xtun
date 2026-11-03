@@ -1,5 +1,6 @@
 #include "dns_macos.h"
 #include "net/ip.h"
+#include "util/spawn.h"
 #include "xtun.h"
 
 #include <CoreFoundation/CoreFoundation.h>
@@ -87,6 +88,7 @@ namespace libxtun
             revert();
             return LIBXTUN_ERR_DNS;
         }
+        flushResolverCache();
         return LIBXTUN_OK;
     }
 
@@ -100,5 +102,10 @@ namespace libxtun
             }
         } catch (...) {
         }
+    }
+
+    void MacosDns::flushResolverCache()
+    {
+        spawn::run("/usr/bin/killall", { "-HUP", "mDNSResponder" }, {});
     }
 }

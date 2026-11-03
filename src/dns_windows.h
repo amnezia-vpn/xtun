@@ -30,6 +30,7 @@ namespace libxtun
 
     private:
         bool setNameServers(int family, const std::vector<net::IpAddress> &servers);
+        void flushResolverCache();
 
         int m_ifIndex = 0;
         GUID m_guid {};

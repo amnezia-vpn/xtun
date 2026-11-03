@@ -58,6 +58,8 @@ namespace libxtun
         void revert() noexcept override;
 
     private:
+        void flushResolverCache();
+
         CfRef<SCDynamicStoreRef> m_store;
         std::string m_ifName;
     };
