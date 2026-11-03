@@ -9,6 +9,7 @@
 #include "util/noncopyable.h"
 #include "util/result.h"
 
+#include <mutex>
 #include <vector>
 
 namespace libxtun
@@ -23,6 +24,16 @@ namespace libxtun
     {
         std::vector<net::IpPrefix> routes;
         std::vector<net::IpAddress> dnsServers;
+    };
+
+    class Proxy;
+
+    class ProxyProfileListener
+    {
+    public:
+        virtual ~ProxyProfileListener() = default;
+        // Called synchronously. Do not set/clear listeners, publish profiles, or attach/detach/free objects here.
+        virtual libxtun_error onProfileChanged(Proxy &source, const ProxyProfile &snapshot) = 0;
     };
 
     struct ClientCallbacks
@@ -50,7 +61,14 @@ namespace libxtun
         virtual void event(ProxyEvent ev) = 0;
         virtual ProxyProfile profile() const = 0;
 
+        libxtun_error setProfileListener(ProxyProfileListener &listener);
+        // Waits for the running listener call before unregistering it.
+        void clearProfileListener();
+
     protected:
+        // Publish routes and DNS metadata after releasing the provider's profile lock.
+        libxtun_error publishProfile(const ProxyProfile &snapshot);
+
         static int cTunRead(void *b, int len, void *priv)
         {
             return reinterpret_cast<Proxy *>(priv)->tunRead(b, len);
@@ -71,21 +89,24 @@ namespace libxtun
 
         static void cSockCb(int fd, void *priv)
         {
-            return reinterpret_cast<Proxy *>(priv)->sockCb(fd);
+            (void)reinterpret_cast<Proxy *>(priv)->sockCb(fd);
         }
-        void sockCb(int fd);
+        libxtun_error sockCb(int fd);
 
         static void cEmitLog(char *str, void *priv)
         {
             return reinterpret_cast<Proxy *>(priv)->emitLog(str);
         }
-        void emitLog(char *str);
-    
-    protected:
+        void emitLog(const char *message);
+
         void publishStatus(libxtun_status status);
 
         AwaitingIo m_io;
         ClientCallbacks m_callbacks;
+
+    private:
+        std::mutex m_profileListenerMutex;
+        ProxyProfileListener *m_profileListener = nullptr;
     };
 }
 

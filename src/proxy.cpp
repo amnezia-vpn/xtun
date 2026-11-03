@@ -1,5 +1,6 @@
 #include "proxy.h"
 #include "proto/awg.h"
+#include "proto/ovpn.h"
 #include "xtun.h"
 
 #include <memory>
@@ -12,6 +13,12 @@ namespace libxtun
         switch (proto) {
         case LIBXTUN_PROXY_PROTO_AWG: return proto::Awg::create(conf, callbacks);
         case LIBXTUN_PROXY_PROTO_VLESS: return fail(LIBXTUN_ERR_UNSUPPORTED);
+        case LIBXTUN_PROXY_PROTO_OPENVPN:
+#if defined(__linux__) && !defined(__ANDROID__)
+            return proto::Ovpn::create(conf, callbacks);
+#else
+            return fail(LIBXTUN_ERR_UNSUPPORTED);
+#endif
         default: return fail(LIBXTUN_ERR_INVALID_ARGS);
         }
     }
@@ -20,6 +27,46 @@ namespace libxtun
 
     Proxy::~Proxy()
     {
+        clearProfileListener();
+    }
+
+    libxtun_error Proxy::setProfileListener(ProxyProfileListener &listener)
+    {
+        std::lock_guard<std::mutex> lock(m_profileListenerMutex);
+        if (m_profileListener != nullptr) {
+            return LIBXTUN_ERR_INVALID_ARGS;
+        }
+        m_profileListener = &listener;
+        return LIBXTUN_OK;
+    }
+
+    void Proxy::clearProfileListener()
+    {
+        std::lock_guard<std::mutex> lock(m_profileListenerMutex);
+        m_profileListener = nullptr;
+    }
+
+    libxtun_error Proxy::publishProfile(const ProxyProfile &snapshot)
+    {
+        {
+            std::lock_guard<std::mutex> lock(m_profileListenerMutex);
+            if (m_profileListener == nullptr) {
+                return LIBXTUN_ERR_UNSUPPORTED;
+            }
+
+            try {
+                return m_profileListener->onProfileChanged(*this, snapshot);
+            } catch (...) {
+                // some error happened
+            }
+        }
+
+        try {
+            emitLog("xtun: profile listener threw an unexpected exception");
+        } catch (...) {
+            // some exception thrown in onLog() callback
+        }
+        return LIBXTUN_ERR_SYSTEM;
     }
 
     void Proxy::attachIo(TunnelIo *io)
@@ -50,19 +97,20 @@ namespace libxtun
         return m_io.mtu();
     }
 
-    void Proxy::sockCb(int fd)
+    libxtun_error Proxy::sockCb(int fd)
     {
-        m_io.protectSocket(fd);
+        const auto result = m_io.protectSocket(fd);
 
         if (m_callbacks.onSocket != nullptr) {
             m_callbacks.onSocket(fd, m_callbacks.onSocketPriv);
         }
+        return result;
     }
 
-    void Proxy::emitLog(char *str)
+    void Proxy::emitLog(const char *message)
     {
         if (m_callbacks.onLog != nullptr) {
-            m_callbacks.onLog(str, m_callbacks.onLogPriv);
+            m_callbacks.onLog(message, m_callbacks.onLogPriv);
         }
     }
 }

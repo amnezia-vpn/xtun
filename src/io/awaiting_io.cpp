@@ -46,12 +46,13 @@ namespace libxtun
         return {};
     }
 
-    void AwaitingIo::protectSocket(int fd)
+    libxtun_error AwaitingIo::protectSocket(int fd)
     {
         std::unique_lock lock(m_mutex);
-        if (m_io) {
-            m_io->protectSocket(fd);
+        if (!m_halted && m_io) {
+            return m_io->protectSocket(fd);
         }
+        return LIBXTUN_ERR_UNSUPPORTED;
     }
 
     void AwaitingIo::wake()
@@ -101,20 +102,26 @@ namespace libxtun
         int wakeEpoch = m_wakeEpoch;
         m_cv.wait(lock, [&]() { return m_io || m_wakeEpoch != wakeEpoch || m_halted; });
         if (m_halted) {
-            return R { -1 };
+            return R { IO_FATAL };
         }
         if (m_wakeEpoch != wakeEpoch) {
-            return R { 0 };
+            return R { READ_WAKE };
         }
         m_users++;
 
-        TunnelIo* io = m_io;
+        TunnelIo *io = m_io;
         lock.unlock();
         R res = f(*io);
         lock.lock();
 
         if (--m_users == 0) {
             m_usersCv.notify_all();
+        }
+        if (m_halted) {
+            return R { IO_FATAL };
+        }
+        if (m_io != io || m_wakeEpoch != wakeEpoch) {
+            return R { READ_WAKE };
         }
         return res;
     }

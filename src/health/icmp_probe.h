@@ -23,9 +23,9 @@ namespace libxtun::health
         {
             return m_io.write(packet);
         }
-        void protectSocket(int fd) override
+        libxtun_error protectSocket(int fd) override
         {
-            m_io.protectSocket(fd);
+            return m_io.protectSocket(fd);
         }
         void wake() override
         {

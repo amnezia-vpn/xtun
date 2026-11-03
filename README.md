@@ -25,7 +25,7 @@
     +------ | -------+   |   +-----------------+             |                               |
             |            |                                   v                               v
             |            |                         +-- native providers --+       +-- goxtun (go glue) --+
-            |       Net Harness                    |   |- OpenVPN     TBD |       |    |- AmneziaWG      |
+            |       Net Harness                    |   |- OpenVPN         |       |    |- AmneziaWG      |
             |       is optional                    |   `- IPsec/IKEv2 TBD |       |    `- Xray-core TBD  |
             |                                      |          |           |       |          |           |
             |                                      +--------- | ----------+       +--------- | ----------+

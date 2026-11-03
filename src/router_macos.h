@@ -4,8 +4,6 @@
 #include "router.h"
 #include "xtun.h"
 
-#include <mutex>
-
 namespace libxtun
 {
     class MacosRouter : public Router
@@ -14,9 +12,9 @@ namespace libxtun
         libxtun_error configureInterface(const std::string &ifname, int ifindex,
                                          const std::vector<std::string> &addresses, int mtu) override;
         libxtun_error setProxyRoutes(const std::vector<std::string> &routes) override;
-        void clearProxyRoutes() override;
+        libxtun_error clearProxyRoutes() override;
         void revert() override;
-        void protectSocket(int fd) override;
+        libxtun_error protectSocket(int fd) override;
 
     private:
         // The physical uplink a full tunnel's scoped bypass routes point at, kept so
@@ -39,13 +37,10 @@ namespace libxtun
         libxtun_error updateRouteFor(const std::string &cidr, bool add);
         libxtun_error updateFullTunnelRoutes(int family, bool add);
         bool getGatewayAndIface(int family, int &ifindex, unsigned char *gw);
-        unsigned physicalIfindex();
+        unsigned physicalIfindex(int family);
 
-        std::recursive_mutex m_mtx;
         int m_ifindex = -1;
         std::string m_ifname;
-        std::vector<std::string> m_addresses;
-        std::vector<std::string> m_routes;
         bool m_fullV4 = false;
         bool m_fullV6 = false;
         ScopedBypass m_bypassV4;

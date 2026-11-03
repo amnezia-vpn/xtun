@@ -295,11 +295,13 @@ namespace libxtun
         std::memset(hi, 0, sizeof(hi));
         hi[0] = 0x80;
 
-        if (libxtun_error err = updateRoute(family, lo, 1, add); add && err != LIBXTUN_OK) {
-            return err;
+        const auto loResult = updateRoute(family, lo, 1, add);
+        if (add && loResult != LIBXTUN_OK) {
+            return loResult;
         }
-        if (libxtun_error err = updateRoute(family, hi, 1, add); add && err != LIBXTUN_OK) {
-            return err;
+        const auto hiResult = updateRoute(family, hi, 1, add);
+        if (add && hiResult != LIBXTUN_OK) {
+            return hiResult;
         }
 
         ScopedBypass &sb = family == AF_INET ? m_bypassV4 : m_bypassV6;
@@ -320,11 +322,17 @@ namespace libxtun
                 std::memcpy(sb.gw, gw, sizeof(sb.gw));
             }
         } else if (sb.active) {
-            updateScopedRoute(family, lo, 1, sb.gw, sb.scope, false);
-            updateScopedRoute(family, hi, 1, sb.gw, sb.scope, false);
+            const auto scopedLoResult = updateScopedRoute(family, lo, 1, sb.gw, sb.scope, false);
+            if (scopedLoResult != LIBXTUN_OK) {
+                return scopedLoResult;
+            }
+            const auto scopedHiResult = updateScopedRoute(family, hi, 1, sb.gw, sb.scope, false);
+            if (scopedHiResult != LIBXTUN_OK) {
+                return scopedHiResult;
+            }
             sb.active = false;
         }
-        return LIBXTUN_OK;
+        return (loResult != LIBXTUN_OK) ? loResult : hiResult;
     }
 
     libxtun_error MacosRouter::configureInterface(const std::string &ifname, int ifindex,
@@ -385,21 +393,36 @@ namespace libxtun
         return LIBXTUN_OK;
     }
 
-    void MacosRouter::clearProxyRoutes()
+    libxtun_error MacosRouter::clearProxyRoutes()
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
+        libxtun_error result = LIBXTUN_OK;
         if (m_fullV4) {
-            updateFullTunnelRoutes(AF_INET, false);
-            m_fullV4 = false;
+            result = updateFullTunnelRoutes(AF_INET, false);
+            if (result == LIBXTUN_OK) {
+                m_fullV4 = false;
+            }
         }
         if (m_fullV6) {
-            updateFullTunnelRoutes(AF_INET6, false);
-            m_fullV6 = false;
+            const auto rc = updateFullTunnelRoutes(AF_INET6, false);
+            if (rc == LIBXTUN_OK) {
+                m_fullV6 = false;
+            } else if (result == LIBXTUN_OK) {
+                result = rc;
+            }
         }
-        for (const auto &route : m_routes) {
-            updateRouteFor(route, false);
+        for (auto it = m_routes.begin(); it != m_routes.end();) {
+            const auto rc = updateRouteFor(*it, false);
+            if (rc == LIBXTUN_OK) {
+                it = m_routes.erase(it);
+            } else {
+                if (result == LIBXTUN_OK) {
+                    result = rc;
+                }
+                ++it;
+            }
         }
-        m_routes.clear();
+        return result;
     }
 
     void MacosRouter::revert()
@@ -477,25 +500,37 @@ namespace libxtun
         return false;
     }
 
-    unsigned MacosRouter::physicalIfindex()
+    unsigned MacosRouter::physicalIfindex(int family)
     {
         int idx = 0;
         unsigned char gw[16] = { 0 };
-        if (!getGatewayAndIface(AF_INET, idx, gw) || idx <= 0) {
+        if (!getGatewayAndIface(family, idx, gw) || idx <= 0) {
             return 0;
         }
         return static_cast<unsigned>(idx);
     }
 
-    void MacosRouter::protectSocket(int fd)
+    libxtun_error MacosRouter::protectSocket(int fd)
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
-        unsigned idx = physicalIfindex();
-        if (idx == 0) {
-            return;
+        sockaddr_storage address {};
+        socklen_t len = sizeof(address);
+        if (::getsockname(fd, reinterpret_cast<sockaddr *>(&address), &len) < 0) {
+            return LIBXTUN_ERR_SYSTEM;
+        }
+        const int family = address.ss_family;
+        if (family != AF_INET && family != AF_INET6) {
+            return LIBXTUN_ERR_UNSUPPORTED;
         }
 
-        ::setsockopt(fd, IPPROTO_IPV6, IPV6_BOUND_IF, &idx, sizeof(idx));
-        ::setsockopt(fd, IPPROTO_IP, IP_BOUND_IF, &idx, sizeof(idx));
+        unsigned idx = physicalIfindex(family);
+        if (idx == 0) {
+            return LIBXTUN_ERR_SYSTEM;
+        }
+
+        const int level = (family == AF_INET) ? IPPROTO_IP : IPPROTO_IPV6;
+        const int option = (family == AF_INET) ? IP_BOUND_IF : IPV6_BOUND_IF;
+
+        return ::setsockopt(fd, level, option, &idx, sizeof(idx)) == 0 ? LIBXTUN_OK : LIBXTUN_ERR_SYSTEM;
     }
 }

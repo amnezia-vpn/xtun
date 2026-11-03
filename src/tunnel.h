@@ -16,7 +16,7 @@
 
 namespace libxtun
 {
-    class Tunnel : public TunnelIo, private TunDeviceListener
+    class Tunnel : public TunnelIo, private TunDeviceListener, private ProxyProfileListener
     {
     public:
         enum class Event {
@@ -31,14 +31,16 @@ namespace libxtun
 
         ~Tunnel();
 
+        // Do not call attachProxy()/detachProxy() from Proxy callbacks: the caller may already hold
+        // the mutex these methods need, causing a deadlock. Do not destroy the tunnel here either.
         int attachProxy(Proxy *proxy);
-        void detachProxy(Proxy *proxy);
+        libxtun_error detachProxy(Proxy *proxy);
 
         int start();
 
         int read(std::span<std::byte> buf) override;
         int write(std::span<const std::byte> packet) override;
-        void protectSocket(int fd) override;
+        libxtun_error protectSocket(int fd) override;
         void wake() override;
         void halt() override;
         int mtu() const override;
@@ -58,16 +60,20 @@ namespace libxtun
         void onMtuChanged(int) override;
         void onRouteChanged() override;
 
-        void detachProxyLocked(Proxy *proxy);
+        libxtun_error onProfileChanged(Proxy &source, const ProxyProfile &snapshot) override;
+        libxtun_error applyProxyProfile(const ProxyProfile &profile);
+        libxtun_error detachProxyLocked(Proxy *proxy);
 
         std::unique_ptr<TunDevice> m_device;
         std::unique_ptr<Router> m_router;
         std::unique_ptr<Killswitch> m_killswitch;
 
+        // Keeps attach, detach and event delivery from using a proxy at the same time.
+        std::mutex m_proxyLifecycleMutex;
+        // Protects m_proxy, m_started and route application against concurrent notifications.
         std::mutex m_mutex;
         bool m_started = false;
         Proxy *m_proxy = nullptr;
-        std::vector<net::IpPrefix> m_addrs;
     };
 }
 

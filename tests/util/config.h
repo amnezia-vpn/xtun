@@ -237,7 +237,8 @@ namespace libxtun::test
     static std::vector<libxtun_proxy_proto> allProtos()
     {
         std::vector<libxtun_proxy_proto> res;
-        for (int i = LIBXTUN_PROXY_PROTO_AWG; i < LIBXTUN_PROXY_PROTO_LAST; i++) {
+        // TODO: rework later because OpenVPN3 is client-side only proto, and not included here
+        for (int i = LIBXTUN_PROXY_PROTO_AWG; i < LIBXTUN_PROXY_PROTO_VLESS; i++) {
             res.push_back(static_cast<libxtun_proxy_proto>(i));
         }
         return res;

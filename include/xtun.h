@@ -17,7 +17,7 @@ enum libxtun_error {
     LIBXTUN_ERR_DEVICE_CREATE = -4,
     /* Killswitch errors */
     LIBXTUN_ERR_KILLSWITCH = -5,
-    /* An ancillary system call failed. */
+    /* A system call or an internal operation failed. */
     LIBXTUN_ERR_SYSTEM = -6,
 
     LIBXTUN_ERR_RESERVED_0 = -10000,
@@ -35,7 +35,8 @@ enum libxtun_error {
 enum libxtun_proxy_proto {
     LIBXTUN_PROXY_PROTO_AWG = 1,
     LIBXTUN_PROXY_PROTO_VLESS = 2,
-    LIBXTUN_PROXY_PROTO_LAST = LIBXTUN_PROXY_PROTO_VLESS,
+    LIBXTUN_PROXY_PROTO_OPENVPN = 3,
+    LIBXTUN_PROXY_PROTO_LAST = LIBXTUN_PROXY_PROTO_OPENVPN,
 };
 
 enum libxtun_status {
@@ -45,6 +46,8 @@ enum libxtun_status {
     LIBXTUN_STATUS_NO_NETWORK = 3,
 };
 
+/* Callbacks must not attach/detach proxies or free a proxy/tunnel.
+ * Perform these operations from controlling code after the callback returns. */
 struct libxtun_proxy
 {
     void *handle;

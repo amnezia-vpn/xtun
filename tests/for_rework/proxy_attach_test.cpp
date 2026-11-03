@@ -58,7 +58,7 @@ namespace
         }
         void status(int value)
         {
-            emitStatus(value);
+            publishStatus(value);
         }
     };
 
