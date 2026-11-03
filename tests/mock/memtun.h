@@ -66,9 +66,10 @@ namespace libxtun::test
             return 1420;
         }
 
-        void protectSocket(int fd) override
+        libxtun_error protectSocket(int fd) override
         {
             (void)fd;
+            return LIBXTUN_OK;
         }
 
         void wake() override

@@ -27,12 +27,27 @@ cmake_dependent_option(BUILD_TESTS "Build tests" ON "BUNDLE_GOXTUN;BUNDLE_WINTUN
 
 if(USE_CONAN_PROVIDER)
     include(${CMAKE_SOURCE_DIR}/cmake/cmake-conan/conan_bootstrap.cmake)
+
+    execute_process(
+        COMMAND "${CONAN_COMMAND}" remote update amnezia --index 0
+        COMMAND_ERROR_IS_FATAL ANY
+    )
+
+    execute_process(
+        COMMAND "${CONAN_COMMAND}" export "${CMAKE_SOURCE_DIR}/recipes/openvpn3"
+        COMMAND_ERROR_IS_FATAL ANY
+    )
+
     set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES
         ${CMAKE_SOURCE_DIR}/cmake/cmake-conan/conan_provider.cmake
         CACHE STRING "" FORCE)
 endif()
 
 project(xtun)
+
+if(USE_CONAN_PROVIDER AND WIN32)
+    list(APPEND CONAN_INSTALL_ARGS "-o=openssl/*:shared=True")
+endif()
 
 add_library(${PROJECT_NAME}
     ${CMAKE_CURRENT_LIST_DIR}/src/health/dns_probe.cpp
@@ -47,8 +62,14 @@ add_library(${PROJECT_NAME}
     ${CMAKE_CURRENT_LIST_DIR}/src/net/socket.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/proto/awg.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/proto/awg_conf.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/proto/ovpn.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/proto/ovpn_client.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/proto/ovpn_config.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/proto/ovpn_profile.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/proto/ovpn_tun.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/platform.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/proxy.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/router.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/tunnel.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/killswitch.cpp
 )
@@ -71,6 +92,9 @@ target_include_directories(${PROJECT_NAME} PRIVATE $<TARGET_PROPERTY:goxtun,INTE
 if (BUNDLE_GOXTUN)
     target_link_libraries(${PROJECT_NAME} PRIVATE goxtun)
 endif()
+
+find_package(openvpn3 REQUIRED)
+target_link_libraries(${PROJECT_NAME} PRIVATE amnezia::openvpn3)
 
 find_package(Threads REQUIRED)
 target_link_libraries(${PROJECT_NAME} PRIVATE Threads::Threads)

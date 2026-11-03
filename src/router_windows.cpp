@@ -219,13 +219,22 @@ namespace libxtun
         return LIBXTUN_OK;
     }
 
-    void WindowsRouter::clearProxyRoutes()
+    libxtun_error WindowsRouter::clearProxyRoutes()
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
-        for (const auto &route : m_routes) {
-            updateRouteFor(route, false);
+        libxtun_error result = LIBXTUN_OK;
+        for (auto it = m_routes.begin(); it != m_routes.end();) {
+            const auto rc = updateRouteFor(*it, false);
+            if (rc == LIBXTUN_OK) {
+                it = m_routes.erase(it);
+            } else {
+                if (result == LIBXTUN_OK) {
+                    result = rc;
+                }
+                ++it;
+            }
         }
-        m_routes.clear();
+        return result;
     }
 
     void WindowsRouter::revert()
@@ -238,10 +247,10 @@ namespace libxtun
         m_addresses.clear();
     }
 
-    unsigned WindowsRouter::physicalDefaultIfindex()
+    unsigned WindowsRouter::physicalDefaultIfindex(int family)
     {
         PMIB_IPFORWARD_TABLE2 table = nullptr;
-        if (GetIpForwardTable2(AF_INET, &table) != NO_ERROR || table == nullptr) {
+        if (GetIpForwardTable2(static_cast<ADDRESS_FAMILY>(family), &table) != NO_ERROR || table == nullptr) {
             return 0;
         }
 
@@ -257,7 +266,7 @@ namespace libxtun
             }
             MIB_IPINTERFACE_ROW iface;
             std::memset(&iface, 0, sizeof(iface));
-            iface.Family = AF_INET;
+            iface.Family = static_cast<ADDRESS_FAMILY>(family);
             iface.InterfaceIndex = r.InterfaceIndex;
             ULONG effective = r.Metric;
             if (GetIpInterfaceEntry(&iface) == NO_ERROR) {
@@ -273,20 +282,33 @@ namespace libxtun
         return best;
     }
 
-    void WindowsRouter::protectSocket(int fd)
+    libxtun_error WindowsRouter::protectSocket(int fd)
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
-        const unsigned idx = physicalDefaultIfindex();
-        if (idx == 0) {
-            return;
+        SOCKET s = static_cast<SOCKET>(fd);
+        // OpenVPN asks for protection before bind/connect, so getsockname is not reliable here.
+        WSAPROTOCOL_INFOW info {};
+        int len = sizeof(info);
+        if (::getsockopt(s, SOL_SOCKET, SO_PROTOCOL_INFOW, reinterpret_cast<char *>(&info), &len) == SOCKET_ERROR) {
+            return LIBXTUN_ERR_SYSTEM;
+        }
+        const int family = info.iAddressFamily;
+        if (family != AF_INET && family != AF_INET6) {
+            return LIBXTUN_ERR_UNSUPPORTED;
         }
 
-        SOCKET s = static_cast<SOCKET>(fd);
-        
-        DWORD val = idx;
-        ::setsockopt(s, IPPROTO_IPV6, IPV6_UNICAST_IF, reinterpret_cast<const char *>(&val), sizeof(val));
+        const unsigned idx = physicalDefaultIfindex(family);
+        if (idx == 0) {
+            return LIBXTUN_ERR_SYSTEM;
+        }
 
-        val = ::htonl(idx); // IP_UNICAST_IF expects index in network byte order
-        ::setsockopt(s, IPPROTO_IP, IP_UNICAST_IF, reinterpret_cast<const char *>(&val), sizeof(val));
+        const int level = (family == AF_INET) ? IPPROTO_IP : IPPROTO_IPV6;
+        const int option = (family == AF_INET) ? IP_UNICAST_IF : IPV6_UNICAST_IF;
+        // IPv4 uses network byte order; IPv6 uses host byte order.
+        DWORD val = (family == AF_INET) ? ::htonl(idx) : idx;
+
+        return (::setsockopt(s, level, option, reinterpret_cast<const char *>(&val), sizeof(val)) == 0)
+                ? LIBXTUN_OK
+                : LIBXTUN_ERR_SYSTEM;
     }
 }

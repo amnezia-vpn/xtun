@@ -18,9 +18,9 @@ namespace libxtun
         int read(std::span<std::byte> buf) override;
         int write(std::span<const std::byte> packet) override;
 
-        void protectSocket(int fd) override
+        libxtun_error protectSocket(int fd) override
         {
-            m_inner.protectSocket(fd);
+            return m_inner.protectSocket(fd);
         }
         void wake() override
         {
@@ -44,11 +44,11 @@ namespace libxtun
 
         void fixProtoChecksum(void *p, int n, uint8_t proto, uint32_t delta);
 
+        TunnelIo &m_inner;
         in_addr m_v4origin {};
         in_addr m_v4target {};
         in6_addr m_v6origin {};
         in6_addr m_v6target {};
-        TunnelIo &m_inner;
     };
 }
 

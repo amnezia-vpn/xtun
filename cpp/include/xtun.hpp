@@ -17,6 +17,11 @@ namespace xtun
         Proxy(Proxy &&) noexcept = default;
         Proxy &operator=(Proxy &&) noexcept = default;
 
+        ~Proxy()
+        {
+            m_inner.reset();
+        }
+
         friend class Tunnel;
         friend class ProxyBuilder;
 

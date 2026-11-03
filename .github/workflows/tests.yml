@@ -25,26 +25,42 @@ jobs:
             echo '${{ secrets.TEST_SECRET_AWG_B_BASE64 }}' | base64 --decode > "tests/secrets/awgB.conf"
         - name: Install conan
           run:  pip install conan
-        - name: Load conan cache
-          uses: actions/cache@v4
+        - name: Install Linux test dependencies
+          if: runner.os == 'Linux'
+          run: |
+            sudo apt-get update
+            sudo apt-get install -y openvpn openssl iproute2 python3 util-linux
+            sudo modprobe tun
+        - name: Restore conan archive
+          id: conan-cache
+          uses: actions/cache/restore@v4
           with:
             path: conan_cache_save.tgz
-            key: conan-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
-            restore-keys: |
-              conan-${{ runner.os }}-
+            key: conan-release-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('conanfile.py', 'recipes/**') }}
+            restore-keys: conan-release-${{ runner.os }}-${{ runner.arch }}-
         - name: Restore conan cache
+          if: steps.conan-cache.outputs.cache-matched-key != ''
           run:  conan cache restore conan_cache_save.tgz
-          continue-on-error: true
         - name: Configure project
-          run:  cmake -DCMAKE_BUILD_TYPE=Release -S . -B build
+          run:  cmake -DCMAKE_BUILD_TYPE=Release -DCONAN_INSTALL_BUILD_CONFIGURATIONS=Release -S . -B build
         - name: Build project
           run:  cmake --build build --config Release --parallel
-        - name: Run tests
-          run: ${{ case(runner.os == 'Windows', 'ctest', 'sudo ctest') }} --test-dir build -C Release --output-on-failure
-        - name: Save conan cache
+        - name: Create conan archive
+          if: steps.conan-cache.outputs.cache-hit != 'true'
           shell: bash
           run: |
-            conan list "goxtun/*:*" --format=json --out-file goxtun.json
             conan list "wintun/*:*" --format=json --out-file wintun.json
-            conan pkglist merge -l goxtun.json -l wintun.json --format=json --out-file pkglist.json
+            conan list "openssl/3.6.1:*" --format=json --out-file openssl.json
+            conan list "zlib/1.3.2:*" --format=json --out-file zlib.json
+            conan list "lz4/*:*" --format=json --out-file lz4.json
+            conan list "asio/1.38.2:*" --format=json --out-file asio.json
+            conan pkglist merge -l wintun.json -l openssl.json -l zlib.json -l lz4.json -l asio.json --format=json --out-file pkglist.json
             conan cache save -l pkglist.json --file=conan_cache_save.tgz --no-source
+        - name: Save conan archive
+          if: steps.conan-cache.outputs.cache-hit != 'true'
+          uses: actions/cache/save@v4
+          with:
+            path: conan_cache_save.tgz
+            key: ${{ steps.conan-cache.outputs.cache-primary-key }}
+        - name: Run tests
+          run: ${{ case(runner.os == 'Windows', 'ctest', 'sudo ctest') }} --test-dir build -C Release --output-on-failure

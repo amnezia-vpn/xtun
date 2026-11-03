@@ -26,10 +26,11 @@ namespace libxtun
 {
     Tunnel::~Tunnel()
     {
-        if (m_proxy) {
-            m_proxy->attachIo(nullptr);
-        }
         m_device->stopMonitor();
+        {
+            std::lock_guard<std::mutex> lifecycleLock(m_proxyLifecycleMutex);
+            detachProxyLocked(nullptr);
+        }
         m_device->cancelRead();
         if (m_router != nullptr) {
             m_router->revert();
@@ -60,13 +61,6 @@ namespace libxtun
 
         if (auto rc = killswitch->update(dev->ifIndex(), dev->name())) {
             return fail(rc);
-        }
-
-        // FIXME(cd-amn): add a handle in router to obtain these addrs, and remove this one completely
-        for (const auto &ifAddr : ifAddrs) {
-            if (auto prefix = net::IpPrefix::parse(ifAddr)) {
-                tun->m_addrs.emplace_back(std::move(*prefix));
-            }
         }
 
         return tun;
@@ -102,85 +96,112 @@ namespace libxtun
 
     int Tunnel::attachProxy(Proxy *proxy)
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
-
         if (proxy == nullptr) {
             return LIBXTUN_ERR_INVALID_ARGS;
         }
 
-        ProxyProfile profile = proxy->profile();
-
-        if (m_killswitch != nullptr) {
-            if (auto rc = m_killswitch->protect(profile.routes); rc != LIBXTUN_OK) {
-                detachProxyLocked(m_proxy);
-                m_killswitch->protect({});
-                return rc;
-            }
+        std::lock_guard<std::mutex> lifecycleLock(m_proxyLifecycleMutex);
+        if (auto rc = detachProxyLocked(nullptr); rc != LIBXTUN_OK) {
+            return rc;
         }
 
-        if (m_proxy) {
-            detachProxyLocked(m_proxy);
+        if (auto rc = proxy->setProfileListener(*this); rc != LIBXTUN_OK) {
+            return rc;
         }
 
-        if (m_router != nullptr) {
-            // TODO(cd-amn): use net::IpPrefix in routers
-            std::vector<std::string> strRoutes;
-            strRoutes.reserve(sizeof(profile.routes));
-            for (const auto &route : profile.routes) {
-                strRoutes.push_back(route.toString());
+        libxtun_error rc = LIBXTUN_OK;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_proxy = proxy;
+            const auto profile = proxy->profile();
+
+            if (m_router != nullptr) {
+                rc = applyProxyProfile(profile);
             }
-            if (auto rc = m_router->setProxyRoutes(strRoutes); rc != LIBXTUN_OK) {
-                // FIXME(cd-amn): we are reverting too much in here. Should be rollback() or similar
-                m_router->revert();
-                if (m_killswitch != nullptr) {
-                    m_killswitch->protect({});
-                }
-                return LIBXTUN_ERR_SYSTEM;
+            if (rc != LIBXTUN_OK) {
+                m_proxy = nullptr;
             }
         }
-
-        // TODO(cd-amn): write DNS (if Tunnel is created via fromOpts)
-        void(profile.dnsServers);
+        if (rc != LIBXTUN_OK) {
+            proxy->clearProfileListener();
+            if (auto cleanupRc = detachProxyLocked(nullptr); cleanupRc != LIBXTUN_OK) {
+                return cleanupRc;
+            }
+            return rc;
+        }
 
         m_device->resetReadCancellation();
 
         proxy->attachIo(this);
         proxy->event(m_device->up() ? ProxyEvent::Up : ProxyEvent::Down);
-        m_proxy = proxy;
 
         return LIBXTUN_OK;
     }
 
-    void Tunnel::detachProxy(Proxy *proxy)
+    libxtun_error Tunnel::onProfileChanged(Proxy &source, const ProxyProfile &snapshot)
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        if (proxy == nullptr || m_proxy != proxy) {
-            return;
+        if (m_proxy != &source) {
+            return LIBXTUN_ERR_UNSUPPORTED;
         }
-
-        detachProxyLocked(proxy);
-        if (m_killswitch != nullptr) {
-            m_killswitch->protect({});
-        }
+        return applyProxyProfile(snapshot);
     }
 
-    void Tunnel::detachProxyLocked(Proxy *proxy)
+    libxtun_error Tunnel::applyProxyProfile(const ProxyProfile &profile)
     {
-        if (proxy == nullptr || m_proxy != proxy) {
-            return;
+        if (m_router == nullptr) {
+            return LIBXTUN_ERR_UNSUPPORTED;
+        }
+        std::vector<std::string> routes;
+        routes.reserve(profile.routes.size());
+        for (const auto &route : profile.routes) {
+            routes.push_back(route.toString());
+        }
+        if (m_killswitch != nullptr) {
+            if (auto rc = m_killswitch->protect(profile.routes); rc != LIBXTUN_OK) {
+                return rc;
+            }
+        }
+        if (auto rc = m_router->clearProxyRoutes(); rc != LIBXTUN_OK) {
+            return rc;
+        }
+        return m_router->setProxyRoutes(routes);
+    }
+
+    libxtun_error Tunnel::detachProxy(Proxy *proxy)
+    {
+        if (proxy == nullptr) {
+            return LIBXTUN_ERR_INVALID_ARGS;
+        }
+        std::lock_guard<std::mutex> lifecycleLock(m_proxyLifecycleMutex);
+        return detachProxyLocked(proxy);
+    }
+
+    libxtun_error Tunnel::detachProxyLocked(Proxy *proxy)
+    {
+        Proxy *detached;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            if (m_proxy != nullptr && proxy != nullptr && m_proxy != proxy) {
+                return LIBXTUN_OK;
+            }
+            detached = std::exchange(m_proxy, nullptr);
         }
 
-        if (m_router) {
-            // FIXME(cd-amn): clear routes only for particular Proxy
-            m_router->clearProxyRoutes();
+        if (detached != nullptr) {
+            detached->clearProfileListener();
+            detached->attachIo(nullptr);
+            detached->event(ProxyEvent::Down);
         }
-
-        // FIXME: this abstraction make sense for ONE to MANY model
-        (void)proxy;
-
-        m_proxy->event(ProxyEvent::Down);
-        m_proxy->attachIo(nullptr);
-        m_proxy = nullptr;
+        if (m_router != nullptr) {
+            if (auto rc = m_router->clearProxyRoutes(); rc != LIBXTUN_OK) {
+                return rc;
+            }
+        }
+        if (m_killswitch != nullptr) {
+            return m_killswitch->protect({});
+        }
+        return LIBXTUN_OK;
     }
 
     int Tunnel::start()
@@ -200,15 +221,20 @@ namespace libxtun
 
     void Tunnel::emit(Event ev)
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        if (m_proxy == nullptr) {
+        std::lock_guard<std::mutex> lifecycleLock(m_proxyLifecycleMutex);
+        Proxy *proxy;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            proxy = m_proxy;
+        }
+        if (proxy == nullptr) {
             return;
         }
 
         switch (ev) {
-        case Event::Up: m_proxy->event(ProxyEvent::Up); break;
-        case Event::Down: m_proxy->event(ProxyEvent::Down); break;
-        case Event::MtuUpdate: m_proxy->event(ProxyEvent::MtuUpdate); break;
+        case Event::Up: proxy->event(ProxyEvent::Up); break;
+        case Event::Down: proxy->event(ProxyEvent::Down); break;
+        case Event::MtuUpdate: proxy->event(ProxyEvent::MtuUpdate); break;
         }
     }
 
@@ -222,11 +248,12 @@ namespace libxtun
         return m_device->write(packet);
     }
 
-    void Tunnel::protectSocket(int fd)
+    libxtun_error Tunnel::protectSocket(int fd)
     {
         if (m_router != nullptr) {
-            m_router->protectSocket(fd);
+            return m_router->protectSocket(fd);
         }
+        return LIBXTUN_ERR_UNSUPPORTED;
     }
 
     void Tunnel::wake()
@@ -246,7 +273,7 @@ namespace libxtun
 
     std::vector<net::IpPrefix> Tunnel::addresses()
     {
-        return m_addrs;
+        return m_router != nullptr ? m_router->addresses() : std::vector<net::IpPrefix> {};
     }
 
     void Tunnel::onLinkStateChanged(bool up)
@@ -360,5 +387,5 @@ void libxtun_tunnel_detach_proxy(struct libxtun_tunnel *tun, struct libxtun_prox
     }
 
     auto *obj = reinterpret_cast<libxtun::Tunnel *>(tun->handle);
-    obj->detachProxy(reinterpret_cast<libxtun::Proxy *>(proxy->handle));
+    (void)obj->detachProxy(reinterpret_cast<libxtun::Proxy *>(proxy->handle));
 }

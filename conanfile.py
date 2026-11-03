@@ -20,11 +20,13 @@ class Xtun(ConanFile):
     implements = ["auto_shared_fpic"]
 
     def requirements(self):
+        self.requires("openvpn3/3.11.7")
+        self.requires("zlib/1.3.2")
         if self.options.bundle_wintun and self.settings.os == "Windows":
             self.requires("wintun/0.14.1@amnezia")
         if self.settings.os == "Linux":
             self.requires("libsystemd/255.10")
-    
+
     def build_requirements(self):
         self.tool_requires("go/[>=1.27]@amnezia")
         if self.settings.os == "Windows":
