@@ -5,6 +5,7 @@ go 1.26
 require (
 	github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260814-0.20260813135540-08271d00b330
 	github.com/xtls/xray-core v1.260327.1-0.20260728075948-5ca6f4b7d4dc
+	google.golang.org/protobuf v1.36.11
 	gvisor.dev/gvisor v0.0.0-20260122175437-89a5d21be8f0
 )
 
@@ -50,7 +51,6 @@ require (
 	golang.zx2c4.com/wireguard/windows v1.0.1 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 // indirect
 	google.golang.org/grpc v1.82.1 // indirect
-	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	lukechampine.com/blake3 v1.4.1 // indirect
 )

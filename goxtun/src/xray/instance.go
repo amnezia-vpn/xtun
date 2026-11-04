@@ -2,13 +2,16 @@ package xray
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	_ "github.com/xtls/xray-core/app/proxyman/inbound"
 	"github.com/xtls/xray-core/core"
+	"github.com/xtls/xray-core/features/policy"
 	"github.com/xtls/xray-core/features/routing"
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/link/channel"
@@ -44,6 +47,7 @@ type Instance struct {
 	socketMu              sync.Mutex
 	socketCallbacksClosed bool
 	socketCalls           sync.WaitGroup
+	outboundProcesses     map[*outboundProcess]struct{}
 
 	up       atomic.Bool
 	upNotify chan struct{}
@@ -53,10 +57,11 @@ type Instance struct {
 	engine     *core.Instance
 	dispatcher routing.Dispatcher
 
-	flowMu      sync.Mutex
-	stopping    bool
-	activeFlows int
-	flowsDone   chan struct{}
+	flowMu         sync.Mutex
+	stopping       bool
+	activeFlows    int
+	flowsDone      chan struct{}
+	udpIdleTimeout time.Duration
 }
 
 func NewInstance(
@@ -72,15 +77,16 @@ func NewInstance(
 	ctx, cancel := context.WithCancel(ctx)
 
 	i := &Instance{
-		stack:     s,
-		endpoint:  endpoint,
-		nicID:     nicID,
-		callbacks: callbacks,
-		cancel:    cancel,
-		events:    make(chan Event),
-		upNotify:  make(chan struct{}, 1),
-		done:      ctx.Done(),
-		flowsDone: make(chan struct{}),
+		stack:             s,
+		endpoint:          endpoint,
+		nicID:             nicID,
+		callbacks:         callbacks,
+		cancel:            cancel,
+		events:            make(chan Event),
+		upNotify:          make(chan struct{}, 1),
+		done:              ctx.Done(),
+		flowsDone:         make(chan struct{}),
+		outboundProcesses: make(map[*outboundProcess]struct{}),
 	}
 
 	ctx = context.WithValue(ctx, socketOwnerKey{}, i)
@@ -92,6 +98,7 @@ func NewInstance(
 		}
 
 		i.Stop()
+		i.workers.Wait()
 
 		if i.engine != nil {
 			if err := i.engine.Close(); err != nil {
@@ -102,12 +109,25 @@ func NewInstance(
 		i.waitSocketCallbacks()
 	}()
 
-	var err error
-	i.engine, err = core.NewWithContext(ctx, config)
+	preparedConfig, err := wrapOutbounds(config)
+	if err != nil {
+		return nil, err
+	}
+
+	i.engine, err = core.NewWithContext(ctx, preparedConfig)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
+
+	policyManager, ok := i.engine.GetFeature(
+		policy.ManagerType(),
+	).(policy.Manager)
+	if !ok {
+		return nil, errors.New("xray: policy manager is not available")
+	}
+
+	i.udpIdleTimeout = policyManager.ForLevel(0).Timeouts.ConnectionIdle
 
 	err = i.engine.Start()
 	if err != nil {
@@ -140,21 +160,30 @@ func NewInstance(
 // Stop requests shutdown without interrupting callbacks or waiting for workers.
 func (i *Instance) Stop() {
 	i.flowMu.Lock()
-	defer i.flowMu.Unlock()
 
 	if i.stopping {
+		i.flowMu.Unlock()
 		return
 	}
 
 	i.stopping = true
-	i.cancel()
+	processes := make([]*outboundProcess, 0, len(i.outboundProcesses))
+	for p := range i.outboundProcesses {
+		processes = append(processes, p)
+	}
 
 	if i.activeFlows == 0 {
 		close(i.flowsDone)
-		return
+	} else {
+		i.workers.Go(i.abortFlows)
 	}
 
-	i.workers.Go(i.abortFlows)
+	i.flowMu.Unlock()
+
+	i.cancel()
+	for _, p := range processes {
+		p.stop()
+	}
 }
 
 // TriggerEvent hands an event to the event loop; it does not wait for processing.
