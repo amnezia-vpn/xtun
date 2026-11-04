@@ -13,8 +13,43 @@ import (
 	"github.com/xtls/xray-core/common/buf"
 	xnet "github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/session"
+	"github.com/xtls/xray-core/common/signal"
 	"github.com/xtls/xray-core/transport"
 )
+
+type udpActivityConn struct {
+	conn  *gonet.UDPConn
+	timer *signal.ActivityTimer
+}
+
+func (c *udpActivityConn) Read(p []byte) (int, error) {
+	n, err := c.conn.Read(p)
+	if n > 0 {
+		c.timer.Update()
+	}
+
+	return n, err
+}
+
+func (c *udpActivityConn) Write(p []byte) (int, error) {
+	n, err := c.conn.Write(p)
+	if n > 0 {
+		c.timer.Update()
+	}
+
+	return n, err
+}
+
+type udpErrorReporter struct {
+	ctx      context.Context
+	instance *Instance
+}
+
+func (r udpErrorReporter) SubmitError(err error) {
+	if r.ctx.Err() == nil {
+		r.instance.SubmitError(err)
+	}
+}
 
 func (i *Instance) initUDP(ctx context.Context) {
 	i.stack.SetTransportProtocolHandler(
@@ -62,6 +97,18 @@ func (i *Instance) acceptUDP(ctx context.Context, request *udp.ForwarderRequest)
 }
 
 func (i *Instance) handleUDP(ctx context.Context, conn *gonet.UDPConn, id stack.TransportEndpointID) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	timer := signal.CancelAfterInactivity(ctx, func() {
+		cancel()
+		conn.Close()
+	}, i.udpIdleTimeout)
+	defer timer.SetTimeout(0)
+	if ctx.Err() != nil {
+		return
+	}
+
 	destination := xnet.UDPDestination(
 		xnet.IPAddress(id.LocalAddress.AsSlice()),
 		xnet.Port(id.LocalPort),
@@ -76,16 +123,24 @@ func (i *Instance) handleUDP(ctx context.Context, conn *gonet.UDPConn, id stack.
 		Source: source,
 	})
 
-	flowCtx = session.TrackedConnectionError(flowCtx, i)
+	flowCtx = session.TrackedConnectionError(flowCtx, &udpErrorReporter{
+		ctx:      ctx,
+		instance: i,
+	})
 
 	scope := &socketScope{}
 	defer scope.Close()
 
 	flowCtx = context.WithValue(flowCtx, socketScopeKey{}, scope)
 
+	activityConn := &udpActivityConn{
+		conn:  conn,
+		timer: timer,
+	}
+
 	link := &transport.Link{
-		Reader: buf.NewPacketReader(conn),
-		Writer: buf.NewWriter(conn),
+		Reader: buf.NewPacketReader(activityConn),
+		Writer: buf.NewWriter(activityConn),
 	}
 
 	if err := i.dispatcher.DispatchLink(flowCtx, destination, link); err != nil && ctx.Err() == nil {

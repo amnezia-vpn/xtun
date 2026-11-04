@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package goxtun.xray;
+
+option go_package = "github.com/amnezia-vpn/libxtun/goxtun/xray";
+
+import "common/serial/typed_message.proto";
+
+message OwnerOutboundConfig {
+    .xray.common.serial.TypedMessage inner = 1;
+}
