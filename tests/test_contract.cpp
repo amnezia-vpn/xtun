@@ -31,66 +31,20 @@ class ContractTunnelFd : public testing::TestWithParam<int>
 {
 };
 
-TEST_P(ContractTunnelFd, FromFdRejectsInvalid)
+TEST(ContractTunnel, RejectsNullTunfactory)
 {
-    auto fd = GetParam();
-    EXPECT_EQ(libxtun_tunnel_new_from_tunfile(nullptr, fd), LIBXTUN_ERR_INVALID_ARGS);
-}
-
-INSTANTIATE_TEST_SUITE_P(ContractTunnel, ContractTunnelFd, testing::Values(0, -1));
-
-TEST(ContractTunnel, FromFdRejectsNegativeFd)
-{
-    libxtun_tunnel tun{};
-    EXPECT_EQ(libxtun_tunnel_new_from_tunfile(&tun, -1), LIBXTUN_ERR_INVALID_ARGS);
-}
-
-TEST(ContractTunnel, FromNameRejectsNullTunnel)
-{
-    EXPECT_EQ(libxtun_tunnel_new_from_name(nullptr, "xtun"), LIBXTUN_ERR_INVALID_ARGS);
-}
-
-TEST(ContractTunnel, FromNameRejectsNullName)
-{
-    libxtun_tunnel tun{};
-    EXPECT_EQ(libxtun_tunnel_new_from_name(&tun, nullptr), LIBXTUN_ERR_INVALID_ARGS);
-}
-
-TEST(ContractTunnel, FromNameRejectsEmptyName)
-{
-    libxtun_tunnel tun{};
-    EXPECT_EQ(libxtun_tunnel_new_from_name(&tun, ""), LIBXTUN_ERR_INVALID_ARGS);
-    libxtun_tunnel_free(&tun);
+    libxtun_tunnel tun {};
+    libxtun_tunfactory factory {
+        .size = sizeof(libxtun_tunfactory),
+        .factory_func = nullptr,
+        .factory_priv = nullptr,
+    };
+    EXPECT_EQ(libxtun_tunnel_new_from_tunfactory(&tun, &factory), LIBXTUN_ERR_INVALID_ARGS);
 }
 
 TEST(ContractTunnel, FreeIgnoresNull)
 {
     libxtun_tunnel_free(nullptr);
-}
-
-TEST(ContractTunnel, FromNameRejectsOverlongName)
-{
-    libxtun_tunnel tun{};
-    std::string name(512, 'x');
-
-    int res = libxtun_tunnel_new_from_name(&tun, name.c_str());
-    if (res == LIBXTUN_ERR_UNSUPPORTED) {
-        GTEST_SKIP() << "skipped due to unsupported named tunnels";
-    }
-    EXPECT_EQ(res, LIBXTUN_ERR_INVALID_ARGS);
-    libxtun_tunnel_free(&tun);
-}
-
-TEST(ContractTunnel, FromNameRejectsNonexistentDevice)
-{
-    libxtun_tunnel tun{};
-
-    int res = libxtun_tunnel_new_from_name(&tun, "xtun_nope0");
-    if (res == LIBXTUN_ERR_UNSUPPORTED) {
-        GTEST_SKIP() << "skipped due to unsupported named tunnels";
-    }
-    EXPECT_EQ(res, LIBXTUN_ERR_DEVICE_CREATE);
-    libxtun_tunnel_free(&tun);
 }
 
 TEST(ContractProxy, FreeIgnoresNull)

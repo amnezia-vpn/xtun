@@ -137,6 +137,10 @@ namespace xtun
         {
             libxtun_tunnel_detach_proxy(m_inner.get(), proxy.m_inner.get());
         }
+        void networkChanged()
+        {
+            libxtun_tunnel_network_changed(m_inner.get());
+        }
 
         friend class TunnelBuilder;
 

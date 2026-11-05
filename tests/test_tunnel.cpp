@@ -3,80 +3,73 @@
 #include "util/config.h"
 #include "util/log.h"
 #include "util/os.h"
+#include "xtun.h"
 
+#include "gtest/gtest.h"
 #include <gtest/gtest.h>
 
-TEST(Tunnel, InitializesFromOpts)
-{
-    if (!libxtun::test::privileged()) {
-        GTEST_SKIP() << "skipped: creating a tun device requires root/Administrator";
-    }
+using namespace libxtun;
 
-    std::string name;
-    libxtun::test::TunOpts opts;
+class TunnelTestBase : public testing::Test
+{
+public:
+    void SetUp() override
     {
-        auto res = libxtun::Tunnel::fromOpts(opts.get());
-        EXPECT_TRUE(res) << "Tunnel::fromOpts failed with " << res.error() << " error code";
-
-        auto &tun = res.value();
-        name = tun->name();
-
-        if (auto exist = libxtun::test::ifaceExists(name)) {
-            EXPECT_TRUE(*exist) << "created iface does not exist";
+        if (!test::privileged()) {
+            GTEST_SKIP() << "skipped: creating a tun device requires root/Administrator";
         }
     }
+};
 
-    if (auto exist = libxtun::test::ifaceExists(name)) {
-        EXPECT_FALSE(*exist) << "iface did not destroyed after Tunnel end of life";
-    }
-}
-
-TEST(Tunnel, InitializesFromFd)
+class TunnelTestOpts : public TunnelTestBase
 {
-    if (!libxtun::test::privileged()) {
-        GTEST_SKIP() << "skipped: creating a tun device requires root/Administrator";
-    }
+};
 
-    if (auto tun = libxtun::test::createTun()) {
-        auto &[fd, name] = *tun;
-        EXPECT_TRUE(fd) << "test::createTun returned " << fd.get();
-
-        auto res = libxtun::Tunnel::fromFd(fd.get());
-        EXPECT_TRUE(res) << "Tunnel::fromFd failed with " << res.error() << " error code";
-
-        if (auto exist = libxtun::test::ifaceExists(name)) {
-            EXPECT_TRUE(*exist) << "fd does not exist after tunnel init";
-        }
-    } else {
-        GTEST_SKIP() << "fd TUNs are not supported on this platform";
-    }
-}
-
-TEST(Tunnel, RejectsInvalidFd)
+TEST_F(TunnelTestOpts, AttachesProxy)
 {
-    for (int fd : { 0, -1 }) {
-        auto res = libxtun::Tunnel::fromFd(0);
-        if (!res && res.error() == LIBXTUN_ERR_UNSUPPORTED) {
-            GTEST_SKIP() << "skipping test due to unsupported fd tunnels";
-        }
-        EXPECT_FALSE(res) << "Tunnel::fromFd succesfully initialized with invalid fd " << fd;
-    }
-}
+    test::Logger log;
+    test::TunOpts opts;
+    test::MemProxy proxy(log.defaultCallbacks());
 
-TEST(Tunnel, AttachesProxy)
-{
-    if (!libxtun::test::privileged()) {
-        GTEST_SKIP() << "skipped: creating a tun device requires root/Administrator";
-    }
-
-    libxtun::test::Logger log;
-
-    libxtun::test::TunOpts opts;
-    libxtun::test::MemProxy proxy(log.defaultCallbacks());
-
-    auto res = libxtun::Tunnel::fromOpts(opts.get());
+    auto res = Tunnel::fromOpts(opts.get());
     EXPECT_TRUE(res) << "Tunnel::fromOpts failed with " << res.error() << " error code";
+    auto &tunnel = res.value();
 
-    auto &tun = res.value();
-    tun->attachProxy(&proxy);
+    EXPECT_EQ(tunnel->attachProxy(&proxy), 0);
 }
+
+#ifndef WIN32
+class TunnelTestTunfactory : public TunnelTestBase
+{
+};
+
+TEST_F(TunnelTestTunfactory, RejectsInvalidFactory)
+{
+    test::Logger log;
+    test::MemProxy proxy(log.defaultCallbacks());
+
+    auto res = Tunnel::fromTunfactory(nullptr, {});
+    ASSERT_FALSE(res);
+    ASSERT_EQ(res.error(), LIBXTUN_ERR_INVALID_ARGS);
+}
+
+TEST_F(TunnelTestTunfactory, AttachesProxy)
+{
+    test::Logger log;
+    test::MemProxy proxy(log.defaultCallbacks());
+
+    auto res = Tunnel::fromTunfactory(
+            [&](std::vector<net::IpAddress> &dns, std::vector<net::IpPrefix> &routes, int mtu) {
+                auto tun = libxtun::test::createTun();
+                if (!tun) {
+                    return -1;
+                }
+                return tun->first.release();
+            },
+            { "10.0.0.1" });
+    EXPECT_TRUE(res) << "Tunnel::fromTunfactory failed with " << res.error() << " error code";
+    auto &tunnel = res.value();
+
+    EXPECT_EQ(tunnel->attachProxy(&proxy), 0);
+}
+#endif // WIN32

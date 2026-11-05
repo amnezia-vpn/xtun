@@ -3,7 +3,7 @@ package org.amnezia.xtun;
 public final class XtunProxy implements AutoCloseable {
     public enum Proto {
         AWG(1),
-        VLESS(2);
+        XRAY(2);
 
         private final int value;
 

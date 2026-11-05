@@ -1,52 +1,23 @@
+#include "tunnel.h"
 #include "killswitch.h"
 #include "net/ip.h"
 #include "proxy.h"
 #include "tun_device.h"
-#include "tunnel.h"
+#include "util/cinterop.h"
 #include "xtun.h"
 #include <utility>
 
-namespace
-{
-    std::vector<std::string> parseStrList(const char *const *list)
-    {
-        std::vector<std::string> out;
-        if (list == nullptr) {
-            return out;
-        }
-        while (*list != nullptr) {
-            out.push_back(*list);
-            ++list;
-        }
-        return out;
-    }
-}
-
 namespace libxtun
 {
-    namespace
-    {
-        ResultXtun<std::vector<net::IpAddress>> parseAddrList(const char *const *list)
-        {
-            std::vector<net::IpAddress> out;
-            for (const std::string &text : parseStrList(list)) {
-                const auto addr = net::IpAddress::parse(text);
-                if (!addr) {
-                    return fail(LIBXTUN_ERR_INVALID_ARGS);
-                }
-                out.push_back(*addr);
-            }
-            return out;
-        }
-    }
-
     Tunnel::~Tunnel()
     {
         if (m_proxy) {
             m_proxy->attachIo(nullptr);
         }
-        m_device->stopMonitor();
-        m_device->cancelRead();
+        if (m_device != nullptr) {
+            m_device->stopMonitor();
+            m_device->cancelRead();
+        }
         if (m_dns != nullptr) {
             m_dns->revert();
         }
@@ -57,11 +28,11 @@ namespace libxtun
 
     ResultXtun<std::unique_ptr<Tunnel>> Tunnel::fromOpts(const libxtun_tunnel_opts &opts)
     {
-        auto dnsDefaults = parseAddrList(opts.dns);
+        auto dnsDefaults = cinterop::parseListT<net::IpAddress>(opts.dns);
         if (!dnsDefaults) {
             return fail(dnsDefaults.error());
         }
-        auto dnsExceptions = parseAddrList(opts.dns_exceptions);
+        auto dnsExceptions = cinterop::parseListT<net::IpAddress>(opts.dns_exceptions);
         if (!dnsExceptions) {
             return fail(dnsExceptions.error());
         }
@@ -70,8 +41,7 @@ namespace libxtun
         tun->m_dnsDefaults = std::move(dnsDefaults).value();
         tun->m_device = createTunDevice();
         tun->m_router = Router::create();
-        tun->m_killswitch =
-                Killswitch::create(opts.killswitch_mode, opts.macos_group, std::move(dnsExceptions).value());
+        tun->m_killswitch = Killswitch::create(opts.killswitch_mode, opts.macos_group, std::move(dnsExceptions).value());
 
         auto &dev = tun->m_device;
         auto &router = tun->m_router;
@@ -83,7 +53,7 @@ namespace libxtun
 
         dev->startMonitor(*tun);
 
-        const auto ifAddrs = parseStrList(opts.if_addrs);
+        const auto ifAddrs = cinterop::parseStrList(opts.if_addrs);
         if (auto rc = router->configureInterface(dev->name(), dev->ifIndex(), ifAddrs, opts.mtu); rc != LIBXTUN_OK) {
             return fail(rc);
         }
@@ -104,31 +74,26 @@ namespace libxtun
         return tun;
     }
 
-    ResultXtun<std::unique_ptr<Tunnel>> Tunnel::fromFd(int fd)
+    ResultXtun<std::unique_ptr<Tunnel>> Tunnel::fromTunfactory(Tunnel::TunfactoryFunc tunfactory,
+                                                               std::vector<std::string> ifaddrs)
     {
-        auto dev = createTunDevice();
-        auto killswitch = Killswitch::create(LIBXTUN_KILLSWITCH_MODE_DISABLED);
-        if (auto rc = dev->adoptFd(fd); rc != LIBXTUN_OK) {
-            return fail(rc);
+#ifdef WIN32
+        return fail(LIBXTUN_ERR_UNSUPPORTED);
+#endif
+
+        if (!tunfactory || ifaddrs.empty()) {
+            return fail(LIBXTUN_ERR_INVALID_ARGS);
         }
 
         auto tun = std::unique_ptr<Tunnel>(new Tunnel());
-        tun->m_device = std::move(dev);
-        tun->m_killswitch = std::move(killswitch);
-        return tun;
-    }
+        tun->m_tunfactory = tunfactory;
 
-    ResultXtun<std::unique_ptr<Tunnel>> Tunnel::fromName(const char *name)
-    {
-        auto dev = createTunDevice();
-        auto killswitch = Killswitch::create(LIBXTUN_KILLSWITCH_MODE_DISABLED);
-        if (auto rc = dev->adoptName(name); rc != LIBXTUN_OK) {
-            return fail(rc);
+        // FIXME(cd-amn): too much of workarounds here. I would suggest storing values in Tun impls directly
+        for (const auto &ifAddr : ifaddrs) {
+            if (auto prefix = net::IpPrefix::parse(ifAddr)) {
+                tun->m_addrs.emplace_back(std::move(*prefix));
+            }
         }
-
-        auto tun = std::unique_ptr<Tunnel>(new Tunnel());
-        tun->m_device = std::move(dev);
-        tun->m_killswitch = std::move(killswitch);
         return tun;
     }
 
@@ -158,10 +123,27 @@ namespace libxtun
             detachProxyLocked(m_proxy);
         }
 
+        if (m_tunfactory) {
+            if (int fd = m_tunfactory(profile.dnsServers, profile.routes, profile.mtu); fd >= 0) {
+                auto dev = createTunDevice();
+                if (auto err = dev->adoptFd(fd)) {
+                    return err;
+                }
+                m_device = std::move(dev);
+            } else {
+                return LIBXTUN_ERR_DEVICE_CREATE;
+            }
+        }
+
+        if (profile.mtu) {
+            // TODO(cd-amn): write MTU
+            void(profile.mtu);
+        }
+
         if (m_router != nullptr) {
             // TODO(cd-amn): use net::IpPrefix in routers
             std::vector<std::string> strRoutes;
-            strRoutes.reserve(sizeof(profile.routes));
+            strRoutes.reserve(profile.routes.size());
             for (const auto &route : profile.routes) {
                 strRoutes.push_back(route.toString());
             }
@@ -313,6 +295,8 @@ namespace libxtun
 
     void Tunnel::onRouteChanged()
     {
+        emit(Event::Down);
+        emit(Event::Up);
         if (m_router != nullptr) {
             m_router->onRouteChanged();
         }
@@ -347,32 +331,24 @@ int libxtun_tunnel_new(struct libxtun_tunnel *tun, const struct libxtun_tunnel_o
     return LIBXTUN_OK;
 }
 
-int libxtun_tunnel_new_from_tunfile(struct libxtun_tunnel *tun, int fd)
+int libxtun_tunnel_new_from_tunfactory(struct libxtun_tunnel *tun, libxtun_tunfactory *tunfactory)
 {
-    if (tun == nullptr || fd < 0) {
+    using namespace libxtun;
+
+    if (!tun || !tunfactory || !tunfactory->factory_func) {
         return LIBXTUN_ERR_INVALID_ARGS;
     }
 
     tun->handle = nullptr;
 
-    auto res = libxtun::Tunnel::fromFd(fd);
-    if (!res) {
-        return res.error();
-    }
-
-    tun->handle = res.value().release();
-    return LIBXTUN_OK;
-}
-
-int libxtun_tunnel_new_from_name(struct libxtun_tunnel *tun, const char *name)
-{
-    if (tun == nullptr || name == nullptr || name[0] == '\0') {
-        return LIBXTUN_ERR_INVALID_ARGS;
-    }
-
-    tun->handle = nullptr;
-
-    auto res = libxtun::Tunnel::fromName(name);
+    auto res = Tunnel::fromTunfactory(
+            [createTun = tunfactory->factory_func, priv = tunfactory->factory_priv](
+                    std::vector<net::IpAddress> &dns, std::vector<net::IpPrefix> &routes, int mtu) {
+                const auto cDns = cinterop::toStrList(dns);
+                const auto cRoutes = cinterop::toStrList(routes);
+                return createTun(cDns.data(), cRoutes.data(), mtu, priv);
+            },
+            cinterop::parseStrList(tunfactory->if_addrs));
     if (!res) {
         return res.error();
     }
@@ -416,4 +392,14 @@ void libxtun_tunnel_detach_proxy(struct libxtun_tunnel *tun, struct libxtun_prox
 
     auto *obj = reinterpret_cast<libxtun::Tunnel *>(tun->handle);
     obj->detachProxy(reinterpret_cast<libxtun::Proxy *>(proxy->handle));
+}
+
+void libxtun_tunnel_network_changed(struct libxtun_tunnel *tun)
+{
+    if (!tun || !tun->handle) {
+        return;
+    }
+
+    auto *obj = reinterpret_cast<libxtun::Tunnel *>(tun->handle);
+    obj->onRouteChanged();
 }

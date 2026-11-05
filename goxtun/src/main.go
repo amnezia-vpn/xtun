@@ -99,12 +99,14 @@ func goxtun_awg_new(
 			return 1, nil
 		},
 		func(bufs [][]byte, offset int) (int, error) {
-			buf := bufs[0][offset:]
-			ret := int(C.goxtun_writecb_invoke(writeCb, unsafe.Pointer(&buf[0]), C.int(len(buf)), tunPriv))
-			if ret < 0 {
-				return 0, fmt.Errorf("failed to write to xtun: %d", ret)
+			for i := range bufs {
+				buf := bufs[i][offset:]
+				ret := int(C.goxtun_writecb_invoke(writeCb, unsafe.Pointer(&buf[0]), C.int(len(buf)), tunPriv))
+				if ret < 0 {
+					return i, fmt.Errorf("failed to write to xtun: %d", ret)
+				}
 			}
-			return 1, nil
+			return len(bufs), nil
 		},
 		func() (int, error) {
 			ret := int(C.goxtun_mtucb_invoke(mtuCb, tunPriv))

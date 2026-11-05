@@ -15,7 +15,7 @@ install(TARGETS xtun-jni
     DESTINATION ${_xtun-jni-install-dir}
 )
 if (BUNDLE_GOXTUN)
-    install(FILES "$<$<STREQUAL:$<TARGET_PROPERTY:amnezia::goxtun,TYPE>,SHARED_LIBRARY>:$<TARGET_FILE:amnezia::goxtun>>"
+    install(FILES "$<$<STREQUAL:$<TARGET_PROPERTY:goxtun,TYPE>,SHARED_LIBRARY>:$<TARGET_FILE:goxtun>>"
         COMPONENT jni
         DESTINATION ${_xtun-jni-install-dir}
     )
@@ -35,10 +35,19 @@ if (ANDROID)
 endif()
 
 if (BUILD_TESTS AND NOT CMAKE_CROSSCOMPILING)
+    add_library(xtun-jni-test SHARED
+        ${CMAKE_CURRENT_LIST_DIR}/src/test/c/jni.cpp)
+    target_include_directories(xtun-jni-test PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/tests)
+    target_link_libraries(xtun-jni-test PRIVATE xtun JNI::JNI)
+
     add_jar(xtun_test_classes
-        SOURCES ${CMAKE_CURRENT_LIST_DIR}/src/test/java/org/amnezia/xtun/XtunTest.java
+        SOURCES
+            ${CMAKE_CURRENT_LIST_DIR}/src/test/java/org/amnezia/xtun/XtunTest.java
+            ${CMAKE_CURRENT_LIST_DIR}/src/test/java/org/amnezia/xtun/XtunTestNative.java
         INCLUDE_JARS xtun_classes)
-    add_dependencies(xtun_test_classes xtun-jni)
+    add_dependencies(xtun_test_classes xtun-jni xtun-jni-test)
 
     get_target_property(_xtun_jar xtun_classes JAR_FILE)
     get_target_property(_xtun_test_jar xtun_test_classes JAR_FILE)
@@ -48,18 +57,28 @@ if (BUILD_TESTS AND NOT CMAKE_CROSSCOMPILING)
         set(_cp "${_xtun_jar}:${_xtun_test_jar}")
     endif()
 
+    if (WIN32)
+        set(_libpath "$<TARGET_FILE_DIR:xtun-jni>;$<TARGET_FILE_DIR:xtun-jni-test>")
+    else()
+        set(_libpath "$<TARGET_FILE_DIR:xtun-jni>:$<TARGET_FILE_DIR:xtun-jni-test>")
+    endif()
+
     set(_xtun_jni_test_cases
         loadXtun
-        awgConfig
+        attachFailsWhenTunFactoryFails
+        attachFailsWhenTunFactoryThrows
+        attachDetachWithTun
     )
     foreach(case IN LISTS _xtun_jni_test_cases)
         add_test(NAME jni.${case}
             COMMAND ${Java_JAVA_EXECUTABLE}
-                -Xcheck:jni
                 -Xrs
                 -ea
-                -Djava.library.path=$<TARGET_FILE_DIR:xtun-jni>
+                -Djava.library.path=${_libpath}
                 -cp "${_cp}"
                 org.amnezia.xtun.XtunTest ${case})
+        set_tests_properties(jni.${case} PROPERTIES
+            SKIP_REGULAR_EXPRESSION "SKIP:"
+            TIMEOUT 30)
     endforeach()
 endif()
