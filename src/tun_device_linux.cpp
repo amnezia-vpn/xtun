@@ -44,10 +44,10 @@ namespace libxtun
 
     libxtun_error LinuxTunDevice::adoptFd(int fd)
     {
-        fd = ::fcntl(fd, F_DUPFD_CLOEXEC, 0);
-        if (fd < 0) {
-            return errno == EBADF ? LIBXTUN_ERR_INVALID_ARGS : LIBXTUN_ERR_SYSTEM;
-        }
+        m_tunFd = fd;
+        // FIXME(cd-amn): check if iface described by fd is up on adoption (and maybe later)
+        // Note that restricted envs (e.g. Android) are NOT allowed to use monitorLoop
+        m_up = true;
 
         // read()/write() exchange raw IP packets, so the device must have been
         // attached with IFF_TUN | IFF_NO_PI; the flags cannot be changed on an
@@ -55,11 +55,8 @@ namespace libxtun
         struct ifreq ifr;
         std::memset(&ifr, 0, sizeof(ifr));
         if (::ioctl(fd, TUNGETIFF, &ifr) < 0 || (ifr.ifr_flags & IFF_TUN) == 0 || (ifr.ifr_flags & IFF_NO_PI) == 0) {
-            ::close(fd);
             return LIBXTUN_ERR_DEVICE_CREATE;
         }
-
-        m_tunFd = fd;
         m_name = ifr.ifr_name;
         return finishOpen();
     }

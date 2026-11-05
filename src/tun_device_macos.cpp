@@ -68,19 +68,14 @@ namespace libxtun
 
     libxtun_error MacosTunDevice::adoptFd(int fd)
     {
-        fd = ::fcntl(fd, F_DUPFD_CLOEXEC, 0);
-        if (fd < 0) {
-            return errno == EBADF ? LIBXTUN_ERR_INVALID_ARGS : LIBXTUN_ERR_SYSTEM;
-        }
+        m_tunFd = fd;
 
         char ifname[IFNAMSIZ];
         socklen_t ifnameLen = sizeof(ifname);
         if (::getsockopt(fd, SYSPROTO_CONTROL, UTUN_OPT_IFNAME, ifname, &ifnameLen) < 0) {
-            ::close(fd);
             return LIBXTUN_ERR_DEVICE_CREATE;
         }
-
-        m_tunFd = fd;
+        
         m_name = ifname;
         return finishOpen();
     }

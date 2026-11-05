@@ -11,15 +11,18 @@
 #include "util/result.h"
 #include "xtun.h"
 
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
 
 namespace libxtun
 {
-    class Tunnel : public TunnelIo, private TunDeviceListener
+    class Tunnel : public TunnelIo, public TunDeviceListener
     {
     public:
+        using TunfactoryFunc = std::function<int(std::vector<net::IpAddress> &, std::vector<net::IpPrefix> &, int)>;
+
         enum class Event {
             Up,
             Down,
@@ -27,8 +30,8 @@ namespace libxtun
         };
 
         static ResultXtun<std::unique_ptr<Tunnel>> fromOpts(const libxtun_tunnel_opts &opts);
-        static ResultXtun<std::unique_ptr<Tunnel>> fromFd(int fd);
-        static ResultXtun<std::unique_ptr<Tunnel>> fromName(const char *name);
+        static ResultXtun<std::unique_ptr<Tunnel>> fromTunfactory(TunfactoryFunc tunfactory,
+                                                                  std::vector<std::string> ifaddrs);
 
         ~Tunnel();
 
@@ -50,15 +53,14 @@ namespace libxtun
             return m_device->name();
         }
 
-    private:
-        Tunnel() = default;
-
-        void emit(Event ev);
-
         void onLinkStateChanged(bool up) override;
         void onMtuChanged(int) override;
         void onRouteChanged() override;
 
+    private:
+        Tunnel() = default;
+
+        void emit(Event ev);
         void detachProxyLocked(Proxy *proxy);
 
         std::unique_ptr<TunDevice> m_device;
@@ -68,6 +70,7 @@ namespace libxtun
 
         std::mutex m_mutex;
         bool m_started = false;
+        TunfactoryFunc m_tunfactory;
         Proxy *m_proxy = nullptr;
         std::vector<net::IpPrefix> m_addrs;
         std::vector<net::IpAddress> m_dnsDefaults;

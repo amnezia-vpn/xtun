@@ -25,12 +25,7 @@ int libxtun_tunnel_new(struct libxtun_tunnel *tun, const struct libxtun_tunnel_o
     tun->handle = new FakeTunnel {};
     return 0;
 }
-int libxtun_tunnel_new_from_tunfile(struct libxtun_tunnel *tun, int fd)
-{
-    tun->handle = new FakeTunnel {};
-    return 0;
-}
-int libxtun_tunnel_new_from_name(struct libxtun_tunnel *tun, const char *name)
+int libxtun_tunnel_new_from_tunfactory(struct libxtun_tunnel *tun, struct libxtun_tunfactory *factory)
 {
     tun->handle = new FakeTunnel {};
     return 0;

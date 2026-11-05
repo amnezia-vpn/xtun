@@ -22,7 +22,9 @@ namespace libxtun
     struct ProxyProfile
     {
         std::vector<net::IpPrefix> routes;
+        std::vector<net::IpPrefix> excludes;
         std::vector<net::IpAddress> dnsServers;
+        int mtu = 0;
     };
 
     struct ClientCallbacks

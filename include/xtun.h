@@ -34,6 +34,8 @@ enum libxtun_error {
     LIBXTUN_ERR_RESERVED_9 = -10009,
 };
 
+const char* libxtun_strerror(int error);
+
 enum libxtun_proxy_proto {
     LIBXTUN_PROXY_PROTO_AWG = 1,
     LIBXTUN_PROXY_PROTO_VLESS = 2,
@@ -88,13 +90,26 @@ struct libxtun_tunnel_opts
     int macos_group;
 };
 
+typedef int (*libxtun_tunfactory_createtun)(const char *const *dns,
+                                            const char *const *routes,
+                                            int mtu,
+                                            void* priv);
+
+struct libxtun_tunfactory
+{
+    size_t size;
+    libxtun_tunfactory_createtun factory_func;
+    void *factory_priv;
+    const char *const *if_addrs;
+};
+
 int libxtun_tunnel_new(struct libxtun_tunnel *tun, const struct libxtun_tunnel_opts *opts);
-int libxtun_tunnel_new_from_tunfile(struct libxtun_tunnel *tun, int fd);
-int libxtun_tunnel_new_from_name(struct libxtun_tunnel *tun, const char *name);
+int libxtun_tunnel_new_from_tunfactory(struct libxtun_tunnel *tun, struct libxtun_tunfactory *factory);
 int libxtun_tunnel_start(struct libxtun_tunnel *tun);
 void libxtun_tunnel_free(struct libxtun_tunnel *tun);
 int libxtun_tunnel_attach_proxy(struct libxtun_tunnel *tun, struct libxtun_proxy *proxy);
 void libxtun_tunnel_detach_proxy(struct libxtun_tunnel *tun, struct libxtun_proxy *proxy);
+void libxtun_tunnel_network_changed(struct libxtun_tunnel *tun);
 
 #ifdef __cplusplus
 }

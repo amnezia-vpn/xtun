@@ -1,3 +1,10 @@
+if (NOT CMAKE_ANDROID_STL_TYPE STREQUAL "c++_static")
+    message(FATAL_ERROR
+        "Android Java bindings require the static C++ runtime, got ANDROID_STL='${CMAKE_ANDROID_STL_TYPE}'. "
+        "Configure with -DANDROID_STL=c++_static or leave ANDROID_STL unset.")
+endif()
+target_link_options(xtun-jni PRIVATE "LINKER:--exclude-libs,ALL")
+
 include(ExternalProject)
 
 set(AAR_STAGE ${CMAKE_BINARY_DIR}/aar)
@@ -31,6 +38,7 @@ foreach(abi IN LISTS known_android_abis)
                 -DBINDINGS_JAVA=ON
                 -DCMAKE_TOOLCHAIN_FILE=${ANDROID_NDK}/build/cmake/android.toolchain.cmake
                 -DANDROID_ABI=${abi}
+                -DANDROID_STL=c++_static
                 -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
             BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --target xtun-jni
             INSTALL_COMMAND ${CMAKE_COMMAND} --install <BINARY_DIR> --prefix ${AAR_STAGE} --component jni

@@ -185,6 +185,9 @@ namespace libxtun::proto
                 out.dnsServers.emplace_back(std::move(*addr));
             }
         }
+        if (auto mtu = iface.mtu) {
+            out.mtu = mtu->val;
+        }
         return out;
     }
 }
