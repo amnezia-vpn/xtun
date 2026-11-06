@@ -36,6 +36,8 @@ class Xtun(ConanFile):
             # revision is used here to clarify the latest version to use; that's because of frequent recipes update
             # FIXME: remove this one on next upgrade
             self.requires("wintun/0.14.1@amnezia#4671cbda56d3d2c1bea585faed62eeac", libs=False, run=True)
+        if self.settings.os == "Windows" and self.settings.arch == "x86_64":
+            self.requires("win-split-tunnel/1.2.5.0@amnezia", headers=False, libs=False, run=True)
         if self.settings.os == "Linux":
             self.requires("libsystemd/262.2", transitive_libs=True)
     
@@ -109,7 +111,7 @@ class Xtun(ConanFile):
                 core.link_location = "lib/xtun.lib"
             else:
                 core.location = "lib/xtun.lib"
-            core.system_libs = ["iphlpapi", "ws2_32", "fwpuclnt"]
+            core.system_libs = ["iphlpapi", "ws2_32", "fwpuclnt", "advapi32"]
             if self.options.bundle_wintun:
                 core.requires.append("wintun::wintun")
         elif self.settings.os in ("Linux", "Android"):
