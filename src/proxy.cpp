@@ -11,7 +11,7 @@ namespace libxtun
     {
         switch (proto) {
         case LIBXTUN_PROXY_PROTO_AWG: return proto::Awg::create(conf, callbacks);
-        case LIBXTUN_PROXY_PROTO_VLESS: return fail(LIBXTUN_ERR_UNSUPPORTED);
+        case LIBXTUN_PROXY_PROTO_XRAY: return fail(LIBXTUN_ERR_UNSUPPORTED);
         default: return fail(LIBXTUN_ERR_INVALID_ARGS);
         }
     }

@@ -1,0 +1,9 @@
+module CXtun {
+    header "xtun.h"
+    export *
+
+    link "c++"
+    link framework "CoreFoundation"
+    link framework "Security"
+    link framework "SystemConfiguration"
+}

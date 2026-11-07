@@ -38,8 +38,8 @@ const char* libxtun_strerror(int error);
 
 enum libxtun_proxy_proto {
     LIBXTUN_PROXY_PROTO_AWG = 1,
-    LIBXTUN_PROXY_PROTO_VLESS = 2,
-    LIBXTUN_PROXY_PROTO_LAST = LIBXTUN_PROXY_PROTO_VLESS,
+    LIBXTUN_PROXY_PROTO_XRAY = 2,
+    LIBXTUN_PROXY_PROTO_LAST = LIBXTUN_PROXY_PROTO_XRAY,
 };
 
 enum libxtun_status {

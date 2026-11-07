@@ -22,6 +22,7 @@ option(BUNDLE_WINTUN "Bundle wintun" ON)
 
 option(BINDINGS_CPP  "Build C++ bindings" ON)
 option(BINDINGS_JAVA "Build Java bindings" OFF)
+option(BINDINGS_SWIFT "Build Swift bindings (Xtun.xcframework, macOS host only)" OFF)
 
 cmake_dependent_option(BUILD_TESTS "Build tests" ON "BUNDLE_GOXTUN;BUNDLE_WINTUN" OFF)
 
@@ -102,6 +103,10 @@ endif()
 
 if (BINDINGS_JAVA)
     add_subdirectory(java)
+endif()
+
+if (BINDINGS_SWIFT)
+    add_subdirectory(swift)
 endif()
 
 install(TARGETS ${PROJECT_NAME})
