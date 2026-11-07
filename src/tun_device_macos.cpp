@@ -1,3 +1,5 @@
+#include <TargetConditionals.h>
+
 #include "tun_device_macos.h"
 #include "xtun.h"
 
@@ -7,15 +9,17 @@
 
 #include <fcntl.h>
 #include <net/if.h>
-#include <net/if_utun.h>
-#include <net/route.h>
+#if TARGET_OS_OSX
+    #include <net/if_utun.h>
+    #include <net/route.h>
+    #include <sys/kern_control.h>
+    #include <sys/sys_domain.h>
+#endif
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/ioctl.h>
-#include <sys/kern_control.h>
 #include <sys/socket.h>
 #include <sys/sockio.h>
-#include <sys/sys_domain.h>
 #include <sys/uio.h>
 #include <unistd.h>
 
@@ -23,6 +27,7 @@ namespace libxtun
 {
     libxtun_error MacosTunDevice::open()
     {
+#if TARGET_OS_OSX
         int fd = ::socket(AF_SYSTEM, SOCK_DGRAM, SYSPROTO_CONTROL);
         if (fd < 0) {
             return LIBXTUN_ERR_DRIVER_UNAVAILABLE;
@@ -64,19 +69,24 @@ namespace libxtun
         m_name = ifname;
 
         return finishOpen();
+#endif
+        return LIBXTUN_ERR_UNSUPPORTED;
     }
 
     libxtun_error MacosTunDevice::adoptFd(int fd)
     {
         m_tunFd = fd;
+        m_up = true;
 
+#if TARGET_OS_OSX
         char ifname[IFNAMSIZ];
         socklen_t ifnameLen = sizeof(ifname);
         if (::getsockopt(fd, SYSPROTO_CONTROL, UTUN_OPT_IFNAME, ifname, &ifnameLen) < 0) {
             return LIBXTUN_ERR_DEVICE_CREATE;
         }
-        
         m_name = ifname;
+#endif
+
         return finishOpen();
     }
 
@@ -286,11 +296,13 @@ namespace libxtun
 
     libxtun_error MacosTunDevice::finishOpen()
     {
+#if TARGET_OS_OSX
         m_ifIndex = static_cast<int>(::if_nametoindex(m_name.c_str()));
         if (m_ifIndex == 0) {
             closeTun();
             return LIBXTUN_ERR_SYSTEM;
         }
+#endif
 
         int cancelPipe[2];
         if (::pipe(cancelPipe) < 0) {
@@ -316,6 +328,7 @@ namespace libxtun
 
     void MacosTunDevice::monitorLoop() noexcept
     {
+#if TARGET_OS_OSX
         alignas(4) char buf[4096];
 
         for (;;) {
@@ -373,5 +386,6 @@ namespace libxtun
             default: break;
             }
         }
+#endif
     }
 }

@@ -37,6 +37,8 @@ endfunction()
 
 if(APPLE AND CMAKE_OSX_ARCHITECTURES)
     set(_archs ${CMAKE_OSX_ARCHITECTURES})
+elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(_archs arm64)
 elseif(ANDROID)
     set(_archs ${CMAKE_ANDROID_ARCH_ABI})
 else()

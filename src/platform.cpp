@@ -6,38 +6,41 @@
 #if defined(_WIN32)
     #include "dns_windows.cpp"
     #include "dns_windows.h"
+    #include "killswitch_windows.cpp"
+    #include "killswitch_windows.h"
+    #include "net/wfp.cpp"
     #include "router_windows.cpp"
     #include "router_windows.h"
     #include "tun_device_windows.cpp"
     #include "tun_device_windows.h"
-    #include "killswitch_windows.cpp"
-    #include "killswitch_windows.h"
-    #include "net/wfp.cpp"
     #include "util/process.cpp"
 #elif defined(__APPLE__)
-    #include "dns_macos.cpp"
-    #include "dns_macos.h"
-    #include "router_macos.cpp"
-    #include "router_macos.h"
     #include "tun_device_macos.cpp"
     #include "tun_device_macos.h"
-    #include "killswitch_macos.cpp"
-    #include "killswitch_macos.h"
-    #include "net/pf.cpp"
-    #include "util/spawn.cpp"
+    #include <TargetConditionals.h>
+    #if TARGET_OS_OSX
+        #include "dns_macos.cpp"
+        #include "dns_macos.h"
+        #include "killswitch_macos.cpp"
+        #include "killswitch_macos.h"
+        #include "net/pf.cpp"
+        #include "router_macos.cpp"
+        #include "router_macos.h"
+        #include "util/spawn.cpp"
+    #endif
 #elif defined(__ANDROID__)
     #include "tun_device_linux.cpp"
     #include "tun_device_linux.h"
 #elif defined(__linux__)
     #include "dns_linux.cpp"
     #include "dns_linux.h"
+    #include "killswitch_linux.cpp"
+    #include "killswitch_linux.h"
+    #include "net/iptables.cpp"
     #include "router_linux.cpp"
     #include "router_linux.h"
     #include "tun_device_linux.cpp"
     #include "tun_device_linux.h"
-    #include "killswitch_linux.cpp"
-    #include "killswitch_linux.h"
-    #include "net/iptables.cpp"
     #include "util/spawn.cpp"
 #else
     #error Unsupported platform
@@ -50,7 +53,7 @@ namespace libxtun
     {
 #if defined(__linux__) && !defined(__ANDROID__)
         return std::make_unique<LinuxRouter>();
-#elif defined(__APPLE__)
+#elif defined(__APPLE__) && TARGET_OS_OSX
         return std::make_unique<MacosRouter>();
 #elif defined(_WIN32)
         return std::make_unique<WindowsRouter>();
@@ -64,7 +67,7 @@ namespace libxtun
 #if defined(__linux__) && !defined(__ANDROID__)
         (void)ifName;
         return LinuxDns::open(ifIndex);
-#elif defined(__APPLE__)
+#elif defined(__APPLE__) && TARGET_OS_OSX
         (void)ifIndex;
         return MacosDns::open(ifName);
 #elif defined(_WIN32)
@@ -94,7 +97,7 @@ namespace libxtun
 #if defined(__linux__) && !defined(__ANDROID__)
         (void)macosGroup;
         return std::make_unique<LinuxKillswitch>(mode, std::move(dnsExceptions));
-#elif defined(__APPLE__)
+#elif defined(__APPLE__) && TARGET_OS_OSX
         return std::make_unique<MacosKillswitch>(mode, macosGroup, std::move(dnsExceptions));
 #elif defined(_WIN32)
         (void)macosGroup;
