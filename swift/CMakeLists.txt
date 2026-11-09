@@ -5,7 +5,6 @@ endif()
 option(XTUN_SWIFT_SLICE "Internal: build a single Xtun.framework slice" OFF)
 mark_as_advanced(XTUN_SWIFT_SLICE)
 
-set(XTUN_FRAMEWORK_VERSION "1.0.0" CACHE STRING "Xtun.framework bundle version")
 set(XTUN_IOS_DEPLOYMENT_TARGET "15.0" CACHE STRING "Minimum iOS version")
 set(XTUN_MACOS_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS version")
 
@@ -189,7 +188,6 @@ else()
                 -DBINDINGS_JAVA=OFF
                 -DBUILD_TESTS=OFF
                 -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-                -DXTUN_FRAMEWORK_VERSION=${XTUN_FRAMEWORK_VERSION}
                 -DXTUN_IOS_DEPLOYMENT_TARGET=${XTUN_IOS_DEPLOYMENT_TARGET}
                 -DXTUN_MACOS_DEPLOYMENT_TARGET=${XTUN_MACOS_DEPLOYMENT_TARGET}
                 ${_slice_args_${_slice}}

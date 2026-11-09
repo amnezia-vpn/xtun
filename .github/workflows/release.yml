@@ -1,0 +1,164 @@
+name: Release version to package managers
+
+on:
+  push:
+    tags: "*"
+  workflow_dispatch:
+
+env:
+  SWIFT_PACKAGE_REPO: amnezia-vpn/xtun-swift
+  NDK_VERSION: 30.0.14904198
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      value: ${{ steps.read.outputs.value }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read version from CMakeLists.txt
+        id: read
+        run: |
+          V=$(sed -nE 's/^project\(xtun VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
+          if [ -z "$V" ]; then
+            echo "::error::no project(xtun VERSION ...) in CMakeLists.txt"
+            exit 1
+          fi
+          if [ "${{ github.ref_type }}" = tag ] && [ "${{ github.ref_name }}" != "$V" ]; then
+            echo "::error::tag ${{ github.ref_name }} != CMakeLists.txt version $V"
+            exit 1
+          fi
+          echo "value=$V" >> "$GITHUB_OUTPUT"
+
+  conan-release:
+    needs: version
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install conan
+        run: pip install conan
+
+      - name: Export Conan recipe
+        run: conan export
+
+      - name: Setup Conan remote
+        run: |
+          conan remote add recipes "${{ vars.CONAN_REMOTE_URL }}"
+          conan remote login recipes "${{ secrets.CONAN_USER }}" -p "${{ secrets.CONAN_PASSWORD }}"
+
+      - name: Upload Conan recipe to remote
+        run: conan upload -r recipes --only-recipe "xtun/${{ env.VERSION }}@amnezia"
+
+  swift-release:
+    needs: version
+    runs-on: macos-latest
+    env:
+      VERSION: ${{ needs.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Install conan
+        run: pip install conan
+
+      - name: Configure project
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DBINDINGS_SWIFT=ON -DBINDINGS_CPP=OFF -DBUILD_TESTS=OFF \
+            -DXTUN_XCFRAMEWORK_URL="https://github.com/${{ env.SWIFT_PACKAGE_REPO }}/releases/download/${{ env.VERSION }}/Xtun.xcframework.zip"
+
+      - name: Build Xtun.xcframework
+        run: cmake --build build --target xtun_xcframework
+
+      - name: Checkout package repo
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.SWIFT_PACKAGE_REPO }}
+          token: ${{ secrets.SWIFT_PACKAGE_TOKEN }}
+          path: package
+          fetch-depth: 0
+
+      - name: Commit Package.swift
+        id: commit
+        working-directory: package
+        run: |
+          if git rev-parse -q --verify "refs/tags/${{ env.VERSION }}" >/dev/null; then
+            echo "::error::${{ env.SWIFT_PACKAGE_REPO }} already has tag ${{ env.VERSION }}; released zips must never be replaced"
+            exit 1
+          fi
+          cp ../build/swiftpm/Package.swift Package.swift
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Package.swift
+          if ! git diff --cached --quiet; then
+            git commit -m "Xtun ${{ env.VERSION }}" -m "Built from ${{ github.repository }}@${{ github.sha }}"
+            git push origin HEAD
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release with the xcframework
+        env:
+          GH_TOKEN: ${{ secrets.SWIFT_PACKAGE_TOKEN }}
+        run: |
+          gh release create "${{ env.VERSION }}" \
+            --repo "${{ env.SWIFT_PACKAGE_REPO }}" \
+            --target "${{ steps.commit.outputs.sha }}" \
+            --title "${{ env.VERSION }}" \
+            --notes "Xtun ${{ env.VERSION }}, built from ${{ github.repository }}@${{ github.sha }}.
+
+          Checksum: \`$(cat build/swiftpm/Xtun.xcframework.zip.sha256)\`" \
+            build/Xtun.xcframework.zip
+
+  android-release:
+    needs: version
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+          server-id: maven
+          server-username: MAVEN_USERNAME
+          server-password: MAVEN_PASSWORD
+
+      - name: Install conan
+        run: pip install conan
+
+      - name: Install NDK
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;${{ env.NDK_VERSION }}"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${{ env.NDK_VERSION }}" >> "$GITHUB_ENV"
+      
+      - name: Configure project
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DBINDINGS_JAVA=ON -DBINDINGS_CPP=OFF -DBUILD_TESTS=OFF \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
+
+      - name: Build Android bindings
+        run: cmake --build build --target xtun_aar
+
+      - name: Deploy to Maven repo
+        env:
+          MAVEN_USERNAME: ${{ secrets.MAVEN_USER }}
+          MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
+        run: |
+          mvn --batch-mode \
+            org.apache.maven.plugins:maven-deploy-plugin:3.1.4:deploy-file \
+            -Durl="${{ vars.MAVEN_REPO_URL }}" \
+            -DrepositoryId=maven \
+            -Dfile=build/xtun.aar \
+            -DpomFile=build/xtun.pom \
+            -Dpackaging=aar
