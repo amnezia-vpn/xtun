@@ -1,13 +1,16 @@
+import os
+import re
+
 from conan import ConanFile
+from conan.errors import ConanException
 from conan.tools.scm import Git
-from conan.tools.files import update_conandata
+from conan.tools.files import load, update_conandata
 from conan.tools.cmake import CMake, CMakeToolchain, cmake_layout
 from conan.tools.build import check_min_cppstd
 
 class Xtun(ConanFile):
     name = "xtun"
     user = "amnezia"
-    version = "1.0.0"
     settings = "os", "compiler", "build_type", "arch"
     options = {
         "shared": [True, False],
@@ -18,6 +21,15 @@ class Xtun(ConanFile):
     default_options = { "shared": False, "fPIC": True, "bundle_goxtun": True, "bundle_wintun": True }
     generators = "VirtualBuildEnv", "CMakeConfigDeps"
     implements = ["auto_shared_fpic"]
+
+    def set_version(self):
+        if self.version:
+            return
+        cmake = load(self, os.path.join(self.recipe_folder, "CMakeLists.txt"))
+        match = re.search(r"project\(\s*xtun\s+VERSION\s+([0-9.]+)", cmake)
+        if not match:
+            raise ConanException("Cannot find project(xtun VERSION ...) in CMakeLists.txt")
+        self.version = match.group(1)
 
     def requirements(self):
         if self.options.bundle_wintun and self.settings.os == "Windows":

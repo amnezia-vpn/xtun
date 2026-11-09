@@ -59,3 +59,5 @@ add_custom_target(xtun_aar ALL
     WORKING_DIRECTORY ${AAR_STAGE}
     COMMENT "Assembling xtun.aar")
 add_dependencies(xtun_aar xtun_aar_prebuild ${xtun-jnis})
+
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/pom.xml.in ${CMAKE_BINARY_DIR}/xtun.pom @ONLY)

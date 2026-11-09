@@ -23,6 +23,7 @@ endif()
 
 find_package(Java REQUIRED COMPONENTS Development)
 include(UseJava)
+set(CMAKE_JAVA_COMPILE_FLAGS --release 11)
 add_jar(xtun_classes SOURCES
     ${CMAKE_CURRENT_LIST_DIR}/src/main/java/org/amnezia/xtun/Xtun.java
     ${CMAKE_CURRENT_LIST_DIR}/src/main/java/org/amnezia/xtun/XtunException.java

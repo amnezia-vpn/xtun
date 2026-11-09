@@ -15,9 +15,9 @@
     <key>CFBundlePackageType</key>
     <string>FMWK</string>
     <key>CFBundleShortVersionString</key>
-    <string>@XTUN_FRAMEWORK_VERSION@</string>
+    <string>@PROJECT_VERSION@</string>
     <key>CFBundleVersion</key>
-    <string>@XTUN_FRAMEWORK_VERSION@</string>
+    <string>@PROJECT_VERSION@</string>
     <key>CFBundleSupportedPlatforms</key>
     <array>
         <string>@XTUN_PLIST_PLATFORM@</string>
