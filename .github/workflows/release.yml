@@ -46,9 +46,12 @@ jobs:
         run: conan export
 
       - name: Setup Conan remote
+        env:
+          CONAN_USER: ${{ secrets.CONAN_USER }}
+          CONAN_PASSWORD: ${{ secrets.CONAN_PASSWORD }}
         run: |
           conan remote add recipes "${{ vars.CONAN_REMOTE_URL }}"
-          conan remote login recipes "${{ secrets.CONAN_USER }}" -p "${{ secrets.CONAN_PASSWORD }}"
+          conan remote login recipes "$CONAN_USER" -p "$CONAN_PASSWORD"
 
       - name: Upload Conan recipe to remote
         run: conan upload -r recipes --only-recipe "xtun/${{ env.VERSION }}@amnezia"
