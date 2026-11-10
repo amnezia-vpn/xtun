@@ -56,7 +56,7 @@ public class XtunVpnService extends VpnService {
     private void connect(XtunProxy.Proto proto, String conf) {
         disconnect();
         try {
-            proxy = new XtunProxy(proto, conf,
+            proxy = new XtunProxy(proto, conf, null, null,
                     this::protect,
                     log -> Log.d("awg", log),
                     status -> Log.d("status", "status " + status));

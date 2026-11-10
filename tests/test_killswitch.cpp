@@ -322,7 +322,7 @@ protected:
         setup.wrapper->wrapProxy(proxy);
         log.wrapProxy(proxy);
         status.wrapProxy(proxy);
-        ASSERT_EQ(libxtun_proxy_new(&proxy, setup.proto, setup.clientA.c_str()), LIBXTUN_OK);
+        ASSERT_EQ(libxtun_proxy_new(&proxy, setup.proto, setup.clientA.c_str(), nullptr), LIBXTUN_OK);
         ASSERT_EQ(libxtun_tunnel_attach_proxy(&tun, &proxy), LIBXTUN_OK);
         ASSERT_TRUE(status.await(LIBXTUN_STATUS_CONNECTED, std::chrono::seconds(5)))
                 << "the tunnel did not connect after attach";

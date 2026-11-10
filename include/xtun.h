@@ -63,7 +63,15 @@ struct libxtun_proxy
     void *statushandler_priv;
 };
 
-int libxtun_proxy_new(struct libxtun_proxy *proxy, enum libxtun_proxy_proto proto, const char *conf);
+struct libxtun_proxy_opts
+{
+    size_t size;
+    const char *const *includeRoutes;
+    const char *const *excludeRoutes;
+};
+
+int libxtun_proxy_new(struct libxtun_proxy *proxy, enum libxtun_proxy_proto proto, const char *conf,
+                      const struct libxtun_proxy_opts *opts);
 void libxtun_proxy_free(struct libxtun_proxy *proxy);
 
 struct libxtun_tunnel

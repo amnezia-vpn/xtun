@@ -3,7 +3,8 @@
 #include <cassert>
 #include <gtest/gtest.h>
 
-int libxtun_proxy_new(struct libxtun_proxy *proxy, enum libxtun_proxy_proto proto, const char *conf)
+int libxtun_proxy_new(struct libxtun_proxy *proxy, enum libxtun_proxy_proto proto, const char *conf,
+                      const struct libxtun_proxy_opts *opts)
 {
     proxy->handle = new int { 0x7AFAFAFA };
     return 0;

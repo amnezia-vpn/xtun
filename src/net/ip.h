@@ -69,7 +69,10 @@ namespace libxtun::net
         {
             return m_bits == 0 && m_address.valid();
         }
+        IpPrefix network() const noexcept;
         std::string toString() const;
+
+        friend bool operator==(const IpPrefix &, const IpPrefix &) = default;
 
     private:
         IpAddress m_address;

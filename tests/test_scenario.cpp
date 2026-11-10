@@ -48,7 +48,7 @@ TEST_P(ScenarioSetup, CommonUse)
     log.wrapProxy(proxy);
     status.wrapProxy(proxy);
 
-    ASSERT_EQ(libxtun_proxy_new(&proxy, p.proto, p.clientA.c_str()), LIBXTUN_OK);
+    ASSERT_EQ(libxtun_proxy_new(&proxy, p.proto, p.clientA.c_str(), nullptr), LIBXTUN_OK);
     ASSERT_EQ(libxtun_tunnel_attach_proxy(&tun, &proxy), LIBXTUN_OK);
 
     ASSERT_TRUE(status.await(LIBXTUN_STATUS_CONNECTED, seconds(5)));
@@ -82,7 +82,7 @@ TEST_P(ScenarioSetup, SeamlessSwitch)
     logA.wrapProxy(proxyA);
     statusA.wrapProxy(proxyA);
 
-    EXPECT_EQ(libxtun_proxy_new(&proxyA, p.proto, p.clientA.c_str()), LIBXTUN_OK);
+    EXPECT_EQ(libxtun_proxy_new(&proxyA, p.proto, p.clientA.c_str(), nullptr), LIBXTUN_OK);
     EXPECT_EQ(libxtun_tunnel_attach_proxy(&tun, &proxyA), LIBXTUN_OK);
 
     EXPECT_TRUE(statusA.await(LIBXTUN_STATUS_CONNECTED, seconds(5)));
@@ -94,7 +94,7 @@ TEST_P(ScenarioSetup, SeamlessSwitch)
     logB.wrapProxy(proxyB);
     statusB.wrapProxy(proxyB);
 
-    EXPECT_EQ(libxtun_proxy_new(&proxyB, p.proto, p.clientB->c_str()), LIBXTUN_OK);
+    EXPECT_EQ(libxtun_proxy_new(&proxyB, p.proto, p.clientB->c_str(), nullptr), LIBXTUN_OK);
     EXPECT_EQ(libxtun_tunnel_attach_proxy(&tun, &proxyB), LIBXTUN_OK);
     libxtun_tunnel_detach_proxy(&tun, &proxyA);
     libxtun_proxy_free(&proxyA);

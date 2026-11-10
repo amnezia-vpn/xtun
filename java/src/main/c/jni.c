@@ -21,6 +21,17 @@ static jmethodID g_XtunTunnel_createTun;
 
 static jfieldID g_XtunProxy_handle;
 
+static void throwException(JNIEnv *env, int code) {
+    jobject obj;
+
+    obj = (*env)->NewObject(env, g_XtunException, g_XtunException_init, code);
+    if (obj == NULL)
+        return;
+
+    (*env)->Throw(env, (jthrowable)obj);
+    (*env)->DeleteLocalRef(env, obj);
+}
+
 static jobjectArray toStringArray(JNIEnv *env, const char *const *list) {
     jobjectArray out;
     jstring str;
@@ -48,6 +59,61 @@ static jobjectArray toStringArray(JNIEnv *env, const char *const *list) {
 
 free_out:
     (*env)->DeleteLocalRef(env, out);
+    return NULL;
+}
+
+static void freeCStringList(const char **list) {
+    size_t i;
+
+    if (list == NULL)
+        return;
+
+    for (i = 0; list[i] != NULL; i++) {
+        free((char*)list[i]);
+    }
+    free(list);
+}
+
+static const char **toCStringList(JNIEnv *env, jobjectArray jlist) {
+    jsize count, i;
+    jstring jstr;
+    const char *str;
+    const char **list;
+
+    count = (*env)->GetArrayLength(env, jlist);
+    list = calloc(count + 1, sizeof(char*));
+    if (list == NULL) {
+        throwException(env, LIBXTUN_ERR_JNI_NOMEM);
+        return NULL;
+    }
+
+    for (i = 0; i < count; i++) {
+        jstr = (jstring)(*env)->GetObjectArrayElement(env, jlist, i);
+        if (jstr == NULL) {
+            throwException(env, LIBXTUN_ERR_JNI_WRONG_PARAM);
+            goto fail;
+        }
+
+        str = (*env)->GetStringUTFChars(env, jstr, NULL);
+        if (str == NULL) {
+            (*env)->DeleteLocalRef(env, jstr);
+            goto fail;
+        }
+
+        list[i] = strdup(str);
+        (*env)->ReleaseStringUTFChars(env, jstr, str);
+        (*env)->DeleteLocalRef(env, jstr);
+
+        if (list[i] == NULL) {
+            throwException(env, LIBXTUN_ERR_JNI_NOMEM);
+            goto fail;
+        }
+    }
+
+    return list;
+
+fail:
+    freeCStringList(list);
     return NULL;
 }
 
@@ -193,17 +259,6 @@ static int tunfactory(const char *const *dns, const char *const *routes, int mtu
     return out;
 }
 
-static void throwException(JNIEnv *env, int code) {
-    jobject obj;
-
-    obj = (*env)->NewObject(env, g_XtunException, g_XtunException_init, code);
-    if (obj == NULL)
-        return;
-
-    (*env)->Throw(env, (jthrowable)obj);
-    (*env)->DeleteLocalRef(env, obj);
-}
-
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     JNIEnv *env;
     jclass clazz, gclazz;
@@ -285,12 +340,14 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     return JNI_VERSION_1_6;
 }
 
-JNIEXPORT jlong JNICALL Java_org_amnezia_xtun_XtunProxy_nativeInit(JNIEnv *env, jclass c, jint proto, jstring conf, jobject socketHandler, jobject logHandler, jobject statusHandler)
+JNIEXPORT jlong JNICALL Java_org_amnezia_xtun_XtunProxy_nativeInit(JNIEnv *env, jclass c, jint proto, jstring conf, jobjectArray jincludeRoutes, jobjectArray jexcludeRoutes, jobject socketHandler, jobject logHandler, jobject statusHandler)
 {
     struct libxtun_proxy* proxy;
+    struct libxtun_proxy_opts opts;
     void *onsockspawn_priv, *loghandler_priv, *statushandler_priv;
     int res;
     const char* cstr;
+    const char **includeRoutes = NULL, **excludeRoutes = NULL;
 
     proxy = malloc(sizeof(struct libxtun_proxy));
     if (proxy == NULL) {
@@ -329,22 +386,44 @@ JNIEXPORT jlong JNICALL Java_org_amnezia_xtun_XtunProxy_nativeInit(JNIEnv *env, 
         goto free_statushandler_priv;
     }
 
+    if (jincludeRoutes != NULL) {
+        includeRoutes = toCStringList(env, jincludeRoutes);
+        if (includeRoutes == NULL)
+            goto free_statushandler_priv;
+    }
+
+    if (jexcludeRoutes != NULL) {
+        excludeRoutes = toCStringList(env, jexcludeRoutes);
+        if (excludeRoutes == NULL)
+            goto free_includeRoutes;
+    }
+
     cstr = (*env)->GetStringUTFChars(env, conf, NULL);
     if (cstr == NULL) {
         throwException(env, LIBXTUN_ERR_JNI_NOMEM);
-        goto free_statushandler_priv;
+        goto free_excludeRoutes;
     }
 
-    res = libxtun_proxy_new(proxy, proto, cstr);
+    opts.size = sizeof(struct libxtun_proxy_opts);
+    opts.includeRoutes = includeRoutes;
+    opts.excludeRoutes = excludeRoutes;
+
+    res = libxtun_proxy_new(proxy, proto, cstr, &opts);
     (*env)->ReleaseStringUTFChars(env, conf, cstr);
-    
+
     if (res) {
         throwException(env, res);
-        goto free_statushandler_priv;
+        goto free_excludeRoutes;
     }
 
+    freeCStringList(excludeRoutes);
+    freeCStringList(includeRoutes);
     return (jlong)proxy;
 
+free_excludeRoutes:
+    freeCStringList(excludeRoutes);
+free_includeRoutes:
+    freeCStringList(includeRoutes);
 free_statushandler_priv:
     (*env)->DeleteGlobalRef(env, statushandler_priv);
 free_loghandler_priv:
@@ -381,9 +460,6 @@ JNIEXPORT jlong JNICALL Java_org_amnezia_xtun_XtunTunnel_nativeInit(JNIEnv *env,
     struct libxtun_jtunnel *jtunnel;
     struct libxtun_tunfactory factory;
     int res = -1;
-    jsize count, i;
-    jstring jaddr;
-    const char *ifaddr;
     const char **ifaddrs;
 
     if (jifaddrs == NULL) {
@@ -404,34 +480,9 @@ JNIEXPORT jlong JNICALL Java_org_amnezia_xtun_XtunTunnel_nativeInit(JNIEnv *env,
         goto free_jtunnel;
     }
 
-    count = (*env)->GetArrayLength(env, jifaddrs);
-    ifaddrs = calloc(count + 1, sizeof(char*));
+    ifaddrs = toCStringList(env, jifaddrs);
     if (ifaddrs == NULL) {
-        throwException(env, LIBXTUN_ERR_JNI_NOMEM);
         goto free_priv;
-    }
-
-    for (i = 0; i < count; i++) {
-        jaddr = (jstring)(*env)->GetObjectArrayElement(env, jifaddrs, i);
-        if (jaddr == NULL) {
-            throwException(env, LIBXTUN_ERR_JNI_WRONG_PARAM);
-            goto free_ifaddrs;
-        }
-
-        ifaddr = (*env)->GetStringUTFChars(env, jaddr, NULL);
-        if (ifaddr == NULL) {
-            (*env)->DeleteLocalRef(env, jaddr);
-            goto free_ifaddrs;
-        }
-
-        ifaddrs[i] = strdup(ifaddr);
-        (*env)->ReleaseStringUTFChars(env, jaddr, ifaddr);
-        (*env)->DeleteLocalRef(env, jaddr);
-
-        if (ifaddrs[i] == NULL) {
-            throwException(env, LIBXTUN_ERR_JNI_NOMEM);
-            goto free_ifaddrs;
-        }
     }
 
     factory.size = sizeof(struct libxtun_tunfactory);
@@ -444,11 +495,7 @@ JNIEXPORT jlong JNICALL Java_org_amnezia_xtun_XtunTunnel_nativeInit(JNIEnv *env,
         throwException(env, res);
     }
 
-free_ifaddrs:
-    for (i = 0; i < count; i++) {
-        free((char*)ifaddrs[i]);
-    }
-    free(ifaddrs);
+    freeCStringList(ifaddrs);
 
     if (res == 0) {
         return (jlong)jtunnel;

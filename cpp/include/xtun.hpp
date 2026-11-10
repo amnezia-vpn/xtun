@@ -7,10 +7,27 @@
 #include <string>
 #include <utility>
 #include <variant>
+#include <vector>
 #include <xtun.h>
 
 namespace xtun
 {
+    namespace internal
+    {
+        inline std::vector<const char *> asArgv(const std::vector<std::string> &items)
+        {
+            std::vector<const char *> argv;
+            argv.reserve(items.size() + 1);
+
+            for (const auto &item : items) {
+                argv.push_back(item.c_str());
+            }
+
+            argv.push_back(nullptr);
+            return argv;
+        }
+    }
+
     class Proxy
     {
     public:
@@ -71,6 +88,18 @@ namespace xtun
             return *this;
         }
 
+        ProxyBuilder &withIncludeRoutes(std::vector<std::string> prefixes)
+        {
+            m_includeRoutes = std::move(prefixes);
+            return *this;
+        }
+
+        ProxyBuilder &withExcludeRoutes(std::vector<std::string> prefixes)
+        {
+            m_excludeRoutes = std::move(prefixes);
+            return *this;
+        }
+
         std::variant<Proxy, int> build(libxtun_proxy_proto proto, const std::string &conf)
         {
             std::unique_ptr<libxtun_proxy, Proxy::InnerCloser> inner(new libxtun_proxy());
@@ -106,7 +135,15 @@ namespace xtun
                 };
             }
 
-            if (auto res = libxtun_proxy_new(inner.get(), proto, conf.c_str()); res != LIBXTUN_OK) {
+            const auto includeRoutes = internal::asArgv(m_includeRoutes);
+            const auto excludeRoutes = internal::asArgv(m_excludeRoutes);
+
+            libxtun_proxy_opts opts {};
+            opts.size = sizeof(libxtun_proxy_opts);
+            opts.includeRoutes = includeRoutes.data();
+            opts.excludeRoutes = excludeRoutes.data();
+
+            if (auto res = libxtun_proxy_new(inner.get(), proto, conf.c_str(), &opts); res != LIBXTUN_OK) {
                 return res;
             }
 
@@ -117,6 +154,8 @@ namespace xtun
         std::function<void(int)> m_sockCb;
         std::function<void(std::string)> m_logHandlerCb;
         std::function<void(int)> m_statusHandlerCb;
+        std::vector<std::string> m_includeRoutes;
+        std::vector<std::string> m_excludeRoutes;
     };
 
     class Tunnel
@@ -208,25 +247,13 @@ namespace xtun
 
             std::unique_ptr<libxtun_tunnel, Tunnel::TunnelCloser> inner(new libxtun_tunnel());
 
-            auto asArgv = [](const std::vector<std::string> &items) {
-                std::vector<const char *> argv;
-                argv.reserve(items.size() + 1);
-
-                for (const auto &item : items) {
-                    argv.push_back(item.c_str());
-                }
-
-                argv.push_back(nullptr);
-                return argv;
-            };
-
-            const auto dns = asArgv(m_dns);
+            const auto dns = internal::asArgv(m_dns);
             opts.dns = dns.data();
 
-            const auto dnsExceptions = asArgv(m_dnsExceptions);
+            const auto dnsExceptions = internal::asArgv(m_dnsExceptions);
             opts.dns_exceptions = dnsExceptions.data();
 
-            const auto ifAddrs = asArgv(m_ifaceAddrs);
+            const auto ifAddrs = internal::asArgv(m_ifaceAddrs);
             opts.if_addrs = ifAddrs.data();
 
             opts.killswitch_mode = m_killswitchMode;
