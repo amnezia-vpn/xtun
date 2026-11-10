@@ -60,7 +60,7 @@ public final class XtunTest {
     }
 
     private static XtunProxy newAwgProxy(String conf) {
-        return new XtunProxy(XtunProxy.Proto.AWG, conf,
+        return new XtunProxy(XtunProxy.Proto.AWG, conf, null, null,
             sock -> System.out.println("[Proxy]: new socket(" + sock + ") created"),
             log -> System.out.println("[Proxy]: " + log),
             status -> System.out.println("[Proxy]: status " + status));

@@ -197,20 +197,34 @@ namespace libxtun::net
             return false;
         }
 
-        const auto expected = m_address.octets();
-        const auto actual = addr.octets();
+        return IpPrefix(addr, m_bits).network() == network();
+    }
+
+    IpPrefix IpPrefix::network() const noexcept
+    {
+        if (!m_address.valid()) {
+            return *this;
+        }
+
+        const auto source = m_address.octets();
+        std::array<std::byte, V6_OCTETS> masked {};
         const std::size_t whole = m_bits / 8;
         const unsigned remainder = m_bits % 8;
 
-        if (whole > 0 && std::memcmp(expected.data(), actual.data(), whole) != 0) {
-            return false;
-        }
-        if (remainder == 0) {
-            return true;
+        std::copy_n(source.begin(), whole, masked.begin());
+        if (remainder != 0) {
+            const unsigned mask = (0xffu << (8 - remainder)) & 0xffu;
+            masked[whole] = static_cast<std::byte>(octetAt(source, whole) & mask);
         }
 
-        const unsigned mask = (0xffu << (8 - remainder)) & 0xffu;
-        return (octetAt(expected, whole) & mask) == (octetAt(actual, whole) & mask);
+        if (m_address.family() == AF_INET) {
+            in_addr v4 {};
+            std::memcpy(&v4, masked.data(), V4_OCTETS);
+            return IpPrefix(IpAddress::fromV4(v4), m_bits);
+        }
+        in6_addr v6 {};
+        std::memcpy(&v6, masked.data(), V6_OCTETS);
+        return IpPrefix(IpAddress::fromV6(v6), m_bits);
     }
 
     std::string IpPrefix::toString() const

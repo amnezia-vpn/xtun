@@ -106,10 +106,11 @@ namespace libxtun
         }
 
         ProxyProfile profile = proxy->profile();
+        SplitRoutes split = proxy->splitRoutes();
         const std::vector<net::IpAddress> &resolvers = profile.dnsServers.empty() ? m_dnsDefaults : profile.dnsServers;
 
         if (m_killswitch != nullptr) {
-            if (auto rc = m_killswitch->protect(profile.routes, resolvers); rc != LIBXTUN_OK) {
+            if (auto rc = m_killswitch->protect(split.include, resolvers); rc != LIBXTUN_OK) {
                 detachProxyLocked(m_proxy);
                 if (m_dns != nullptr) {
                     m_dns->revert();
@@ -124,7 +125,7 @@ namespace libxtun
         }
 
         if (m_tunfactory) {
-            if (int fd = m_tunfactory(profile.dnsServers, profile.routes, profile.mtu); fd >= 0) {
+            if (int fd = m_tunfactory(profile.dnsServers, split.include, profile.mtu); fd >= 0) {
                 auto dev = createTunDevice();
                 if (auto err = dev->adoptFd(fd)) {
                     return err;
@@ -143,8 +144,8 @@ namespace libxtun
         if (m_router != nullptr) {
             // TODO(cd-amn): use net::IpPrefix in routers
             std::vector<std::string> strRoutes;
-            strRoutes.reserve(profile.routes.size());
-            for (const auto &route : profile.routes) {
+            strRoutes.reserve(split.include.size());
+            for (const auto &route : split.include) {
                 strRoutes.push_back(route.toString());
             }
             if (auto rc = m_router->setProxyRoutes(strRoutes); rc != LIBXTUN_OK) {

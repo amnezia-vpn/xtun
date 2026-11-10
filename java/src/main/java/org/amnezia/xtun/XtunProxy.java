@@ -30,10 +30,10 @@ public final class XtunProxy implements AutoCloseable {
 
     private long handle;
 
-    public XtunProxy(Proto proto, String conf, SocketHandler socketHandler, LogHandler logHandler,
-                     StatusHandler statusHandler) {
+    public XtunProxy(Proto proto, String conf, String[] includeRoutes, String[] excludeRoutes, SocketHandler socketHandler,
+                     LogHandler logHandler, StatusHandler statusHandler) {
         Xtun.load();
-        handle = nativeInit(proto.getValue(), conf, socketHandler, logHandler, statusHandler);
+        handle = nativeInit(proto.getValue(), conf, includeRoutes, excludeRoutes, socketHandler, logHandler, statusHandler);
     }
 
     @Override
@@ -42,6 +42,6 @@ public final class XtunProxy implements AutoCloseable {
         handle = 0;
     }
 
-    private static native long nativeInit(int proto, String conf, SocketHandler socketHandler, LogHandler logHandler, StatusHandler statusHandler);
+    private static native long nativeInit(int proto, String conf, String[] includeRoutes, String[] excludeRoutes, SocketHandler socketHandler, LogHandler logHandler, StatusHandler statusHandler);
     private static native void nativeFree(long handle);
 }

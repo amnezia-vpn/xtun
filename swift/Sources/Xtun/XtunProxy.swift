@@ -41,6 +41,8 @@ public final class XtunProxy: @unchecked Sendable {
     public init(
         proto: Proto,
         config: String,
+        includeRoutes: [String] = [],
+        excludeRoutes: [String] = [],
         onSocket: SocketHandler? = nil,
         onLog: LogHandler? = nil,
         onStatus: StatusHandler? = nil
@@ -71,7 +73,15 @@ public final class XtunProxy: @unchecked Sendable {
         }
         raw.pointee.statushandler_priv = priv
 
-        let rc = config.withCString { libxtun_proxy_new(raw, proto.cValue, $0) }
+        let rc = try withCStringArray(includeRoutes) { includePtrs in
+            try withCStringArray(excludeRoutes) { excludePtrs in
+                var opts = libxtun_proxy_opts()
+                opts.size = MemoryLayout<libxtun_proxy_opts>.size
+                opts.includeRoutes = includePtrs
+                opts.excludeRoutes = excludePtrs
+                return config.withCString { libxtun_proxy_new(raw, proto.cValue, $0, &opts) }
+            }
+        }
         if rc != LIBXTUN_OK.rawValue {
             throw XtunError(code: rc)
         }

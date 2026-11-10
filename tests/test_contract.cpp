@@ -59,7 +59,7 @@ TEST(ContractProxy, NewRejectsOutOfRangeProto)
     libxtun_proxy proxy {};
     log.wrapProxy(proxy);
 
-    int res = libxtun_proxy_new(&proxy, static_cast<libxtun_proxy_proto>(LIBXTUN_PROXY_PROTO_LAST + 1), "");
+    int res = libxtun_proxy_new(&proxy, static_cast<libxtun_proxy_proto>(LIBXTUN_PROXY_PROTO_LAST + 1), "", nullptr);
     EXPECT_EQ(res, LIBXTUN_ERR_INVALID_ARGS);
     libxtun_proxy_free(&proxy);
 }
@@ -72,7 +72,7 @@ TEST_P(ContractProxyProto, NewRejectsNullHandle)
 {
     const libxtun_proxy_proto proto = GetParam();
 
-    int res = libxtun_proxy_new(nullptr, proto, nullptr);
+    int res = libxtun_proxy_new(nullptr, proto, nullptr, nullptr);
     EXPECT_EQ(res, LIBXTUN_ERR_INVALID_ARGS);
 }
 
@@ -85,7 +85,7 @@ TEST_P(ContractProxyProto, NewRejectsNullConf)
     libxtun_proxy proxy {};
     log.wrapProxy(proxy);
 
-    int res = libxtun_proxy_new(&proxy, proto, nullptr);
+    int res = libxtun_proxy_new(&proxy, proto, nullptr, nullptr);
     EXPECT_EQ(res, LIBXTUN_ERR_INVALID_ARGS);
     libxtun_proxy_free(&proxy);
 }
@@ -99,7 +99,7 @@ TEST_P(ContractProxyProto, NewRejectsInvalidConf)
     libxtun_proxy proxy {};
     log.wrapProxy(proxy);
 
-    int res = libxtun_proxy_new(&proxy, proto, "d34db33f");
+    int res = libxtun_proxy_new(&proxy, proto, "d34db33f", nullptr);
     EXPECT_EQ(res, LIBXTUN_ERR_INVALID_ARGS);
     libxtun_proxy_free(&proxy);
 }
@@ -121,7 +121,7 @@ TEST_P(ContractProxySetup, InitsFromConf)
     libxtun_proxy proxy {};
     log.wrapProxy(proxy);
 
-    int res = libxtun_proxy_new(&proxy, proto, cfg.c_str());
+    int res = libxtun_proxy_new(&proxy, proto, cfg.c_str(), nullptr);
     EXPECT_EQ(res, 0);
     libxtun_proxy_free(&proxy);
 }
