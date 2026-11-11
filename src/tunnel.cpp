@@ -110,12 +110,12 @@ namespace libxtun
         const std::vector<net::IpAddress> &resolvers = profile.dnsServers.empty() ? m_dnsDefaults : profile.dnsServers;
 
         if (m_killswitch != nullptr) {
-            if (auto rc = m_killswitch->protect(split.include, resolvers); rc != LIBXTUN_OK) {
+            if (auto rc = m_killswitch->protect(split.include, split.exclude, resolvers); rc != LIBXTUN_OK) {
                 detachProxyLocked(m_proxy);
                 if (m_dns != nullptr) {
                     m_dns->revert();
                 }
-                m_killswitch->protect({}, {});
+                m_killswitch->protect({}, {}, {});
                 return rc;
             }
         }
@@ -142,20 +142,14 @@ namespace libxtun
         }
 
         if (m_router != nullptr) {
-            // TODO(cd-amn): use net::IpPrefix in routers
-            std::vector<std::string> strRoutes;
-            strRoutes.reserve(split.include.size());
-            for (const auto &route : split.include) {
-                strRoutes.push_back(route.toString());
-            }
-            if (auto rc = m_router->setProxyRoutes(strRoutes); rc != LIBXTUN_OK) {
+            if (auto rc = m_router->setProxyRoutes(split.include, split.exclude); rc != LIBXTUN_OK) {
                 // FIXME(cd-amn): we are reverting too much in here. Should be rollback() or similar
                 m_router->revert();
                 if (m_dns != nullptr) {
                     m_dns->revert();
                 }
                 if (m_killswitch != nullptr) {
-                    m_killswitch->protect({}, {});
+                    m_killswitch->protect({}, {}, {});
                 }
                 return LIBXTUN_ERR_SYSTEM;
             }
@@ -168,7 +162,7 @@ namespace libxtun
                     m_router->clearProxyRoutes();
                 }
                 if (m_killswitch != nullptr) {
-                    m_killswitch->protect({}, {});
+                    m_killswitch->protect({}, {}, {});
                 }
                 return LIBXTUN_ERR_DNS;
             }
@@ -195,7 +189,7 @@ namespace libxtun
         }
         detachProxyLocked(proxy);
         if (m_killswitch != nullptr) {
-            m_killswitch->protect({}, {});
+            m_killswitch->protect({}, {}, {});
         }
     }
 

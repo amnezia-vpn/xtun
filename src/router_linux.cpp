@@ -192,19 +192,9 @@ namespace libxtun
         return LIBXTUN_OK;
     }
 
-    libxtun_error LinuxRouter::updateRouteFor(const std::string &cidr, bool add)
+    libxtun_error LinuxRouter::updateRouteFor(const net::IpPrefix &prefix, bool add)
     {
-        std::string ip;
-        int prefix;
-        if (!splitCidr(cidr, ip, prefix)) {
-            return LIBXTUN_ERR_INVALID_ARGS;
-        }
-        int family;
-        unsigned char raw[16];
-        int len = parseIp(ip, family, raw);
-        if (len < 0) {
-            return LIBXTUN_ERR_INVALID_ARGS;
-        }
+        const auto octets = prefix.address().octets();
 
         struct
         {
@@ -219,14 +209,18 @@ namespace libxtun
         if (add) {
             req.nlh.nlmsg_flags |= NLM_F_CREATE | NLM_F_REPLACE;
         }
-        req.rtm.rtm_family = family;
-        req.rtm.rtm_dst_len = static_cast<uint8_t>(prefix);
-        req.rtm.rtm_table = RT_TABLE_MAIN;
+        req.rtm.rtm_family = static_cast<uint8_t>(prefix.address().family());
+        req.rtm.rtm_dst_len = static_cast<uint8_t>(prefix.bits());
+        req.rtm.rtm_table = RT_TABLE_UNSPEC;
         req.rtm.rtm_protocol = RTPROT_BOOT;
         req.rtm.rtm_scope = RT_SCOPE_LINK;
         req.rtm.rtm_type = RTN_UNICAST;
 
-        addAttr(&req.nlh, RTA_DST, raw, len);
+        uint32_t table = PROXY_TABLE;
+        addAttr(&req.nlh, RTA_TABLE, &table, sizeof(table));
+        if (prefix.bits() > 0) {
+            addAttr(&req.nlh, RTA_DST, octets.data(), static_cast<int>(octets.size()));
+        }
         uint32_t oif = static_cast<uint32_t>(m_ifindex);
         addAttr(&req.nlh, RTA_OIF, &oif, sizeof(oif));
 
@@ -237,10 +231,10 @@ namespace libxtun
     }
 
     libxtun_error LinuxRouter::updateRule(bool add, int family, bool invert, uint32_t fwmark, uint32_t table,
-                                          int suppressPrefixLen, uint32_t priority)
+                                          int suppressPrefixLen, uint32_t priority, const net::IpPrefix *dst)
     {
         if (add) {
-            updateRule(false, family, invert, fwmark, table, suppressPrefixLen, priority);
+            updateRule(false, family, invert, fwmark, table, suppressPrefixLen, priority, dst);
         }
 
         struct
@@ -274,6 +268,11 @@ namespace libxtun
             uint32_t spl = static_cast<uint32_t>(suppressPrefixLen);
             addAttr(&req.nlh, FRA_SUPPRESS_PREFIXLEN, &spl, sizeof(spl));
         }
+        if (dst != nullptr) {
+            const auto octets = dst->address().octets();
+            addAttr(&req.nlh, FRA_DST, octets.data(), static_cast<int>(octets.size()));
+            req.frh.dst_len = static_cast<uint8_t>(dst->bits());
+        }
 
         if (int rc = nlSend(&req.nlh); rc != 0) {
             return LIBXTUN_ERR_SYSTEM;
@@ -281,36 +280,13 @@ namespace libxtun
         return LIBXTUN_OK;
     }
 
-    libxtun_error LinuxRouter::updateFullTunnelRoutes(int family, bool add)
+    libxtun_error LinuxRouter::updateExcludeRule(const net::IpPrefix &prefix, bool add)
     {
-        struct
-        {
-            struct nlmsghdr nlh;
-            struct rtmsg rtm;
-            char attr[64];
-        } req;
-        std::memset(&req, 0, sizeof(req));
-        req.nlh.nlmsg_len = NLMSG_LENGTH(sizeof(req.rtm));
-        req.nlh.nlmsg_type = add ? RTM_NEWROUTE : RTM_DELROUTE;
-        req.nlh.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
-        if (add) {
-            req.nlh.nlmsg_flags |= NLM_F_CREATE | NLM_F_REPLACE;
-        }
-        req.rtm.rtm_family = family;
-        req.rtm.rtm_dst_len = 0;
-        req.rtm.rtm_table = RT_TABLE_UNSPEC;
-        req.rtm.rtm_protocol = RTPROT_BOOT;
-        req.rtm.rtm_scope = RT_SCOPE_LINK;
-        req.rtm.rtm_type = RTN_UNICAST;
-        uint32_t table = PROXY_TABLE;
-        addAttr(&req.nlh, RTA_TABLE, &table, sizeof(table));
-        uint32_t oif = static_cast<uint32_t>(m_ifindex);
-        addAttr(&req.nlh, RTA_OIF, &oif, sizeof(oif));
+        return updateRule(add, prefix.address().family(), false, 0, RT_TABLE_MAIN, -1, RULE_PRIORITY_EXCLUDE, &prefix);
+    }
 
-        if (int rc = nlSend(&req.nlh); add && rc != 0) {
-            return LIBXTUN_ERR_SYSTEM;
-        }
-
+    libxtun_error LinuxRouter::updateTunnelRules(int family, bool add)
+    {
         // Unmarked traffic uses the private table (the tun); the proxy's own marked
         // packets fall through to the main table and reach the physical link.
         if (auto err = updateRule(add, family, true, PROXY_FWMARK, PROXY_TABLE, -1, RULE_PRIORITY_TUNNEL); add && err != LIBXTUN_OK) {
@@ -352,33 +328,32 @@ namespace libxtun
         return LIBXTUN_OK;
     }
 
-    libxtun_error LinuxRouter::setProxyRoutes(const std::vector<std::string> &routes)
+    libxtun_error LinuxRouter::setProxyRoutes(const std::vector<net::IpPrefix> &routes,
+                                              const std::vector<net::IpPrefix> &excludes)
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
         for (const auto &route : routes) {
-            if (route == "0.0.0.0/0") {
-                if (!m_fullV4) {
-                    if (libxtun_error err = updateFullTunnelRoutes(AF_INET, true); err != LIBXTUN_OK) {
-                        clearProxyRoutes();
-                        return err;
-                    }
-                    m_fullV4 = true;
-                }
-            } else if (route == "::/0") {
-                if (!m_fullV6) {
-                    if (libxtun_error err = updateFullTunnelRoutes(AF_INET6, true); err != LIBXTUN_OK) {
-                        clearProxyRoutes();
-                        return err;
-                    }
-                    m_fullV6 = true;
-                }
-            } else {
-                if (libxtun_error err = updateRouteFor(route, true); err != LIBXTUN_OK) {
+            if (libxtun_error err = updateRouteFor(route, true); err != LIBXTUN_OK) {
+                clearProxyRoutes();
+                return err;
+            }
+            m_routes.push_back(route);
+
+            const int family = route.address().family();
+            if (bool &rules = family == AF_INET ? m_rulesV4 : m_rulesV6; !rules) {
+                if (libxtun_error err = updateTunnelRules(family, true); err != LIBXTUN_OK) {
                     clearProxyRoutes();
                     return err;
                 }
-                m_routes.push_back(route);
+                rules = true;
             }
+        }
+        for (const auto &exclude : excludes) {
+            if (libxtun_error err = updateExcludeRule(exclude, true); err != LIBXTUN_OK) {
+                clearProxyRoutes();
+                return err;
+            }
+            m_excludes.push_back(exclude);
         }
         return LIBXTUN_OK;
     }
@@ -386,13 +361,17 @@ namespace libxtun
     void LinuxRouter::clearProxyRoutes()
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
-        if (m_fullV4) {
-            updateFullTunnelRoutes(AF_INET, false);
-            m_fullV4 = false;
+        for (const auto &exclude : m_excludes) {
+            updateExcludeRule(exclude, false);
         }
-        if (m_fullV6) {
-            updateFullTunnelRoutes(AF_INET6, false);
-            m_fullV6 = false;
+        m_excludes.clear();
+        if (m_rulesV4) {
+            updateTunnelRules(AF_INET, false);
+            m_rulesV4 = false;
+        }
+        if (m_rulesV6) {
+            updateTunnelRules(AF_INET6, false);
+            m_rulesV6 = false;
         }
         for (const auto &route : m_routes) {
             updateRouteFor(route, false);

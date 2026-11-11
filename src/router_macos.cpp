@@ -275,19 +275,11 @@ namespace libxtun
         return rtSend(family, dst, prefix, &sin6, sin6.sin6_len, flags, scope, add);
     }
 
-    libxtun_error MacosRouter::updateRouteFor(const std::string &cidr, bool add)
+    libxtun_error MacosRouter::updateRouteFor(const net::IpPrefix &prefix, bool add)
     {
-        std::string ip;
-        int prefix;
-        if (!splitCidr(cidr, ip, prefix)) {
-            return LIBXTUN_ERR_INVALID_ARGS;
-        }
-        int family;
-        unsigned char raw[16];
-        if (parseIp(ip, family, raw) < 0) {
-            return LIBXTUN_ERR_INVALID_ARGS;
-        }
-        return updateRoute(family, raw, prefix, add);
+        const auto octets = prefix.address().octets();
+        return updateRoute(prefix.address().family(), reinterpret_cast<const unsigned char *>(octets.data()),
+                           static_cast<int>(prefix.bits()), add);
     }
 
     libxtun_error MacosRouter::updateFullTunnelRoutes(int family, bool add)
@@ -348,25 +340,19 @@ namespace libxtun
         return LIBXTUN_OK;
     }
 
-    libxtun_error MacosRouter::setProxyRoutes(const std::vector<std::string> &routes)
+    libxtun_error MacosRouter::setProxyRoutes(const std::vector<net::IpPrefix> &routes,
+                                              const std::vector<net::IpPrefix> &excludes)
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
         for (const auto &route : routes) {
-            if (route == "0.0.0.0/0") {
-                if (!m_fullV4) {
-                    if (libxtun_error err = updateFullTunnelRoutes(AF_INET, true); err != LIBXTUN_OK) {
+            const int family = route.address().family();
+            if (route.isDefaultRoute()) {
+                if (bool &full = family == AF_INET ? m_fullV4 : m_fullV6; !full) {
+                    if (libxtun_error err = updateFullTunnelRoutes(family, true); err != LIBXTUN_OK) {
                         clearProxyRoutes();
                         return err;
                     }
-                    m_fullV4 = true;
-                }
-            } else if (route == "::/0") {
-                if (!m_fullV6) {
-                    if (libxtun_error err = updateFullTunnelRoutes(AF_INET6, true); err != LIBXTUN_OK) {
-                        clearProxyRoutes();
-                        return err;
-                    }
-                    m_fullV6 = true;
+                    full = true;
                 }
             } else {
                 if (libxtun_error err = updateRouteFor(route, true); err != LIBXTUN_OK) {

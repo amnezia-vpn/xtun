@@ -56,6 +56,7 @@ namespace libxtun
     }
 
     libxtun_error MacosKillswitch::setProtected(const std::vector<net::IpPrefix> &prefixes,
+                                                const std::vector<net::IpPrefix> &excludes,
                                                 const std::vector<net::IpAddress> &dnsServers)
     {
         const auto replaceTable = [](const char *table, const std::vector<std::string> &entries) {

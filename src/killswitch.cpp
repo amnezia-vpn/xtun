@@ -55,6 +55,7 @@ namespace libxtun
     }
 
     libxtun_error Killswitch::protect(const std::vector<net::IpPrefix> &routes,
+                                      const std::vector<net::IpPrefix> &excludes,
                                       const std::vector<net::IpAddress> &resolvers)
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -69,6 +70,6 @@ namespace libxtun
                 dnsServers.push_back(exception);
             }
         }
-        return setProtected(protectedSet(routes), dnsServers);
+        return setProtected(protectedSet(routes), excludes, dnsServers);
     }
 }

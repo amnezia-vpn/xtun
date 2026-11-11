@@ -137,24 +137,16 @@ namespace libxtun
         return LIBXTUN_OK;
     }
 
-    libxtun_error WindowsRouter::updateRouteFor(const std::string &cidr, bool add)
+    libxtun_error WindowsRouter::updateRouteFor(const net::IpPrefix &prefix, bool add)
     {
-        std::string ip;
-        int prefix;
-        if (!splitCidr(cidr, ip, prefix)) {
-            return LIBXTUN_ERR_INVALID_ARGS;
-        }
-        int family;
-        unsigned char raw[16];
-        if (parseIp(ip, family, raw) < 0) {
-            return LIBXTUN_ERR_INVALID_ARGS;
-        }
+        const int family = prefix.address().family();
+        const auto octets = prefix.address().octets();
 
         MIB_IPFORWARD_ROW2 row;
         InitializeIpForwardEntry(&row);
         row.InterfaceIndex = static_cast<NET_IFINDEX>(m_ifindex);
-        toSockaddrInet(family, raw, row.DestinationPrefix.Prefix);
-        row.DestinationPrefix.PrefixLength = static_cast<UINT8>(prefix);
+        toSockaddrInet(family, reinterpret_cast<const unsigned char *>(octets.data()), row.DestinationPrefix.Prefix);
+        row.DestinationPrefix.PrefixLength = static_cast<UINT8>(prefix.bits());
         // On-link: an unspecified next hop with the destination's family.
         std::memset(&row.NextHop, 0, sizeof(row.NextHop));
         row.NextHop.si_family = static_cast<ADDRESS_FAMILY>(family);
@@ -201,7 +193,8 @@ namespace libxtun
         return LIBXTUN_OK;
     }
 
-    libxtun_error WindowsRouter::setProxyRoutes(const std::vector<std::string> &routes)
+    libxtun_error WindowsRouter::setProxyRoutes(const std::vector<net::IpPrefix> &routes,
+                                                const std::vector<net::IpPrefix> &excludes)
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
         // A full tunnel is just 0.0.0.0/0 (and ::/0) via the adapter; the low
