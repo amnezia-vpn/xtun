@@ -13,7 +13,8 @@ namespace libxtun
     public:
         libxtun_error configureInterface(const std::string &ifname, int ifindex,
                                          const std::vector<std::string> &addresses, int mtu) override;
-        libxtun_error setProxyRoutes(const std::vector<std::string> &routes) override;
+        libxtun_error setProxyRoutes(const std::vector<net::IpPrefix> &routes,
+                                     const std::vector<net::IpPrefix> &excludes) override;
         void clearProxyRoutes() override;
         void revert() override;
         void protectSocket(int fd) override;
@@ -36,7 +37,7 @@ namespace libxtun
         libxtun_error updateRoute(int family, const unsigned char *dst, int prefix, bool add);
         libxtun_error updateScopedRoute(int family, const unsigned char *dst, int prefix, const unsigned char *gw,
                                         unsigned scope, bool add);
-        libxtun_error updateRouteFor(const std::string &cidr, bool add);
+        libxtun_error updateRouteFor(const net::IpPrefix &prefix, bool add);
         libxtun_error updateFullTunnelRoutes(int family, bool add);
         libxtun_error updateUplinkRoutes(int family, const Uplink &uplink, bool add);
         Uplink getGatewayAndIface(int family);
@@ -45,7 +46,7 @@ namespace libxtun
         int m_ifindex = -1;
         std::string m_ifname;
         std::vector<std::string> m_addresses;
-        std::vector<std::string> m_routes;
+        std::vector<net::IpPrefix> m_routes;
         bool m_fullV4 = false;
         bool m_fullV6 = false;
         Uplink m_uplinkV4;

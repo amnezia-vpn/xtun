@@ -6,6 +6,7 @@ namespace libxtun
     constexpr unsigned int PROXY_FWMARK = 0x7874;
     constexpr unsigned int PROXY_TABLE = 0x7874;
 
+    constexpr unsigned int RULE_PRIORITY_EXCLUDE = 32762;
     constexpr unsigned int RULE_PRIORITY_LAN = 32763;
     constexpr unsigned int RULE_PRIORITY_TUNNEL = 32764;
 }

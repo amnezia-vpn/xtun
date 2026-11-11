@@ -271,7 +271,7 @@ TEST_P(KillswitchMode, DestructionHonoursPersistence)
     {
         auto killswitch = m_env.create(GetParam());
         ASSERT_NE(killswitch, nullptr);
-        ASSERT_EQ(killswitch->protect({ *net::IpPrefix::parse(FULL_ROUTES[0]) }, {}), LIBXTUN_OK);
+        ASSERT_EQ(killswitch->protect({ *net::IpPrefix::parse(FULL_ROUTES[0]) }, {}, {}), LIBXTUN_OK);
         installed = m_env.ruleCount();
         ASSERT_EQ(installed > 0, GetParam() != LIBXTUN_KILLSWITCH_MODE_DISABLED);
     }

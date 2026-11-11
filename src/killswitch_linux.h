@@ -25,12 +25,14 @@ namespace libxtun
     protected:
         libxtun_error install(int ifIndex, const std::string &ifName) override;
         libxtun_error setProtected(const std::vector<net::IpPrefix> &prefixes,
+                                   const std::vector<net::IpPrefix> &excludes,
                                    const std::vector<net::IpAddress> &dnsServers) override;
         void remove() noexcept override;
 
     private:
         std::string m_ifName;
         std::vector<net::IpPrefix> m_prefixes;
+        std::vector<net::IpPrefix> m_excludes;
         std::vector<net::IpAddress> m_dnsServers;
     };
 }

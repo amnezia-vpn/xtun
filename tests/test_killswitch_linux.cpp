@@ -134,8 +134,7 @@ namespace libxtun::test
         }
 
         return std::ranges::all_of(routes, [&tunnel](const std::string &route) {
-            return route == "0.0.0.0/0" ? ip({ "route", "flush", "table", std::to_string(PROXY_TABLE) })
-                                        : ip({ "route", "del", route, "dev", tunnel });
+            return ip({ "route", "del", route, "dev", tunnel, "table", std::to_string(PROXY_TABLE) });
         });
     }
 }

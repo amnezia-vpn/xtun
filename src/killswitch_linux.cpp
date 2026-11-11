@@ -12,6 +12,7 @@ namespace libxtun
     namespace
     {
         std::string iptablesRules(int family, const std::string &ifName, const std::vector<net::IpPrefix> &prefixes,
+                                  const std::vector<net::IpPrefix> &excludes,
                                   const std::vector<net::IpAddress> &dnsServers)
         {
             std::ostringstream input;
@@ -38,6 +39,11 @@ namespace libxtun
                 input << "-A " << DNS_CHAIN << " -j REJECT\n";
             }
             input << "-A " << CHAIN << " -o " << ifName << " -j ACCEPT\n";
+            for (const net::IpPrefix &exclude : excludes) {
+                if (exclude.address().family() == family) {
+                    input << "-A " << CHAIN << " -d " << exclude.toString() << " -j ACCEPT\n";
+                }
+            }
             for (const net::IpPrefix &prefix : prefixes) {
                 if (prefix.address().family() == family) {
                     input << "-A " << CHAIN << " -d " << prefix.toString() << " -j REJECT\n";
@@ -60,7 +66,7 @@ namespace libxtun
         (void)ifIndex;
 
         m_ifName = ifName;
-        if (const auto rc = setProtected({}, {}); rc != LIBXTUN_OK) {
+        if (const auto rc = setProtected({}, {}, {}); rc != LIBXTUN_OK) {
             remove();
             return rc;
         }
@@ -77,18 +83,22 @@ namespace libxtun
     }
 
     libxtun_error LinuxKillswitch::setProtected(const std::vector<net::IpPrefix> &prefixes,
+                                                const std::vector<net::IpPrefix> &excludes,
                                                 const std::vector<net::IpAddress> &dnsServers)
     {
         for (const int family : { AF_INET, AF_INET6 }) {
-            if (const auto rc = iptables::restore(family, iptablesRules(family, m_ifName, prefixes, dnsServers));
+            if (const auto rc =
+                        iptables::restore(family, iptablesRules(family, m_ifName, prefixes, excludes, dnsServers));
                 rc != LIBXTUN_OK) {
                 if (family == AF_INET6) {
-                    iptables::restore(AF_INET, iptablesRules(AF_INET, m_ifName, m_prefixes, m_dnsServers));
+                    iptables::restore(AF_INET,
+                                      iptablesRules(AF_INET, m_ifName, m_prefixes, m_excludes, m_dnsServers));
                 }
                 return rc;
             }
         }
         m_prefixes = prefixes;
+        m_excludes = excludes;
         m_dnsServers = dnsServers;
         return LIBXTUN_OK;
     }
@@ -96,6 +106,7 @@ namespace libxtun
     void LinuxKillswitch::remove() noexcept
     {
         m_prefixes.clear();
+        m_excludes.clear();
         m_dnsServers.clear();
         for (const int family : { AF_INET, AF_INET6 }) {
             iptables::run(family, { "-t", "filter", "-D", "OUTPUT", "-j", CHAIN });

@@ -109,6 +109,7 @@ namespace libxtun
     }
 
     libxtun_error WindowsKillswitch::setProtected(const std::vector<net::IpPrefix> &prefixes,
+                                                  const std::vector<net::IpPrefix> &excludes,
                                                   const std::vector<net::IpAddress> &dnsServers)
     {
         return installFilters(m_luid, prefixes, dnsServers);

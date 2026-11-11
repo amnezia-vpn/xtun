@@ -19,7 +19,8 @@ namespace libxtun
         virtual ~Killswitch() = default;
 
         libxtun_error update(int ifIndex, const std::string &ifName);
-        libxtun_error protect(const std::vector<net::IpPrefix> &routes, const std::vector<net::IpAddress> &resolvers);
+        libxtun_error protect(const std::vector<net::IpPrefix> &routes, const std::vector<net::IpPrefix> &excludes,
+                              const std::vector<net::IpAddress> &resolvers);
 
         static std::unique_ptr<Killswitch> create(libxtun_killswitch_mode mode, int macosGroup = -1,
                                                   std::vector<net::IpAddress> dnsExceptions = {});
@@ -42,6 +43,7 @@ namespace libxtun
 
         virtual libxtun_error install(int ifIndex, const std::string &ifName) = 0;
         virtual libxtun_error setProtected(const std::vector<net::IpPrefix> &prefixes,
+                                           const std::vector<net::IpPrefix> &excludes,
                                            const std::vector<net::IpAddress> &dnsServers) = 0;
         virtual void remove() noexcept = 0;
 
