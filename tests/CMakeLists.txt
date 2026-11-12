@@ -23,7 +23,7 @@ target_compile_definitions(xtun_tests PRIVATE
     XTUN_TEST_SECRETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/secrets")
 
 if(WIN32)
-    target_sources(xtun_tests PRIVATE test_split_tunnel_windows.cpp)
+    target_sources(xtun_tests PRIVATE test_split_tunnel_windows.cpp test_wfp_windows.cpp)
     target_include_directories(xtun_tests PRIVATE $<TARGET_PROPERTY:amnezia::wintun,INTERFACE_INCLUDE_DIRECTORIES>)
     target_link_libraries(xtun_tests PRIVATE advapi32 iphlpapi fwpuclnt)
     target_compile_definitions(xtun_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
