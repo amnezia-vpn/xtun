@@ -39,8 +39,8 @@ namespace libxtun
         libxtun_error rtSend(int family, const unsigned char *dst, int prefix, const void *gw, unsigned gwLen,
                              int flags, unsigned index, bool add);
         libxtun_error updateRoute(int family, const unsigned char *dst, int prefix, bool add);
-        libxtun_error updateScopedRoute(int family, const unsigned char *dst, int prefix, const unsigned char *gw,
-                                        unsigned scope, bool add);
+        libxtun_error updateGatewayRoute(int family, const unsigned char *dst, int prefix, const unsigned char *gw,
+                                         unsigned scope, bool add);
         libxtun_error updateRouteFor(const net::IpPrefix &prefix, bool add);
         libxtun_error updateFullTunnelRoutes(int family, bool add);
         libxtun_error updateUplinkRoutes(int family, const Uplink &uplink, bool add);
@@ -51,6 +51,7 @@ namespace libxtun
         std::string m_ifname;
         std::vector<std::string> m_addresses;
         std::vector<net::IpPrefix> m_routes;
+        std::vector<net::IpPrefix> m_excludes;
         bool m_fullV4 = false;
         bool m_fullV6 = false;
         Uplink m_uplinkV4;

@@ -255,10 +255,13 @@ namespace libxtun
         return rtSend(family, dst, prefix, &sdl, sdl.sdl_len, RTF_STATIC | RTF_UP, static_cast<unsigned>(m_ifindex), add);
     }
 
-    libxtun_error MacosRouter::updateScopedRoute(int family, const unsigned char *dst, int prefix,
-                                                 const unsigned char *gw, unsigned scope, bool add)
+    libxtun_error MacosRouter::updateGatewayRoute(int family, const unsigned char *dst, int prefix,
+                                                  const unsigned char *gw, unsigned scope, bool add)
     {
-        int flags = RTF_STATIC | RTF_UP | RTF_GATEWAY | RTF_IFSCOPE;
+        int flags = RTF_STATIC | RTF_UP | RTF_GATEWAY;
+        if (scope != 0) {
+            flags |= RTF_IFSCOPE;
+        }
         if (family == AF_INET) {
             struct sockaddr_in sin;
             std::memset(&sin, 0, sizeof(sin));
@@ -291,7 +294,7 @@ namespace libxtun
             return err;
         }
 
-        return updateUplinkRoutes(family, family == AF_INET ? m_uplinkV4 : m_uplinkV6, add);
+        return LIBXTUN_OK;
     }
 
     libxtun_error MacosRouter::updateUplinkRoutes(int family, const Uplink &uplink, bool add)
@@ -299,14 +302,35 @@ namespace libxtun
         if (uplink.ifindex == 0) {
             return LIBXTUN_OK;
         }
-        if (libxtun_error err = updateScopedRoute(family, DEFAULT_LOWER_HALF, 1, uplink.gw, uplink.ifindex, add);
-            add && err != LIBXTUN_OK) {
-            return err;
+
+        struct Entry
+        {
+            const unsigned char *dst;
+            int prefix;
+            unsigned scope;
+        };
+        std::vector<Entry> entries;
+        if (family == AF_INET ? m_fullV4 : m_fullV6) {
+            entries.push_back({ DEFAULT_LOWER_HALF, 1, uplink.ifindex });
+            entries.push_back({ DEFAULT_UPPER_HALF, 1, uplink.ifindex });
         }
-        if (libxtun_error err = updateScopedRoute(family, DEFAULT_UPPER_HALF, 1, uplink.gw, uplink.ifindex, add);
-            add && err != LIBXTUN_OK) {
-            updateScopedRoute(family, DEFAULT_LOWER_HALF, 1, uplink.gw, uplink.ifindex, false);
-            return err;
+        const auto append = [&](const std::vector<net::IpPrefix> &prefixes, unsigned scope) {
+            for (const net::IpPrefix &prefix : prefixes) {
+                if (prefix.address().family() == family) {
+                    entries.push_back({ reinterpret_cast<const unsigned char *>(prefix.address().octets().data()),
+                                        static_cast<int>(prefix.bits()), scope });
+                }
+            }
+        };
+        append(m_routes, uplink.ifindex);
+        append(m_excludes, 0);
+
+        for (const Entry &entry : entries) {
+            if (libxtun_error err = updateGatewayRoute(family, entry.dst, entry.prefix, uplink.gw, entry.scope, add);
+                add && err != LIBXTUN_OK) {
+                updateUplinkRoutes(family, uplink, false);
+                return err;
+            }
         }
         return LIBXTUN_OK;
     }
@@ -362,12 +386,25 @@ namespace libxtun
                 m_routes.push_back(route);
             }
         }
+
+        m_excludes = excludes;
+        for (const int family : { AF_INET, AF_INET6 }) {
+            if (libxtun_error err = updateUplinkRoutes(family, family == AF_INET ? m_uplinkV4 : m_uplinkV6, true);
+                err != LIBXTUN_OK) {
+                clearProxyRoutes();
+                return err;
+            }
+        }
         return LIBXTUN_OK;
     }
 
     void MacosRouter::clearProxyRoutes()
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
+        for (const int family : { AF_INET, AF_INET6 }) {
+            updateUplinkRoutes(family, family == AF_INET ? m_uplinkV4 : m_uplinkV6, false);
+        }
+        m_excludes.clear();
         if (m_fullV4) {
             updateFullTunnelRoutes(AF_INET, false);
             m_fullV4 = false;
@@ -459,27 +496,29 @@ namespace libxtun
 
     void MacosRouter::onRouteChanged()
     {
-        bool uplinkChanged = false;
         {
             std::lock_guard<std::recursive_mutex> lock(m_mtx);
+            bool uplinkChanged = false;
             for (const int family : { AF_INET, AF_INET6 }) {
                 Uplink &previous = family == AF_INET ? m_uplinkV4 : m_uplinkV6;
                 const Uplink current = getGatewayAndIface(family);
                 if (current == previous) {
                     continue;
                 }
-                const bool full = family == AF_INET ? m_fullV4 : m_fullV6;
-                if (full) {
-                    updateUplinkRoutes(family, previous, false);
-                    updateUplinkRoutes(family, current, true);
-                }
+                updateUplinkRoutes(family, previous, false);
                 previous = current;
                 uplinkChanged = true;
             }
+            if (!uplinkChanged) {
+                return;
+            }
+            if (updateUplinkRoutes(AF_INET, m_uplinkV4, true) != LIBXTUN_OK ||
+                updateUplinkRoutes(AF_INET6, m_uplinkV6, true) != LIBXTUN_OK) {
+                updateUplinkRoutes(AF_INET, m_uplinkV4, false);
+                updateUplinkRoutes(AF_INET6, m_uplinkV6, false);
+            }
         }
-        if (uplinkChanged) {
-            m_onUplinkChanged();
-        }
+        m_onUplinkChanged();
     }
 
     void MacosRouter::protectSocket(int fd)
