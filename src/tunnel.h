@@ -26,7 +26,8 @@ namespace libxtun
         enum class Event {
             Up,
             Down,
-            MtuUpdate
+            MtuUpdate,
+            UplinkUpdate
         };
 
         static ResultXtun<std::unique_ptr<Tunnel>> fromOpts(const libxtun_tunnel_opts &opts);
@@ -37,6 +38,7 @@ namespace libxtun
 
         int attachProxy(Proxy *proxy);
         void detachProxy(Proxy *proxy);
+        void networkChanged();
 
         int start();
 

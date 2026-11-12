@@ -40,7 +40,7 @@ namespace libxtun
         auto tun = std::unique_ptr<Tunnel>(new Tunnel());
         tun->m_dnsDefaults = std::move(dnsDefaults).value();
         tun->m_device = createTunDevice();
-        tun->m_router = Router::create();
+        tun->m_router = Router::create([tunnel = tun.get()] { tunnel->emit(Event::UplinkUpdate); });
         tun->m_killswitch = Killswitch::create(opts.killswitch_mode, opts.macos_group, std::move(dnsExceptions).value());
 
         auto &dev = tun->m_device;
@@ -238,6 +238,7 @@ namespace libxtun
         case Event::Up: m_proxy->event(ProxyEvent::Up); break;
         case Event::Down: m_proxy->event(ProxyEvent::Down); break;
         case Event::MtuUpdate: m_proxy->event(ProxyEvent::MtuUpdate); break;
+        case Event::UplinkUpdate: m_proxy->event(ProxyEvent::UplinkUpdate); break;
         }
     }
 
@@ -290,11 +291,14 @@ namespace libxtun
 
     void Tunnel::onRouteChanged()
     {
-        emit(Event::Down);
-        emit(Event::Up);
         if (m_router != nullptr) {
             m_router->onRouteChanged();
         }
+    }
+
+    void Tunnel::networkChanged()
+    {
+        emit(Event::UplinkUpdate);
     }
 }
 
@@ -396,5 +400,5 @@ void libxtun_tunnel_network_changed(struct libxtun_tunnel *tun)
     }
 
     auto *obj = reinterpret_cast<libxtun::Tunnel *>(tun->handle);
-    obj->onRouteChanged();
+    obj->networkChanged();
 }

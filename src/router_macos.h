@@ -11,6 +11,10 @@ namespace libxtun
     class MacosRouter : public Router
     {
     public:
+        explicit MacosRouter(std::function<void()> onUplinkChanged) : Router(std::move(onUplinkChanged))
+        {
+        }
+
         libxtun_error configureInterface(const std::string &ifname, int ifindex,
                                          const std::vector<std::string> &addresses, int mtu) override;
         libxtun_error setProxyRoutes(const std::vector<net::IpPrefix> &routes,
