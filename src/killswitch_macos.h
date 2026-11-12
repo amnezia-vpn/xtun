@@ -12,6 +12,7 @@ namespace libxtun
 {
     constexpr const char *ANCHOR = "com.apple/xtun";
     constexpr const char *PROTECTED_TABLE = "xtun_protected";
+    constexpr const char *EXCLUDED_TABLE = "xtun_excluded";
     constexpr const char *DNS_TABLE = "xtun_dns";
 
     class MacosKillswitch final : public Killswitch

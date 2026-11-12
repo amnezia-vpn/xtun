@@ -28,9 +28,11 @@ namespace libxtun
         }
 
         const std::string protectedTable = "<" + std::string(PROTECTED_TABLE) + ">";
+        const std::string excludedTable = "<" + std::string(EXCLUDED_TABLE) + ">";
         const std::string dnsTable = "<" + std::string(DNS_TABLE) + ">";
 
         std::string rules = "table " + protectedTable + " { }\n";
+        rules += "table " + excludedTable + " { }\n";
         rules += "table " + dnsTable + " { 0.0.0.0/0, ::/0 }\n";
         rules += "pass out quick on lo0 all no state\n";
         const ::gid_t group = m_group >= 0 ? static_cast<::gid_t>(m_group) : ::getegid();
@@ -41,6 +43,7 @@ namespace libxtun
         rules += "block return out quick proto udp to ! " + dnsTable + " port 53\n";
         rules += "block return out quick proto tcp to ! " + dnsTable + " port { 53 853 }\n";
         rules += "pass out quick on " + ifName + " all no state\n";
+        rules += "pass out quick to " + excludedTable + " no state\n";
         rules += "block return out quick to " + protectedTable + "\n";
 
         if (libxtun_error rc = pf::loadRules(rules, ANCHOR); rc != LIBXTUN_OK) {
@@ -77,6 +80,9 @@ namespace libxtun
         const std::vector<std::string> allowed =
                 prefixes.empty() ? std::vector<std::string> { "0.0.0.0/0", "::/0" } : strings(dnsServers);
         if (const libxtun_error rc = replaceTable(DNS_TABLE, allowed); rc != LIBXTUN_OK) {
+            return rc;
+        }
+        if (const libxtun_error rc = replaceTable(EXCLUDED_TABLE, strings(excludes)); rc != LIBXTUN_OK) {
             return rc;
         }
         return replaceTable(PROTECTED_TABLE, strings(prefixes));
