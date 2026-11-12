@@ -18,7 +18,8 @@ namespace libxtun
     enum class ProxyEvent {
         Up,
         Down,
-        MtuUpdate
+        MtuUpdate,
+        UplinkUpdate
     };
 
     struct SplitRoutes

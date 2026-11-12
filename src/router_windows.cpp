@@ -50,6 +50,15 @@ namespace
             std::memcpy(&out.Ipv6.sin6_addr, raw, 16);
         }
     }
+
+    net::IpAddress toIpAddress(const SOCKADDR_INET &addr)
+    {
+        switch (addr.si_family) {
+        case AF_INET: return net::IpAddress::fromV4(addr.Ipv4.sin_addr);
+        case AF_INET6: return net::IpAddress::fromV6(addr.Ipv6.sin6_addr);
+        default: return {};
+        }
+    }
 } // namespace
 
 namespace libxtun
@@ -173,6 +182,8 @@ namespace libxtun
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
         (void)ifname; // Windows keys everything on the interface index.
         m_ifindex = static_cast<unsigned long>(ifindex);
+        m_uplinkV4 = getUplink(AF_INET);
+        m_uplinkV6 = getUplink(AF_INET6);
 
         for (const auto &addr : addresses) {
             auto rc = addAddress(addr);
@@ -231,14 +242,14 @@ namespace libxtun
         m_addresses.clear();
     }
 
-    unsigned WindowsRouter::physicalDefaultIfindex()
+    WindowsRouter::Uplink WindowsRouter::getUplink(int family)
     {
         PMIB_IPFORWARD_TABLE2 table = nullptr;
-        if (GetIpForwardTable2(AF_INET, &table) != NO_ERROR || table == nullptr) {
-            return 0;
+        if (GetIpForwardTable2(static_cast<ADDRESS_FAMILY>(family), &table) != NO_ERROR || table == nullptr) {
+            return {};
         }
 
-        unsigned best = 0;
+        Uplink best;
         ULONG bestMetric = ~0UL;
         for (ULONG i = 0; i < table->NumEntries; ++i) {
             const MIB_IPFORWARD_ROW2 &r = table->Table[i];
@@ -250,7 +261,7 @@ namespace libxtun
             }
             MIB_IPINTERFACE_ROW iface;
             std::memset(&iface, 0, sizeof(iface));
-            iface.Family = AF_INET;
+            iface.Family = static_cast<ADDRESS_FAMILY>(family);
             iface.InterfaceIndex = r.InterfaceIndex;
             ULONG effective = r.Metric;
             if (GetIpInterfaceEntry(&iface) == NO_ERROR) {
@@ -258,7 +269,8 @@ namespace libxtun
             }
             if (effective < bestMetric) {
                 bestMetric = effective;
-                best = r.InterfaceIndex;
+                best.ifindex = r.InterfaceIndex;
+                best.gw = toIpAddress(r.NextHop);
             }
         }
 
@@ -266,10 +278,30 @@ namespace libxtun
         return best;
     }
 
+    void WindowsRouter::onRouteChanged()
+    {
+        bool uplinkChanged = false;
+        {
+            std::lock_guard<std::recursive_mutex> lock(m_mtx);
+            for (const int family : { AF_INET, AF_INET6 }) {
+                Uplink &previous = family == AF_INET ? m_uplinkV4 : m_uplinkV6;
+                const Uplink current = getUplink(family);
+                if (current == previous) {
+                    continue;
+                }
+                previous = current;
+                uplinkChanged = true;
+            }
+        }
+        if (uplinkChanged) {
+            m_onUplinkChanged();
+        }
+    }
+
     void WindowsRouter::protectSocket(int fd)
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
-        const unsigned idx = physicalDefaultIfindex();
+        const unsigned idx = m_uplinkV4.ifindex;
         if (idx == 0) {
             return;
         }

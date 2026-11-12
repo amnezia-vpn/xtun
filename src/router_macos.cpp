@@ -459,19 +459,26 @@ namespace libxtun
 
     void MacosRouter::onRouteChanged()
     {
-        std::lock_guard<std::recursive_mutex> lock(m_mtx);
-        for (const int family : { AF_INET, AF_INET6 }) {
-            Uplink &previous = family == AF_INET ? m_uplinkV4 : m_uplinkV6;
-            const Uplink current = getGatewayAndIface(family);
-            if (current == previous) {
-                continue;
+        bool uplinkChanged = false;
+        {
+            std::lock_guard<std::recursive_mutex> lock(m_mtx);
+            for (const int family : { AF_INET, AF_INET6 }) {
+                Uplink &previous = family == AF_INET ? m_uplinkV4 : m_uplinkV6;
+                const Uplink current = getGatewayAndIface(family);
+                if (current == previous) {
+                    continue;
+                }
+                const bool full = family == AF_INET ? m_fullV4 : m_fullV6;
+                if (full) {
+                    updateUplinkRoutes(family, previous, false);
+                    updateUplinkRoutes(family, current, true);
+                }
+                previous = current;
+                uplinkChanged = true;
             }
-            const bool full = family == AF_INET ? m_fullV4 : m_fullV6;
-            if (full) {
-                updateUplinkRoutes(family, previous, false);
-                updateUplinkRoutes(family, current, true);
-            }
-            previous = current;
+        }
+        if (uplinkChanged) {
+            m_onUplinkChanged();
         }
     }
 
