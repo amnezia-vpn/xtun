@@ -120,7 +120,12 @@ func (i *Instance) handleUDP(ctx context.Context, conn *gonet.UDPConn, id stack.
 
 	flowCtx := session.ContextWithInbound(ctx, &session.Inbound{
 		Name:   "xtun",
+		Tag:    i.inboundTag,
 		Source: source,
+	})
+
+	flowCtx = session.ContextWithContent(flowCtx, &session.Content{
+		SniffingRequest: i.sniffing,
 	})
 
 	flowCtx = session.TrackedConnectionError(flowCtx, &udpErrorReporter{

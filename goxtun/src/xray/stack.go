@@ -87,8 +87,12 @@ func (i *Instance) handleTCP(ctx context.Context, request *tcp.ForwarderRequest)
 
 	flowCtx := session.ContextWithInbound(ctx, &session.Inbound{
 		Name:          "xtun",
+		Tag:           i.inboundTag,
 		Source:        source,
 		CanSpliceCopy: 3,
+	})
+	flowCtx = session.ContextWithContent(flowCtx, &session.Content{
+		SniffingRequest: i.sniffing,
 	})
 	flowCtx = session.TrackedConnectionError(flowCtx, i)
 	scope := &socketScope{}

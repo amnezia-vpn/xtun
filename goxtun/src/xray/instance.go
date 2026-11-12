@@ -9,7 +9,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/xtls/xray-core/app/proxyman"
 	_ "github.com/xtls/xray-core/app/proxyman/inbound"
+	"github.com/xtls/xray-core/common/session"
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/policy"
 	"github.com/xtls/xray-core/features/routing"
@@ -62,6 +64,10 @@ type Instance struct {
 	activeFlows    int
 	flowsDone      chan struct{}
 	udpIdleTimeout time.Duration
+
+	xrayctx    context.Context
+	inboundTag string
+	sniffing   session.SniffingRequest
 }
 
 func NewInstance(
@@ -114,6 +120,37 @@ func NewInstance(
 		return nil, err
 	}
 
+	if len(preparedConfig.Outbound) == 0 {
+		return nil, errors.New("xray: at least one outbound is required")
+	}
+
+	if len(preparedConfig.Inbound) > 1 {
+		return nil, errors.New("xray: at most one inbound is supported")
+	}
+
+	var sniffingConfig *proxyman.SniffingConfig
+
+	if len(preparedConfig.Inbound) == 1 {
+		inbound := preparedConfig.Inbound[0]
+		if inbound == nil || inbound.ReceiverSettings == nil {
+			return nil, errors.New("xray: inbound receiver settings are required")
+		}
+
+		settings, err := inbound.ReceiverSettings.GetInstance()
+		if err != nil {
+			return nil, fmt.Errorf("xray: inbound receiver settings: %w", err)
+		}
+
+		reciever, ok := settings.(*proxyman.ReceiverConfig)
+		if !ok || reciever == nil {
+			return nil, fmt.Errorf("xray: unexpected receiver settings %T", settings)
+		}
+
+		i.inboundTag = inbound.Tag
+		sniffingConfig = reciever.SniffingSettings
+		preparedConfig.Inbound = nil // argueable but needed.
+	}
+
 	i.engine, err = core.NewWithContext(ctx, preparedConfig)
 	if err != nil {
 		cancel()
@@ -129,17 +166,26 @@ func NewInstance(
 
 	i.udpIdleTimeout = policyManager.ForLevel(0).Timeouts.ConnectionIdle
 
+	if i.xrayctx == nil {
+		return nil, errors.New("xray: instance context is not available")
+	}
+
+	i.sniffing, err = proxyman.BuildSniffingRequest(sniffingConfig)
+	if err != nil {
+		return nil, fmt.Errorf("xray: inbound sniffing: %w", err)
+	}
+
 	err = i.engine.Start()
 	if err != nil {
 		cancel()
 		return nil, err
 	}
 
-	if err := i.initTCP(ctx); err != nil {
+	if err := i.initTCP(i.xrayctx); err != nil {
 		return nil, err
 	}
 
-	i.initUDP(ctx)
+	i.initUDP(i.xrayctx)
 
 	i.workers.Go(func() {
 		i.runEvents(ctx)
