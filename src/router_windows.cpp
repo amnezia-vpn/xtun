@@ -146,19 +146,23 @@ namespace libxtun
         return LIBXTUN_OK;
     }
 
-    libxtun_error WindowsRouter::updateRouteFor(const net::IpPrefix &prefix, bool add)
+    libxtun_error WindowsRouter::updateRouteFor(const net::IpPrefix &prefix, bool add, const Uplink *uplink)
     {
         const int family = prefix.address().family();
         const auto octets = prefix.address().octets();
 
         MIB_IPFORWARD_ROW2 row;
         InitializeIpForwardEntry(&row);
-        row.InterfaceIndex = static_cast<NET_IFINDEX>(m_ifindex);
+        row.InterfaceIndex = uplink != nullptr ? uplink->ifindex : static_cast<NET_IFINDEX>(m_ifindex);
         toSockaddrInet(family, reinterpret_cast<const unsigned char *>(octets.data()), row.DestinationPrefix.Prefix);
         row.DestinationPrefix.PrefixLength = static_cast<UINT8>(prefix.bits());
-        // On-link: an unspecified next hop with the destination's family.
-        std::memset(&row.NextHop, 0, sizeof(row.NextHop));
-        row.NextHop.si_family = static_cast<ADDRESS_FAMILY>(family);
+        if (uplink != nullptr) {
+            toSockaddrInet(family, reinterpret_cast<const unsigned char *>(uplink->gw.octets().data()), row.NextHop);
+        } else {
+            // On-link: an unspecified next hop with the destination's family.
+            std::memset(&row.NextHop, 0, sizeof(row.NextHop));
+            row.NextHop.si_family = static_cast<ADDRESS_FAMILY>(family);
+        }
         row.Metric = 0;
 
         DWORD rc;
@@ -174,6 +178,24 @@ namespace libxtun
             }
         }
         return LIBXTUN_ERR_SYSTEM;
+    }
+
+    libxtun_error WindowsRouter::updateUplinkRoutes(int family, const Uplink &uplink, bool add)
+    {
+        if (uplink.ifindex == 0) {
+            return LIBXTUN_OK;
+        }
+
+        for (const net::IpPrefix &exclude : m_excludes) {
+            if (exclude.address().family() != family) {
+                continue;
+            }
+            if (libxtun_error err = updateRouteFor(exclude, add, &uplink); add && err != LIBXTUN_OK) {
+                updateUplinkRoutes(family, uplink, false);
+                return err;
+            }
+        }
+        return LIBXTUN_OK;
     }
 
     libxtun_error WindowsRouter::configureInterface(const std::string &ifname, int ifindex,
@@ -220,12 +242,25 @@ namespace libxtun
             }
             m_routes.push_back(route);
         }
+
+        m_excludes = excludes;
+        for (const int family : { AF_INET, AF_INET6 }) {
+            if (libxtun_error err = updateUplinkRoutes(family, family == AF_INET ? m_uplinkV4 : m_uplinkV6, true);
+                err != LIBXTUN_OK) {
+                clearProxyRoutes();
+                return err;
+            }
+        }
         return LIBXTUN_OK;
     }
 
     void WindowsRouter::clearProxyRoutes()
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
+        for (const int family : { AF_INET, AF_INET6 }) {
+            updateUplinkRoutes(family, family == AF_INET ? m_uplinkV4 : m_uplinkV6, false);
+        }
+        m_excludes.clear();
         for (const auto &route : m_routes) {
             updateRouteFor(route, false);
         }
@@ -280,22 +315,29 @@ namespace libxtun
 
     void WindowsRouter::onRouteChanged()
     {
-        bool uplinkChanged = false;
         {
             std::lock_guard<std::recursive_mutex> lock(m_mtx);
+            bool uplinkChanged = false;
             for (const int family : { AF_INET, AF_INET6 }) {
                 Uplink &previous = family == AF_INET ? m_uplinkV4 : m_uplinkV6;
                 const Uplink current = getUplink(family);
                 if (current == previous) {
                     continue;
                 }
+                updateUplinkRoutes(family, previous, false);
                 previous = current;
                 uplinkChanged = true;
             }
+            if (!uplinkChanged) {
+                return;
+            }
+            if (updateUplinkRoutes(AF_INET, m_uplinkV4, true) != LIBXTUN_OK ||
+                updateUplinkRoutes(AF_INET6, m_uplinkV6, true) != LIBXTUN_OK) {
+                updateUplinkRoutes(AF_INET, m_uplinkV4, false);
+                updateUplinkRoutes(AF_INET6, m_uplinkV6, false);
+            }
         }
-        if (uplinkChanged) {
-            m_onUplinkChanged();
-        }
+        m_onUplinkChanged();
     }
 
     void WindowsRouter::protectSocket(int fd)

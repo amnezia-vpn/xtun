@@ -18,6 +18,7 @@ namespace libxtun
     constexpr UINT8 WEIGHT_PASS = 14;
     constexpr UINT8 WEIGHT_BLOCK_DNS = 12;
     constexpr UINT8 WEIGHT_PASS_TUNNEL = 8;
+    constexpr UINT8 WEIGHT_PASS_EXCLUDED = 4;
     constexpr UINT8 WEIGHT_BLOCK_PROTECTED = 0;
 
     wfp::WfpConfig makeWfpConfig(bool persistent) noexcept;
@@ -40,15 +41,19 @@ namespace libxtun
 
     private:
         libxtun_error installFilters(std::uint64_t luidValue, const std::vector<net::IpPrefix> &prefixes,
+                                     const std::vector<net::IpPrefix> &excludes,
                                      const std::vector<net::IpAddress> &dnsServers);
         libxtun_error blockProtected(const GUID &layer, const GUID &field, int family,
                                      const std::vector<net::IpPrefix> &prefixes);
+        libxtun_error allowExcluded(const GUID &layer, const GUID &field, int family,
+                                    const std::vector<net::IpPrefix> &excludes);
         libxtun_error allowTunnel(const GUID &layer, const GUID &field, std::uint64_t luidValue) noexcept;
         libxtun_error allowLoopback(const GUID &layer) noexcept;
         libxtun_error allowAppTraffic(const GUID &layer) noexcept;
         libxtun_error allowDhcp(const GUID &layer, int family) noexcept;
         libxtun_error allowDns(const GUID &layer, int family, const std::vector<net::IpAddress> &dnsServers,
-                               const std::vector<net::IpPrefix> &prefixes, std::uint64_t luidValue);
+                               const std::vector<net::IpPrefix> &prefixes, const std::vector<net::IpPrefix> &excludes,
+                               std::uint64_t luidValue);
         libxtun_error blockDns(const GUID &layer) noexcept;
         std::unique_ptr<wfp::WfpEngine> m_wfp;
         std::uint64_t m_luid = 0;
