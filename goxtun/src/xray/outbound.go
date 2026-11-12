@@ -59,6 +59,10 @@ func newOwnedOutbound(ctx context.Context, config *OwnerOutboundConfig) (*ownedO
 		return nil, err
 	}
 
+	if owner.xrayctx == nil {
+		owner.xrayctx = ctx
+	}
+
 	innerConfig, err := config.Inner.GetInstance()
 	if err != nil {
 		return nil, err
