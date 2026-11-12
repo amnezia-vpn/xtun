@@ -100,7 +100,7 @@ namespace libxtun
         m_wfp = std::move(engine).value();
         m_luid = luid.Value;
 
-        if (const auto result = installFilters(m_luid, {}, {}); result != LIBXTUN_OK) {
+        if (const auto result = installFilters(m_luid, {}, {}, {}); result != LIBXTUN_OK) {
             m_wfp.reset();
             return result;
         }
@@ -112,7 +112,7 @@ namespace libxtun
                                                   const std::vector<net::IpPrefix> &excludes,
                                                   const std::vector<net::IpAddress> &dnsServers)
     {
-        return installFilters(m_luid, prefixes, dnsServers);
+        return installFilters(m_luid, prefixes, excludes, dnsServers);
     }
 
     void WindowsKillswitch::remove() noexcept
@@ -130,6 +130,7 @@ namespace libxtun
     }
 
     libxtun_error WindowsKillswitch::installFilters(std::uint64_t luidValue, const std::vector<net::IpPrefix> &prefixes,
+                                                    const std::vector<net::IpPrefix> &excludes,
                                                     const std::vector<net::IpAddress> &dnsServers)
     {
         wfp::WfpEngine::Transaction transaction(*m_wfp);
@@ -180,10 +181,14 @@ namespace libxtun
                     result != LIBXTUN_OK) {
                     return result;
                 }
+                if (auto result = allowExcluded(layer, FWPM_CONDITION_IP_REMOTE_ADDRESS, layers.family, excludes);
+                    result != LIBXTUN_OK) {
+                    return result;
+                }
             }
 
             if (!prefixes.empty()) {
-                if (auto result = allowDns(layers.connect, layers.family, dnsServers, prefixes, luidValue);
+                if (auto result = allowDns(layers.connect, layers.family, dnsServers, prefixes, excludes, luidValue);
                     result != LIBXTUN_OK) {
                     return result;
                 }
@@ -232,6 +237,40 @@ namespace libxtun
         }
         return m_wfp->addFilter(layer, FWP_ACTION_BLOCK, WEIGHT_BLOCK_PROTECTED, conditions,
                                 L"Block traffic to protected destinations");
+    }
+
+    libxtun_error WindowsKillswitch::allowExcluded(const GUID &layer, const GUID &field, int family,
+                                                   const std::vector<net::IpPrefix> &excludes)
+    {
+        std::vector<FWP_V4_ADDR_AND_MASK> v4AddrMasks;
+        std::vector<FWP_V6_ADDR_AND_MASK> v6AddrMasks;
+        v4AddrMasks.reserve(excludes.size());
+        v6AddrMasks.reserve(excludes.size());
+
+        std::vector<FWPM_FILTER_CONDITION> conditions;
+        for (const net::IpPrefix &exclude : excludes) {
+            if (exclude.address().family() != family) {
+                continue;
+            }
+
+            FWPM_FILTER_CONDITION condition {};
+            condition.fieldKey = field;
+            condition.matchType = FWP_MATCH_EQUAL;
+            if (family == AF_INET) {
+                condition.conditionValue.type = FWP_V4_ADDR_MASK;
+                condition.conditionValue.v4AddrMask = &v4AddrMasks.emplace_back(v4AddrMask(exclude));
+            } else {
+                condition.conditionValue.type = FWP_V6_ADDR_MASK;
+                condition.conditionValue.v6AddrMask = &v6AddrMasks.emplace_back(v6AddrMask(exclude));
+            }
+            conditions.push_back(condition);
+        }
+
+        if (conditions.empty()) {
+            return LIBXTUN_OK;
+        }
+        return m_wfp->addFilter(layer, FWP_ACTION_PERMIT, WEIGHT_PASS_EXCLUDED, conditions,
+                                L"Allow traffic to excluded destinations");
     }
 
     libxtun_error WindowsKillswitch::allowTunnel(const GUID &layer, const GUID &field, std::uint64_t luidValue) noexcept
@@ -295,10 +334,13 @@ namespace libxtun
 
     libxtun_error WindowsKillswitch::allowDns(const GUID &layer, int family,
                                               const std::vector<net::IpAddress> &dnsServers,
-                                              const std::vector<net::IpPrefix> &prefixes, std::uint64_t luidValue)
+                                              const std::vector<net::IpPrefix> &prefixes,
+                                              const std::vector<net::IpPrefix> &excludes, std::uint64_t luidValue)
     {
-        const auto inside = [&prefixes](const net::IpAddress &server) {
-            return std::ranges::any_of(prefixes, [&server](const net::IpPrefix &prefix) { return prefix.contains(server); });
+        const auto inside = [&prefixes, &excludes](const net::IpAddress &server) {
+            return std::ranges::any_of(prefixes, [&server](const net::IpPrefix &prefix) { return prefix.contains(server); })
+                    && std::ranges::none_of(excludes,
+                                            [&server](const net::IpPrefix &exclude) { return exclude.contains(server); });
         };
 
         for (const bool viaTunnel : { false, true }) {

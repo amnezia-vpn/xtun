@@ -38,13 +38,15 @@ namespace libxtun
         libxtun_error addAddress(const std::string &cidr);
         libxtun_error removeAddress(const std::string &cidr);
         libxtun_error setMtuAndMetric(int family, int mtu);
-        libxtun_error updateRouteFor(const net::IpPrefix &prefix, bool add);
+        libxtun_error updateRouteFor(const net::IpPrefix &prefix, bool add, const Uplink *uplink = nullptr);
         Uplink getUplink(int family);
+        libxtun_error updateUplinkRoutes(int family, const Uplink &uplink, bool add);
 
         std::recursive_mutex m_mtx;
         unsigned long m_ifindex = 0; // NET_IFINDEX
         std::vector<std::string> m_addresses;
         std::vector<net::IpPrefix> m_routes;
+        std::vector<net::IpPrefix> m_excludes;
         Uplink m_uplinkV4;
         Uplink m_uplinkV6;
     };
