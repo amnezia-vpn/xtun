@@ -168,7 +168,7 @@ namespace libxtun::proto
         }
     }
 
-    ProxyProfile Awg::profile() const
+    ProxyProfile Awg::buildProfile() const
     {
         const awg::Config::Interface &iface = m_conf.iface();
 

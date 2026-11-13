@@ -35,7 +35,7 @@ namespace libxtun::test
             }
         }
 
-        ProxyProfile profile() const override
+        ProxyProfile buildProfile() const override
         {
             return ProxyProfile {};
         }

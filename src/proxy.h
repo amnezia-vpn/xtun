@@ -9,8 +9,6 @@
 #include "util/noncopyable.h"
 #include "util/result.h"
 
-#include <optional>
-#include <span>
 #include <vector>
 
 namespace libxtun
@@ -21,18 +19,11 @@ namespace libxtun
         MtuUpdate
     };
 
-    struct SplitRoutes
-    {
-        static std::optional<SplitRoutes> parse(const libxtun_proxy_opts *opts,
-                                                std::span<const net::IpPrefix> routes);
-
-        std::vector<net::IpPrefix> include;
-        std::vector<net::IpPrefix> exclude;
-    };
-
     struct ProxyProfile
     {
         std::vector<net::IpPrefix> routes;
+        std::vector<net::IpPrefix> includeRoutes;
+        std::vector<net::IpPrefix> excludeRoutes;
         std::vector<net::IpAddress> dnsServers;
         int mtu = 0;
     };
@@ -61,13 +52,11 @@ namespace libxtun
 
         virtual void attachIo(TunnelIo *io);
         virtual void event(ProxyEvent ev) = 0;
-        virtual ProxyProfile profile() const = 0;
-        const SplitRoutes &splitRoutes() const
-        {
-            return m_splitRoutes;
-        }
+        ProxyProfile profile() const;
 
     protected:
+        virtual ProxyProfile buildProfile() const = 0;
+
         static int cTunRead(void *b, int len, void *priv)
         {
             return reinterpret_cast<Proxy *>(priv)->tunRead(b, len);
@@ -103,7 +92,8 @@ namespace libxtun
 
         AwaitingIo m_io;
         ClientCallbacks m_callbacks;
-        SplitRoutes m_splitRoutes;
+        std::vector<net::IpPrefix> m_includeRoutes;
+        std::vector<net::IpPrefix> m_excludeRoutes;
     };
 }
 

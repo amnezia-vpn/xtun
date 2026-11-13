@@ -8,19 +8,9 @@
 
 namespace libxtun
 {
-    std::optional<SplitRoutes> SplitRoutes::parse(const libxtun_proxy_opts *opts,
-                                                  std::span<const net::IpPrefix> routes)
+    ProxyProfile Proxy::profile() const
     {
-        if (opts != nullptr && opts->size < sizeof(*opts)) {
-            return std::nullopt;
-        }
-        auto includeList = cinterop::parseListT<net::IpPrefix>(opts != nullptr ? opts->includeRoutes : nullptr);
-        auto excludeList = cinterop::parseListT<net::IpPrefix>(opts != nullptr ? opts->excludeRoutes : nullptr);
-        if (!includeList || !excludeList) {
-            return std::nullopt;
-        }
-        const std::vector<net::IpPrefix> &listedIncludes = includeList.value();
-        const std::vector<net::IpPrefix> &listedExcludes = excludeList.value();
+        ProxyProfile profile = buildProfile();
 
         const auto inside = [](const net::IpPrefix &inner, const net::IpPrefix &outer) {
             return outer.bits() <= inner.bits() && outer.contains(inner.address());
@@ -31,45 +21,58 @@ namespace libxtun
             }
         };
 
-        SplitRoutes out;
-        for (const net::IpPrefix &configured : routes) {
+        std::vector<net::IpPrefix> includeRoutes;
+        for (const net::IpPrefix &configured : profile.routes) {
             const net::IpPrefix route = configured.network();
-            if (listedIncludes.empty()) {
-                addOnce(out.include, route);
+            if (m_includeRoutes.empty()) {
+                addOnce(includeRoutes, route);
                 continue;
             }
-            for (const net::IpPrefix &listed : listedIncludes) {
+            for (const net::IpPrefix &listed : m_includeRoutes) {
                 const net::IpPrefix prefix = listed.network();
                 if (inside(prefix, route)) {
-                    addOnce(out.include, prefix);
+                    addOnce(includeRoutes, prefix);
                 } else if (inside(route, prefix)) {
-                    addOnce(out.include, route);
+                    addOnce(includeRoutes, route);
                 }
             }
         }
 
-        std::erase_if(out.include, [&](const net::IpPrefix &included) {
-            return std::ranges::any_of(listedExcludes, [&](const net::IpPrefix &listed) {
+        std::erase_if(includeRoutes, [&](const net::IpPrefix &included) {
+            return std::ranges::any_of(m_excludeRoutes, [&](const net::IpPrefix &listed) {
                 return inside(included, listed.network());
             });
         });
-        if (out.include.empty() && (!listedIncludes.empty() || !listedExcludes.empty())) {
-            return std::nullopt;
-        }
 
-        for (const net::IpPrefix &listed : listedExcludes) {
+        std::vector<net::IpPrefix> excludeRoutes;
+        for (const net::IpPrefix &listed : m_excludeRoutes) {
             const net::IpPrefix prefix = listed.network();
-            if (std::ranges::any_of(out.include, [&](const net::IpPrefix &included) { return inside(prefix, included); })) {
-                addOnce(out.exclude, prefix);
+            if (std::ranges::any_of(includeRoutes, [&](const net::IpPrefix &included) { return inside(prefix, included); })) {
+                addOnce(excludeRoutes, prefix);
             }
         }
-        return out;
+
+        profile.includeRoutes = std::move(includeRoutes);
+        profile.excludeRoutes = std::move(excludeRoutes);
+        return profile;
     }
 
     ResultXtun<std::unique_ptr<Proxy>> Proxy::create(libxtun_proxy_proto proto, const char *conf,
                                                      ClientCallbacks callbacks,
                                                      const libxtun_proxy_opts *opts)
     {
+        if (opts != nullptr && opts->size < sizeof(*opts)) {
+            return fail(LIBXTUN_ERR_INVALID_ARGS);
+        }
+        auto includeRoutes = cinterop::parseListT<net::IpPrefix>(opts != nullptr ? opts->includeRoutes : nullptr);
+        if (!includeRoutes) {
+            return fail(includeRoutes.error());
+        }
+        auto excludeRoutes = cinterop::parseListT<net::IpPrefix>(opts != nullptr ? opts->excludeRoutes : nullptr);
+        if (!excludeRoutes) {
+            return fail(excludeRoutes.error());
+        }
+
         ResultXtun<std::unique_ptr<Proxy>> proxy = fail(LIBXTUN_ERR_INVALID_ARGS);
         switch (proto) {
         case LIBXTUN_PROXY_PROTO_AWG: proxy = proto::Awg::create(conf, callbacks); break;
@@ -80,12 +83,15 @@ namespace libxtun
             return proxy;
         }
 
-        const ProxyProfile profile = proxy.value()->profile();
-        auto split = SplitRoutes::parse(opts, profile.routes);
-        if (!split) {
+        Proxy &created = *proxy.value();
+        created.m_includeRoutes = std::move(includeRoutes).value();
+        created.m_excludeRoutes = std::move(excludeRoutes).value();
+        if (created.m_includeRoutes.empty() && created.m_excludeRoutes.empty()) {
+            return proxy;
+        }
+        if (created.profile().includeRoutes.empty()) {
             return fail(LIBXTUN_ERR_INVALID_ARGS);
         }
-        proxy.value()->m_splitRoutes = std::move(split).value();
         return proxy;
     }
 

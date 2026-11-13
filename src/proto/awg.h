@@ -24,7 +24,6 @@ namespace libxtun
             ~Awg() override;
 
             void event(ProxyEvent ev) override;
-            ProxyProfile profile() const override;
             void attachIo(TunnelIo *io) override;
 
             const char *name() override
@@ -36,6 +35,9 @@ namespace libxtun
             {
                 publishStatus(status);
             }
+
+        protected:
+            ProxyProfile buildProfile() const override;
 
         private:
             Awg(ClientCallbacks callbacks, awg::Config conf);
