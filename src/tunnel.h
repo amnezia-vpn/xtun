@@ -18,7 +18,7 @@
 
 namespace libxtun
 {
-    class Tunnel : public TunnelIo, public TunDeviceListener
+    class Tunnel : public TunnelIo, public TunDeviceListener, public RouterListener
     {
     public:
         using TunfactoryFunc = std::function<int(std::vector<net::IpAddress> &, std::vector<net::IpPrefix> &, int)>;
@@ -58,6 +58,8 @@ namespace libxtun
         void onLinkStateChanged(bool up) override;
         void onMtuChanged(int) override;
         void onRouteChanged() override;
+
+        void onUplinkChanged() override;
 
     private:
         Tunnel() = default;

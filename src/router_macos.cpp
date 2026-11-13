@@ -518,7 +518,7 @@ namespace libxtun
                 updateUplinkRoutes(AF_INET6, m_uplinkV6, false);
             }
         }
-        m_onUplinkChanged();
+        m_listener.onUplinkChanged();
     }
 
     void MacosRouter::protectSocket(int fd)

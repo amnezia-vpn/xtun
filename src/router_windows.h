@@ -13,7 +13,7 @@ namespace libxtun
     class WindowsRouter : public Router
     {
     public:
-        explicit WindowsRouter(std::function<void()> onUplinkChanged) : Router(std::move(onUplinkChanged))
+        explicit WindowsRouter(RouterListener &listener) : Router(listener)
         {
         }
 

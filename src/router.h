@@ -4,18 +4,24 @@
 #include "net/ip.h"
 #include "xtun.h"
 
-#include <functional>
 #include <memory>
 #include <string>
-#include <utility>
 #include <vector>
 
 namespace libxtun
 {
+    class RouterListener
+    {
+    public:
+        virtual ~RouterListener() = default;
+
+        virtual void onUplinkChanged() = 0;
+    };
+
     class Router
     {
     public:
-        explicit Router(std::function<void()> onUplinkChanged) : m_onUplinkChanged(std::move(onUplinkChanged))
+        explicit Router(RouterListener &listener) : m_listener(listener)
         {
         }
         virtual ~Router() = default;
@@ -30,10 +36,10 @@ namespace libxtun
         virtual void protectSocket(int fd) = 0;
         virtual void onRouteChanged() {}
 
-        static std::unique_ptr<Router> create(std::function<void()> onUplinkChanged);
+        static std::unique_ptr<Router> create(RouterListener &listener);
 
     protected:
-        std::function<void()> m_onUplinkChanged;
+        RouterListener &m_listener;
     };
 }
 
