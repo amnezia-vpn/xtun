@@ -165,10 +165,6 @@ namespace libxtun::proto
         case ProxyEvent::Up: goxtun_awg_event(m_handle, TunEventUp); break;
         case ProxyEvent::Down: goxtun_awg_event(m_handle, TunEventDown); break;
         case ProxyEvent::MtuUpdate: goxtun_awg_event(m_handle, TunEventMtuUpdate); break;
-        case ProxyEvent::UplinkUpdate:
-            goxtun_awg_event(m_handle, TunEventDown);
-            goxtun_awg_event(m_handle, TunEventUp);
-            break;
         }
     }
 
