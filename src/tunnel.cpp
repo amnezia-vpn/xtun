@@ -238,7 +238,10 @@ namespace libxtun
         case Event::Up: m_proxy->event(ProxyEvent::Up); break;
         case Event::Down: m_proxy->event(ProxyEvent::Down); break;
         case Event::MtuUpdate: m_proxy->event(ProxyEvent::MtuUpdate); break;
-        case Event::UplinkUpdate: m_proxy->event(ProxyEvent::UplinkUpdate); break;
+        case Event::UplinkUpdate:
+            m_proxy->event(ProxyEvent::Down);
+            m_proxy->event(ProxyEvent::Up);
+            break;
         }
     }
 
