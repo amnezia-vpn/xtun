@@ -106,11 +106,10 @@ namespace libxtun
         }
 
         ProxyProfile profile = proxy->profile();
-        SplitRoutes split = proxy->splitRoutes();
         const std::vector<net::IpAddress> &resolvers = profile.dnsServers.empty() ? m_dnsDefaults : profile.dnsServers;
 
         if (m_killswitch != nullptr) {
-            if (auto rc = m_killswitch->protect(split.include, split.exclude, resolvers); rc != LIBXTUN_OK) {
+            if (auto rc = m_killswitch->protect(profile.includeRoutes, profile.excludeRoutes, resolvers); rc != LIBXTUN_OK) {
                 detachProxyLocked(m_proxy);
                 if (m_dns != nullptr) {
                     m_dns->revert();
@@ -125,7 +124,7 @@ namespace libxtun
         }
 
         if (m_tunfactory) {
-            if (int fd = m_tunfactory(profile.dnsServers, split.include, profile.mtu); fd >= 0) {
+            if (int fd = m_tunfactory(profile.dnsServers, profile.includeRoutes, profile.mtu); fd >= 0) {
                 auto dev = createTunDevice();
                 if (auto err = dev->adoptFd(fd)) {
                     return err;
@@ -142,7 +141,7 @@ namespace libxtun
         }
 
         if (m_router != nullptr) {
-            if (auto rc = m_router->setProxyRoutes(split.include, split.exclude); rc != LIBXTUN_OK) {
+            if (auto rc = m_router->setProxyRoutes(profile.includeRoutes, profile.excludeRoutes); rc != LIBXTUN_OK) {
                 // FIXME(cd-amn): we are reverting too much in here. Should be rollback() or similar
                 m_router->revert();
                 if (m_dns != nullptr) {
