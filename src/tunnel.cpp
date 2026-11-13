@@ -40,7 +40,7 @@ namespace libxtun
         auto tun = std::unique_ptr<Tunnel>(new Tunnel());
         tun->m_dnsDefaults = std::move(dnsDefaults).value();
         tun->m_device = createTunDevice();
-        tun->m_router = Router::create([tunnel = tun.get()] { tunnel->emit(Event::UplinkUpdate); });
+        tun->m_router = Router::create(*tun);
         tun->m_killswitch = Killswitch::create(opts.killswitch_mode, opts.macos_group, std::move(dnsExceptions).value());
 
         auto &dev = tun->m_device;
@@ -296,6 +296,11 @@ namespace libxtun
         if (m_router != nullptr) {
             m_router->onRouteChanged();
         }
+    }
+
+    void Tunnel::onUplinkChanged()
+    {
+        emit(Event::UplinkUpdate);
     }
 
     void Tunnel::networkChanged()

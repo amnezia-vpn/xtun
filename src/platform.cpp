@@ -49,14 +49,14 @@
 namespace libxtun
 {
 
-    std::unique_ptr<Router> Router::create(std::function<void()> onUplinkChanged)
+    std::unique_ptr<Router> Router::create(RouterListener &listener)
     {
 #if defined(__linux__) && !defined(__ANDROID__)
-        return std::make_unique<LinuxRouter>(std::move(onUplinkChanged));
+        return std::make_unique<LinuxRouter>(listener);
 #elif defined(__APPLE__) && TARGET_OS_OSX
-        return std::make_unique<MacosRouter>(std::move(onUplinkChanged));
+        return std::make_unique<MacosRouter>(listener);
 #elif defined(_WIN32)
-        return std::make_unique<WindowsRouter>(std::move(onUplinkChanged));
+        return std::make_unique<WindowsRouter>(listener);
 #else
         return nullptr;
 #endif

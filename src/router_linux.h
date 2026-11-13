@@ -11,7 +11,7 @@ namespace libxtun
     class LinuxRouter : public Router
     {
     public:
-        explicit LinuxRouter(std::function<void()> onUplinkChanged) : Router(std::move(onUplinkChanged))
+        explicit LinuxRouter(RouterListener &listener) : Router(listener)
         {
         }
 

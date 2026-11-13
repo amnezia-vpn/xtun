@@ -11,7 +11,7 @@ namespace libxtun
     class MacosRouter : public Router
     {
     public:
-        explicit MacosRouter(std::function<void()> onUplinkChanged) : Router(std::move(onUplinkChanged))
+        explicit MacosRouter(RouterListener &listener) : Router(listener)
         {
         }
 
