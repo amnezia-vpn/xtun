@@ -126,5 +126,43 @@ TEST_P(ContractProxySetup, InitsFromConf)
     libxtun_proxy_free(&proxy);
 }
 
+TEST_P(ContractProxySetup, NewRejectsMalformedRoute)
+{
+    const auto &p = GetParam();
+
+    libxtun::test::Logger log;
+
+    libxtun_proxy proxy {};
+    log.wrapProxy(proxy);
+
+    const char *malformed[] = { "10.0.0.0/33", nullptr };
+
+    libxtun_proxy_opts malformedInclude { .size = sizeof(libxtun_proxy_opts), .includeRoutes = malformed };
+    int res = libxtun_proxy_new(&proxy, p.proto, p.clientA.c_str(), &malformedInclude);
+    EXPECT_EQ(res, LIBXTUN_ERR_INVALID_ARGS);
+    libxtun_proxy_free(&proxy);
+
+    libxtun_proxy_opts malformedExclude { .size = sizeof(libxtun_proxy_opts), .excludeRoutes = malformed };
+    res = libxtun_proxy_new(&proxy, p.proto, p.clientA.c_str(), &malformedExclude);
+    EXPECT_EQ(res, LIBXTUN_ERR_INVALID_ARGS);
+    libxtun_proxy_free(&proxy);
+}
+
+TEST_P(ContractProxySetup, NewRejectsAllRoutesExcluded)
+{
+    const auto &p = GetParam();
+
+    libxtun::test::Logger log;
+
+    libxtun_proxy proxy {};
+    log.wrapProxy(proxy);
+
+    const char *all[] = { "0.0.0.0/0", "::/0", nullptr };
+    libxtun_proxy_opts excludeAll { .size = sizeof(libxtun_proxy_opts), .excludeRoutes = all };
+    int res = libxtun_proxy_new(&proxy, p.proto, p.clientA.c_str(), &excludeAll);
+    EXPECT_EQ(res, LIBXTUN_ERR_INVALID_ARGS);
+    libxtun_proxy_free(&proxy);
+}
+
 INSTANTIATE_TEST_SUITE_P(ContractProxy, ContractProxySetup, testing::ValuesIn(libxtun::test::SetupBuilder().build()),
                          [](const testing::TestParamInfo<libxtun::test::Setup> &info) { return info.param.name; });
