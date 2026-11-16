@@ -65,6 +65,7 @@ namespace libxtun::net
             return m_bits;
         }
         bool contains(const IpAddress &addr) const noexcept;
+        bool contains(const IpPrefix &prefix) const noexcept;
         bool isDefaultRoute() const noexcept
         {
             return m_bits == 0 && m_address.valid();

@@ -12,9 +12,6 @@ namespace libxtun
     {
         ProxyProfile profile = buildProfile();
 
-        const auto inside = [](const net::IpPrefix &inner, const net::IpPrefix &outer) {
-            return outer.bits() <= inner.bits() && outer.contains(inner.address());
-        };
         const auto addOnce = [](std::vector<net::IpPrefix> &list, const net::IpPrefix &prefix) {
             if (std::ranges::find(list, prefix) == list.end()) {
                 list.push_back(prefix);
@@ -30,9 +27,9 @@ namespace libxtun
             }
             for (const net::IpPrefix &listed : m_includeRoutes) {
                 const net::IpPrefix prefix = listed.network();
-                if (inside(prefix, route)) {
+                if (route.contains(prefix)) {
                     addOnce(includeRoutes, prefix);
-                } else if (inside(route, prefix)) {
+                } else if (prefix.contains(route)) {
                     addOnce(includeRoutes, route);
                 }
             }
@@ -40,14 +37,14 @@ namespace libxtun
 
         std::erase_if(includeRoutes, [&](const net::IpPrefix &included) {
             return std::ranges::any_of(m_excludeRoutes, [&](const net::IpPrefix &listed) {
-                return inside(included, listed.network());
+                return listed.network().contains(included);
             });
         });
 
         std::vector<net::IpPrefix> excludeRoutes;
         for (const net::IpPrefix &listed : m_excludeRoutes) {
             const net::IpPrefix prefix = listed.network();
-            if (std::ranges::any_of(includeRoutes, [&](const net::IpPrefix &included) { return inside(prefix, included); })) {
+            if (std::ranges::any_of(includeRoutes, [&](const net::IpPrefix &included) { return included.contains(prefix); })) {
                 addOnce(excludeRoutes, prefix);
             }
         }
