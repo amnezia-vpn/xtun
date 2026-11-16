@@ -200,6 +200,11 @@ namespace libxtun::net
         return IpPrefix(addr, m_bits).network() == network();
     }
 
+    bool IpPrefix::contains(const IpPrefix &prefix) const noexcept
+    {
+        return m_bits <= prefix.bits() && contains(prefix.address());
+    }
+
     IpPrefix IpPrefix::network() const noexcept
     {
         if (!m_address.valid()) {
