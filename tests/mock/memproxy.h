@@ -4,6 +4,7 @@
 #include "proxy.h"
 #include <condition_variable>
 #include <cstring>
+#include <functional>
 #include <mutex>
 #include <thread>
 
@@ -30,8 +31,16 @@ namespace libxtun::test
             return "memproxy";
         }
 
+        void setEventListener(std::function<void(ProxyEvent)> listener)
+        {
+            m_eventListener = std::move(listener);
+        }
+
         void event(ProxyEvent ev) override
         {
+            if (m_eventListener) {
+                m_eventListener(ev);
+            }
             switch (ev) {
             case ProxyEvent::Up: start(); break;
             case ProxyEvent::Down: stop(); break;
@@ -118,6 +127,7 @@ namespace libxtun::test
 
     private:
         ProxyProfile m_profile;
+        std::function<void(ProxyEvent)> m_eventListener;
         std::atomic<bool> m_stopped = true;
         std::mutex m_rcvMutex, m_sendMutex, m_threadMutex;
         std::vector<std::byte> m_rcvBuf, m_sendBuf;

@@ -6,7 +6,10 @@
 #include "xtun.h"
 
 #include "gtest/gtest.h"
+#include <atomic>
+#include <chrono>
 #include <gtest/gtest.h>
+#include <thread>
 
 using namespace libxtun;
 
@@ -36,6 +39,35 @@ TEST_F(TunnelTestOpts, AttachesProxy)
     auto &tunnel = res.value();
 
     EXPECT_EQ(tunnel->attachProxy(&proxy), 0);
+}
+
+TEST_F(TunnelTestOpts, OwnRouteUpdatesDoNotRestartProxy)
+{
+#ifdef __linux__
+    GTEST_SKIP() << "skipped: Linux sends no route notifications";
+#endif
+    test::Logger log;
+    test::TunOpts opts;
+
+    ProxyProfile configured;
+    configured.routes = { *net::IpPrefix::parse("0.0.0.0/0") };
+    std::atomic<bool> restarted = false;
+    test::MemProxy proxy(log.defaultCallbacks(), configured, { *net::IpPrefix::parse("192.0.2.0/24") },
+                         { *net::IpPrefix::parse("192.0.2.128/25") });
+    proxy.setEventListener([&](ProxyEvent ev) {
+        if (ev == ProxyEvent::Down) {
+            restarted = true;
+        }
+    });
+
+    auto res = Tunnel::fromOpts(opts.get());
+    ASSERT_TRUE(res) << "Tunnel::fromOpts failed with " << res.error() << " error code";
+    auto &tunnel = res.value();
+
+    ASSERT_EQ(tunnel->attachProxy(&proxy), 0);
+    restarted = false;
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    EXPECT_FALSE(restarted) << "the proxy was restarted for the routes xtun added itself";
 }
 
 #ifndef WIN32
