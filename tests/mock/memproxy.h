@@ -12,8 +12,12 @@ namespace libxtun::test
     class MemProxy final : public Proxy
     {
     public:
-        MemProxy(libxtun::ClientCallbacks callbacks) : Proxy(callbacks)
+        MemProxy(libxtun::ClientCallbacks callbacks, ProxyProfile profile = {},
+                 std::vector<net::IpPrefix> includeRoutes = {}, std::vector<net::IpPrefix> excludeRoutes = {})
+            : Proxy(callbacks), m_profile(std::move(profile))
         {
+            m_includeRoutes = std::move(includeRoutes);
+            m_excludeRoutes = std::move(excludeRoutes);
         }
 
         ~MemProxy()
@@ -35,11 +39,6 @@ namespace libxtun::test
             }
         }
 
-        ProxyProfile buildProfile() const override
-        {
-            return ProxyProfile {};
-        }
-
         void injectPacket(std::span<const std::byte> packet)
         {
             std::scoped_lock lock(m_sendMutex);
@@ -59,6 +58,11 @@ namespace libxtun::test
         }
 
     protected:
+        ProxyProfile buildProfile() const override
+        {
+            return m_profile;
+        }
+
         void start()
         {
             std::scoped_lock lock(m_threadMutex);
@@ -113,6 +117,7 @@ namespace libxtun::test
         }
 
     private:
+        ProxyProfile m_profile;
         std::atomic<bool> m_stopped = true;
         std::mutex m_rcvMutex, m_sendMutex, m_threadMutex;
         std::vector<std::byte> m_rcvBuf, m_sendBuf;
