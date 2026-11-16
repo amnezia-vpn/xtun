@@ -8,6 +8,7 @@
     #include "dns_windows.h"
     #include "killswitch_windows.cpp"
     #include "killswitch_windows.h"
+    #include "net/uplink_windows.cpp"
     #include "net/wfp.cpp"
     #include "router_windows.cpp"
     #include "router_windows.h"

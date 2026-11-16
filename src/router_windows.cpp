@@ -50,15 +50,6 @@ namespace
             std::memcpy(&out.Ipv6.sin6_addr, raw, 16);
         }
     }
-
-    net::IpAddress toIpAddress(const SOCKADDR_INET &addr)
-    {
-        switch (addr.si_family) {
-        case AF_INET: return net::IpAddress::fromV4(addr.Ipv4.sin_addr);
-        case AF_INET6: return net::IpAddress::fromV6(addr.Ipv6.sin6_addr);
-        default: return {};
-        }
-    }
 } // namespace
 
 namespace libxtun
@@ -146,18 +137,18 @@ namespace libxtun
         return LIBXTUN_OK;
     }
 
-    libxtun_error WindowsRouter::updateRouteFor(const net::IpPrefix &prefix, bool add, const Uplink *uplink)
+    libxtun_error WindowsRouter::updateRouteFor(const net::IpPrefix &prefix, bool add, const net::WindowsUplink *uplink)
     {
         const int family = prefix.address().family();
         const auto octets = prefix.address().octets();
 
         MIB_IPFORWARD_ROW2 row;
         InitializeIpForwardEntry(&row);
-        row.InterfaceIndex = uplink != nullptr ? uplink->ifindex : static_cast<NET_IFINDEX>(m_ifindex);
+        row.InterfaceIndex = uplink != nullptr ? uplink->ifIndex : static_cast<NET_IFINDEX>(m_ifindex);
         toSockaddrInet(family, reinterpret_cast<const unsigned char *>(octets.data()), row.DestinationPrefix.Prefix);
         row.DestinationPrefix.PrefixLength = static_cast<UINT8>(prefix.bits());
         if (uplink != nullptr) {
-            toSockaddrInet(family, reinterpret_cast<const unsigned char *>(uplink->gw.octets().data()), row.NextHop);
+            toSockaddrInet(family, reinterpret_cast<const unsigned char *>(uplink->gateway.octets().data()), row.NextHop);
         } else {
             // On-link: an unspecified next hop with the destination's family.
             std::memset(&row.NextHop, 0, sizeof(row.NextHop));
@@ -180,9 +171,9 @@ namespace libxtun
         return LIBXTUN_ERR_SYSTEM;
     }
 
-    libxtun_error WindowsRouter::updateUplinkRoutes(int family, const Uplink &uplink, bool add)
+    libxtun_error WindowsRouter::updateUplinkRoutes(int family, const net::WindowsUplink &uplink, bool add)
     {
-        if (uplink.ifindex == 0) {
+        if (uplink.ifIndex == 0) {
             return LIBXTUN_OK;
         }
 
@@ -204,8 +195,12 @@ namespace libxtun
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
         (void)ifname; // Windows keys everything on the interface index.
         m_ifindex = static_cast<unsigned long>(ifindex);
-        m_uplinkV4 = getUplink(AF_INET);
-        m_uplinkV6 = getUplink(AF_INET6);
+        if (const auto uplink = net::defaultUplink(AF_INET, m_ifindex)) {
+            m_uplinkV4 = uplink.value();
+        }
+        if (const auto uplink = net::defaultUplink(AF_INET6, m_ifindex)) {
+            m_uplinkV6 = uplink.value();
+        }
 
         for (const auto &addr : addresses) {
             auto rc = addAddress(addr);
@@ -277,55 +272,22 @@ namespace libxtun
         m_addresses.clear();
     }
 
-    WindowsRouter::Uplink WindowsRouter::getUplink(int family)
-    {
-        PMIB_IPFORWARD_TABLE2 table = nullptr;
-        if (GetIpForwardTable2(static_cast<ADDRESS_FAMILY>(family), &table) != NO_ERROR || table == nullptr) {
-            return {};
-        }
-
-        Uplink best;
-        ULONG bestMetric = ~0UL;
-        for (ULONG i = 0; i < table->NumEntries; ++i) {
-            const MIB_IPFORWARD_ROW2 &r = table->Table[i];
-            if (r.DestinationPrefix.PrefixLength != 0) {
-                continue; // default route only
-            }
-            if (static_cast<unsigned long>(r.InterfaceIndex) == m_ifindex) {
-                continue; // never bypass onto our own tun
-            }
-            MIB_IPINTERFACE_ROW iface;
-            std::memset(&iface, 0, sizeof(iface));
-            iface.Family = static_cast<ADDRESS_FAMILY>(family);
-            iface.InterfaceIndex = r.InterfaceIndex;
-            ULONG effective = r.Metric;
-            if (GetIpInterfaceEntry(&iface) == NO_ERROR) {
-                effective += iface.Metric;
-            }
-            if (effective < bestMetric) {
-                bestMetric = effective;
-                best.ifindex = r.InterfaceIndex;
-                best.gw = toIpAddress(r.NextHop);
-            }
-        }
-
-        FreeMibTable(table);
-        return best;
-    }
-
     void WindowsRouter::onRouteChanged()
     {
         {
             std::lock_guard<std::recursive_mutex> lock(m_mtx);
             bool uplinkChanged = false;
             for (const int family : { AF_INET, AF_INET6 }) {
-                Uplink &previous = family == AF_INET ? m_uplinkV4 : m_uplinkV6;
-                const Uplink current = getUplink(family);
-                if (current == previous) {
+                net::WindowsUplink &previous = family == AF_INET ? m_uplinkV4 : m_uplinkV6;
+                const auto current = net::defaultUplink(family, m_ifindex);
+                if (!current) {
+                    continue;
+                }
+                if (current.value().ifIndex == previous.ifIndex && current.value().gateway == previous.gateway) {
                     continue;
                 }
                 updateUplinkRoutes(family, previous, false);
-                previous = current;
+                previous = current.value();
                 uplinkChanged = true;
             }
             if (!uplinkChanged) {
@@ -343,17 +305,15 @@ namespace libxtun
     void WindowsRouter::protectSocket(int fd)
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
-        const unsigned idx = m_uplinkV4.ifindex;
-        if (idx == 0) {
-            return;
-        }
-
         SOCKET s = static_cast<SOCKET>(fd);
-        
-        DWORD val = idx;
-        ::setsockopt(s, IPPROTO_IPV6, IPV6_UNICAST_IF, reinterpret_cast<const char *>(&val), sizeof(val));
 
-        val = ::htonl(idx); // IP_UNICAST_IF expects index in network byte order
-        ::setsockopt(s, IPPROTO_IP, IP_UNICAST_IF, reinterpret_cast<const char *>(&val), sizeof(val));
+        if (m_uplinkV4.ifIndex != 0) {
+            const DWORD val = ::htonl(m_uplinkV4.ifIndex); // IP_UNICAST_IF expects index in network byte order
+            ::setsockopt(s, IPPROTO_IP, IP_UNICAST_IF, reinterpret_cast<const char *>(&val), sizeof(val));
+        }
+        if (m_uplinkV6.ifIndex != 0) {
+            const DWORD val = m_uplinkV6.ifIndex;
+            ::setsockopt(s, IPPROTO_IPV6, IPV6_UNICAST_IF, reinterpret_cast<const char *>(&val), sizeof(val));
+        }
     }
 }

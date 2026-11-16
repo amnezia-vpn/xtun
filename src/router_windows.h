@@ -1,10 +1,8 @@
 #ifndef ROUTER_WINDOWS_H
 #define ROUTER_WINDOWS_H
 
+#include "net/uplink_windows.h"
 #include "router.h"
-
-#include <ifdef.h>
-#include <netioapi.h>
 
 #include <mutex>
 
@@ -27,28 +25,19 @@ namespace libxtun
         void onRouteChanged() override;
 
     private:
-        struct Uplink
-        {
-            NET_IFINDEX ifindex = 0;
-            net::IpAddress gw;
-
-            friend bool operator==(const Uplink &, const Uplink &) = default;
-        };
-
         libxtun_error addAddress(const std::string &cidr);
         libxtun_error removeAddress(const std::string &cidr);
         libxtun_error setMtuAndMetric(int family, int mtu);
-        libxtun_error updateRouteFor(const net::IpPrefix &prefix, bool add, const Uplink *uplink = nullptr);
-        Uplink getUplink(int family);
-        libxtun_error updateUplinkRoutes(int family, const Uplink &uplink, bool add);
+        libxtun_error updateRouteFor(const net::IpPrefix &prefix, bool add, const net::WindowsUplink *uplink = nullptr);
+        libxtun_error updateUplinkRoutes(int family, const net::WindowsUplink &uplink, bool add);
 
         std::recursive_mutex m_mtx;
         unsigned long m_ifindex = 0; // NET_IFINDEX
         std::vector<std::string> m_addresses;
         std::vector<net::IpPrefix> m_routes;
         std::vector<net::IpPrefix> m_excludes;
-        Uplink m_uplinkV4;
-        Uplink m_uplinkV6;
+        net::WindowsUplink m_uplinkV4;
+        net::WindowsUplink m_uplinkV6;
     };
 }
 
