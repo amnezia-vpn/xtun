@@ -4,16 +4,10 @@
 #include "util/config.h"
 #include "util/killswitch_env.h"
 #include "util/os.h"
-#include "util/spawn.h"
 
-#include <sys/socket.h>
 #include <unistd.h>
 
 #include <algorithm>
-#include <cerrno>
-#include <cstring>
-#include <fstream>
-#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -24,32 +18,9 @@ namespace libxtun::test
     {
         constexpr const char *TUN_DEV = "kstun0";
 
-        bool ip(const std::vector<std::string> &args)
-        {
-            for (const char *path : { "/usr/sbin/ip", "/sbin/ip" }) {
-                if (::access(path, X_OK) == 0) {
-                    return static_cast<bool>(spawn::run(path, args, {}));
-                }
-            }
-            return false;
-        }
-
         void cleanup()
         {
             Killswitch::create(LIBXTUN_KILLSWITCH_MODE_DISABLED)->update(0, {});
-        }
-
-        std::string defaultInterface()
-        {
-            std::ifstream table("/proc/net/route");
-            std::string line;
-            std::getline(table, line);
-            for (std::string iface, destination; table >> iface >> destination; std::getline(table, line)) {
-                if (destination == "00000000") {
-                    return iface;
-                }
-            }
-            return {};
         }
     }
 
@@ -67,16 +38,6 @@ namespace libxtun::test
             }
         }
 
-        const std::string uplink = defaultInterface();
-        if (uplink.empty()) {
-            m_skipReason = "no IPv4 default route";
-            return;
-        }
-        if (!ip({ "-6", "route", "replace", INTERNET_V6.host, "dev", uplink })) {
-            m_skipReason = "could not route " + INTERNET_V6.host + " through " + uplink + ", IPv6 may be disabled";
-            return;
-        }
-
         m_ifName = TUN_DEV;
         cleanup();
     }
@@ -85,7 +46,6 @@ namespace libxtun::test
     {
         if (m_skipReason.empty()) {
             cleanup();
-            ip({ "-6", "route", "del", INTERNET_V6.host });
         }
     }
 
@@ -110,22 +70,6 @@ namespace libxtun::test
         return count;
     }
 
-    std::optional<ProbeResult> KillswitchEnv::probe(const Destination &to, Sender sender, std::uint16_t port) const
-    {
-        const unsigned mark = sender == Sender::Proxy ? PROXY_FWMARK : 0;
-        const int code = port == DNS_TLS_PORT ? tcpProbe(to.host, port, mark) : udpProbe(to.host, port, mark);
-        switch (code) {
-        case CONNECTED_VIA_TUNNEL: return ProbeResult::Tunnel;
-        case CONNECTED_ELSEWHERE: return ProbeResult::Uplink;
-        case EPERM:
-        case ECONNREFUSED: return ProbeResult::Blocked;
-        default: break;
-        }
-
-        ADD_FAILURE() << "the probe to " << to.host << ' ' << sender << " failed: " << std::strerror(code);
-        return std::nullopt;
-    }
-
     bool KillswitchEnv::removeTunnelRoutes(const std::vector<std::string> &routes) const
     {
         const std::string tunnel = ifnameFromAddr(DEFAULT_IFADDR);
@@ -134,7 +78,7 @@ namespace libxtun::test
         }
 
         return std::ranges::all_of(routes, [&tunnel](const std::string &route) {
-            return ip({ "route", "del", route, "dev", tunnel, "table", std::to_string(PROXY_TABLE) });
+            return internal::ip({ "route", "del", route, "dev", tunnel, "table", std::to_string(PROXY_TABLE) });
         });
     }
 }
