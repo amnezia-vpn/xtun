@@ -3,7 +3,6 @@
 #include "util/config.h"
 #include "util/killswitch_env.h"
 #include "util/os.h"
-#include "util/process.h"
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -14,8 +13,6 @@
 #include <netioapi.h>
 
 #include <algorithm>
-#include <chrono>
-#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -25,19 +22,6 @@ namespace libxtun::test
 {
     namespace
     {
-        constexpr auto BLOCK_WAIT = std::chrono::milliseconds(200);
-        constexpr const char *POWERSHELL = "WindowsPowerShell\\v1.0\\powershell.exe";
-        constexpr const char *CONNECT_SCRIPT =
-                "$c = [System.Net.Sockets.UdpClient]::new($a.AddressFamily); "
-                "$t = [System.Net.Sockets.TcpClient]::new($a.AddressFamily); "
-                "try { $c.Connect($a, $port); $local = $c.Client.LocalEndPoint.Address; "
-                "try { [void]$t.ConnectAsync($a, $port).Wait($ms) } "
-                "catch { if ($_.Exception.GetBaseException().ErrorCode -eq $blocked) { exit $blocked } }; "
-                "if ($local.Equals($tunnel)) { exit $viaTunnel }; exit $elsewhere } "
-                "catch { $e = $_.Exception; "
-                "while ($e -and -not ($e -is [System.Net.Sockets.SocketException])) { $e = $e.InnerException }; "
-                "if (-not $e) { exit 1 }; exit $e.ErrorCode }";
-
         std::vector<wfp::FilterInfo> installedFilters()
         {
             auto engine = wfp::WfpEngine::open(makeWfpConfig(false));
@@ -47,33 +31,6 @@ namespace libxtun::test
 
             auto filters = engine.value()->getInstalledFilters();
             return filters ? std::move(filters).value() : std::vector<wfp::FilterInfo> {};
-        }
-
-        void cleanup()
-        {
-            auto engine = wfp::WfpEngine::open(makeWfpConfig(true));
-            if (!engine) {
-                ADD_FAILURE() << "could not open a WFP session to clean up the killswitch";
-                return;
-            }
-            if (const libxtun_error rc = engine.value()->cleanup(); rc != LIBXTUN_OK) {
-                ADD_FAILURE() << "could not remove the killswitch's WFP objects: " << rc;
-            }
-        }
-
-        std::optional<unsigned long> bestInterface(const char *host)
-        {
-            sockaddr_in destination {};
-            destination.sin_family = AF_INET;
-            if (::inet_pton(AF_INET, host, &destination.sin_addr) != 1) {
-                return std::nullopt;
-            }
-
-            DWORD index = 0;
-            if (::GetBestInterfaceEx(reinterpret_cast<sockaddr *>(&destination), &index) != NO_ERROR) {
-                return std::nullopt;
-            }
-            return index;
         }
 
         std::optional<NET_IFINDEX> ifindexFromAddr(const char *address)
@@ -96,76 +53,29 @@ namespace libxtun::test
             return found;
         }
 
-        bool netsh(const std::vector<std::string> &args)
+        void cleanup()
         {
-            const ResultXtun<int> result = process::run("netsh.exe", args);
-            return result && result.value() == 0;
-        }
-
-        int powershell(const std::string &script)
-        {
-            const ResultXtun<int> result =
-                    process::run(POWERSHELL, { "-NoProfile", "-NonInteractive", "-Command", script });
-            return result ? result.value() : -1;
-        }
-
-        bool ipv6Route(const char *action, unsigned ifIndex)
-        {
-            return netsh({ "interface", "ipv6", action, "route", std::string("prefix=") + INTERNET_V6.host + "/128",
-                           "interface=" + std::to_string(ifIndex), "store=active" });
-        }
-
-        int connectFromPowerShell(const std::string &host, std::uint16_t port)
-        {
-            const std::string script = "$a = [System.Net.IPAddress]::Parse('" + host
-                    + "'); $port = " + std::to_string(port) + "; $tunnel = [System.Net.IPAddress]::Parse('"
-                    + DEFAULT_IFADDR + "'); $viaTunnel = " + std::to_string(CONNECTED_VIA_TUNNEL) + "; $elsewhere = "
-                    + std::to_string(CONNECTED_ELSEWHERE) + "; $ms = " + std::to_string(BLOCK_WAIT.count())
-                    + "; $blocked = " + std::to_string(WSAEACCES) + "; " + CONNECT_SCRIPT;
-            return powershell(script);
-        }
-
-        int connectFromProxy(const std::string &host, std::uint16_t port, unsigned ifIndex)
-        {
-            if (tcpConnect(host, port, BLOCK_WAIT, ifIndex).error == WSAEACCES) {
-                return WSAEACCES;
+            auto engine = wfp::WfpEngine::open(makeWfpConfig(true));
+            if (!engine) {
+                ADD_FAILURE() << "could not open a WFP session to clean up the killswitch";
+                return;
             }
-            return udpProbe(host, port, ifIndex);
+            if (const libxtun_error rc = engine.value()->cleanup(); rc != LIBXTUN_OK) {
+                ADD_FAILURE() << "could not remove the killswitch's WFP objects: " << rc;
+            }
         }
     }
 
     KillswitchEnv::KillswitchEnv()
     {
-        WSADATA wsa {};
-        if (::WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
-            m_skipReason = "could not initialize Winsock";
-            return;
-        }
         if (!privileged()) {
             m_skipReason = "installing WFP filters requires Administrator";
-            return;
-        }
-        if (powershell("exit 0") != 0) {
-            m_skipReason = "the app probe needs Windows PowerShell";
             return;
         }
 
         const std::optional<unsigned long> loopback = bestInterface(LOOPBACK_V4);
         if (!loopback) {
             m_skipReason = "no interface to exempt from the killswitch";
-            return;
-        }
-
-        const std::optional<unsigned long> uplink = bestInterface(INTERNET_V4.host.c_str());
-        if (!uplink) {
-            m_skipReason = "no route to " + INTERNET_V4.host;
-            return;
-        }
-        m_uplinkIfIndex = static_cast<unsigned>(*uplink);
-        ipv6Route("delete", m_uplinkIfIndex);
-        if (!ipv6Route("add", m_uplinkIfIndex)) {
-            m_skipReason = "could not route " + INTERNET_V6.host + " through interface " + std::to_string(*uplink)
-                    + ", IPv6 may be disabled";
             return;
         }
 
@@ -178,29 +88,12 @@ namespace libxtun::test
     {
         if (m_ifIndex != 0) {
             cleanup();
-            ipv6Route("delete", m_uplinkIfIndex);
         }
-        ::WSACleanup();
     }
 
     int KillswitchEnv::ruleCount() const
     {
         return static_cast<int>(installedFilters().size());
-    }
-
-    std::optional<ProbeResult> KillswitchEnv::probe(const Destination &to, Sender sender, std::uint16_t port) const
-    {
-        const int code = sender == Sender::App ? connectFromPowerShell(to.host, port)
-                                               : connectFromProxy(to.host, port, m_uplinkIfIndex);
-        switch (code) {
-        case CONNECTED_VIA_TUNNEL: return ProbeResult::Tunnel;
-        case CONNECTED_ELSEWHERE: return ProbeResult::Uplink;
-        case WSAEACCES: return ProbeResult::Blocked;
-        default: break;
-        }
-
-        ADD_FAILURE() << "the probe to " << to.host << ' ' << sender << " failed: " << code;
-        return std::nullopt;
     }
 
     bool KillswitchEnv::removeTunnelRoutes(const std::vector<std::string> &routes) const
@@ -212,8 +105,8 @@ namespace libxtun::test
 
         const std::string index = std::to_string(*tunnel);
         return std::ranges::all_of(routes, [&index](const std::string &route) {
-            return netsh({ "interface", "ipv4", "delete", "route", "prefix=" + route, "interface=" + index,
-                           "store=active" });
+            return internal::netsh({ "interface", "ipv4", "delete", "route", "prefix=" + route, "interface=" + index,
+                                     "store=active" });
         });
     }
 }

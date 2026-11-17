@@ -1,4 +1,5 @@
 #include "killswitch.h"
+#include "proxy.h"
 #include "util/config.h"
 #include "util/killswitch_env.h"
 #include "util/log.h"
@@ -57,17 +58,20 @@ namespace
 {
     using libxtun::test::ConnectedSocket;
     using libxtun::test::Destination;
-    using libxtun::test::DNS_PORT;
-    using libxtun::test::DNS_TLS_PORT;
-    using libxtun::test::INTERNET_V4;
-    using libxtun::test::INTERNET_V6;
-    using libxtun::test::LOOPBACK_V4;
-    using libxtun::test::PROBE_PORT;
-    using libxtun::test::PROBE_TIMEOUT;
     using libxtun::test::ProbeResult;
     using libxtun::test::ScopedFd;
     using libxtun::test::Sender;
     using enum libxtun::test::ProbeResult;
+
+    using libxtun::test::DNS_PORT;
+    using libxtun::test::DNS_TLS_PORT;
+    using libxtun::test::LOOPBACK_V4;
+    using libxtun::test::PROBE_PORT;
+    using libxtun::test::PROBE_TIMEOUT;
+
+    using libxtun::test::ROUTED_HOST_V4;
+    using libxtun::test::UNROUTED_HOST_V6;
+    using libxtun::test::EXCLUDED_HOST_V4;
 
     struct LoopbackSocket
     {
@@ -123,100 +127,109 @@ namespace
 
     constexpr const char *LOCAL_SETUP = "awg_local";
 
-    const Destination SPLIT_DESTINATION { "split destination", libxtun::test::probeAddress(0) };
-    const std::string SPLIT_PREFIX = libxtun::test::probeAddress(0) + "/32";
-    const Destination LISTED_RESOLVER { "listed resolver", libxtun::test::probeAddress(0) };
-    const Destination OUTSIDE_RESOLVER { "listed resolver outside the routes", "192.0.2.53" };
-    const Destination EXCEPTION_RESOLVER { "excepted DNS server", "192.0.2.54" };
-    const Destination UNLISTED_RESOLVER { "unlisted DNS server", libxtun::test::probeAddress(1) };
+    const Destination UNROUTED_HOST_V4 { "unrouted host v4", libxtun::test::probeAddress(1) };
+    const Destination CONFIGURED_DNS { "configured DNS server", libxtun::test::probeAddress(0) };
+    const Destination CONFIGURED_UNROUTED_DNS { "configured DNS server outside the routes", "192.0.2.53" };
+    const Destination CONFIGURED_EXCLUDED_DNS { "configured DNS server inside an exclude", "192.0.2.55" };
+    const Destination EXCEPTED_DNS { "excepted DNS server", "192.0.2.54" };
+    const Destination UNCONFIGURED_DNS { "unconfigured DNS server", libxtun::test::probeAddress(1) };
+    const std::string SPLIT_PREFIX = ROUTED_HOST_V4.host + "/32";
     const std::vector<std::string> FULL_ROUTES { "0.0.0.0/0" };
     const std::vector<std::string> SPLIT_ROUTES { SPLIT_PREFIX };
 
-    const std::array FULL_PROFILE {
-        //                                            before   up       no route detached freed
+    const std::array FULL_TUNNEL_CASES {
+        //                                                 before   up       no route detached freed
         // disabled
         std::array {
-            ProbeCase { INTERNET_V4, Sender::App,   { Uplink,  Tunnel,  Uplink,  Uplink,  Uplink  } },
-            ProbeCase { INTERNET_V6, Sender::App,   { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
-            ProbeCase { INTERNET_V4, Sender::Proxy, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { ROUTED_HOST_V4,   Sender::App,   { Uplink,  Tunnel,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { UNROUTED_HOST_V6, Sender::App,   { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { ROUTED_HOST_V4,   Sender::Proxy, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { CONFIGURED_DNS,   Sender::App,   { Uplink,  Tunnel,  Uplink,  Uplink,  Uplink  }, DNS_PORT },
+            ProbeCase { EXCEPTED_DNS,     Sender::App,   { Uplink,  Tunnel,  Uplink,  Uplink,  Uplink  }, DNS_PORT },
+            ProbeCase { UNCONFIGURED_DNS, Sender::App,   { Uplink,  Tunnel,  Uplink,  Uplink,  Uplink  }, DNS_PORT },
+            ProbeCase { UNCONFIGURED_DNS, Sender::App,   { Uplink,  Tunnel,  Uplink,  Uplink,  Uplink  }, DNS_TLS_PORT },
         },
         // soft
         std::array {
-            ProbeCase { INTERNET_V4, Sender::App,   { Uplink,  Tunnel,  Blocked, Uplink,  Uplink  } },
-            ProbeCase { INTERNET_V6, Sender::App,   { Uplink,  Blocked, Blocked, Uplink,  Uplink  } },
-            ProbeCase { INTERNET_V4, Sender::Proxy, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { ROUTED_HOST_V4,   Sender::App,   { Uplink,  Tunnel,  Blocked, Uplink,  Uplink  } },
+            ProbeCase { UNROUTED_HOST_V6, Sender::App,   { Uplink,  Blocked, Blocked, Uplink,  Uplink  } },
+            ProbeCase { ROUTED_HOST_V4,   Sender::Proxy, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { CONFIGURED_DNS,   Sender::App,   { Uplink,  Tunnel,  Blocked, Uplink,  Uplink  }, DNS_PORT },
+            ProbeCase { EXCEPTED_DNS,     Sender::App,   { Uplink,  Tunnel,  Blocked, Uplink,  Uplink  }, DNS_PORT },
+            ProbeCase { UNCONFIGURED_DNS, Sender::App,   { Uplink,  Blocked, Blocked, Uplink,  Uplink  }, DNS_PORT },
+            ProbeCase { UNCONFIGURED_DNS, Sender::App,   { Uplink,  Blocked, Blocked, Uplink,  Uplink  }, DNS_TLS_PORT },
         },
         // hard
         std::array {
-            ProbeCase { INTERNET_V4, Sender::App,   { Uplink,  Tunnel,  Blocked, Blocked, Blocked } },
-            ProbeCase { INTERNET_V6, Sender::App,   { Uplink,  Blocked, Blocked, Blocked, Blocked } },
-            ProbeCase { INTERNET_V4, Sender::Proxy, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { ROUTED_HOST_V4,   Sender::App,   { Uplink,  Tunnel,  Blocked, Blocked, Blocked } },
+            ProbeCase { UNROUTED_HOST_V6, Sender::App,   { Uplink,  Blocked, Blocked, Blocked, Blocked } },
+            ProbeCase { ROUTED_HOST_V4,   Sender::Proxy, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { CONFIGURED_DNS,   Sender::App,   { Uplink,  Tunnel,  Blocked, Blocked, Blocked }, DNS_PORT },
+            ProbeCase { EXCEPTED_DNS,     Sender::App,   { Uplink,  Tunnel,  Blocked, Blocked, Blocked }, DNS_PORT },
+            ProbeCase { UNCONFIGURED_DNS, Sender::App,   { Uplink,  Blocked, Blocked, Blocked, Blocked }, DNS_PORT },
+            ProbeCase { UNCONFIGURED_DNS, Sender::App,   { Uplink,  Blocked, Blocked, Blocked, Blocked }, DNS_TLS_PORT },
         },
     };
 
-    const std::array SPLIT_PROFILE {
-        //                                                before   up       no route detached freed
-        // disabled
-        std::array {
-            ProbeCase { SPLIT_DESTINATION, Sender::App, { Uplink,  Tunnel,  Uplink,  Uplink,  Uplink  } },
-            ProbeCase { INTERNET_V4,       Sender::App, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
-            ProbeCase { INTERNET_V6,       Sender::App, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
-        },
-        // soft
-        std::array {
-            ProbeCase { SPLIT_DESTINATION, Sender::App, { Uplink,  Tunnel,  Blocked, Uplink,  Uplink  } },
-            ProbeCase { INTERNET_V4,       Sender::App, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
-            ProbeCase { INTERNET_V6,       Sender::App, { Uplink,  Blocked, Blocked, Uplink,  Uplink  } },
-        },
-        // hard
-        std::array {
-            ProbeCase { SPLIT_DESTINATION, Sender::App, { Uplink,  Tunnel,  Blocked, Blocked, Blocked } },
-            ProbeCase { INTERNET_V4,       Sender::App, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
-            ProbeCase { INTERNET_V6,       Sender::App, { Uplink,  Blocked, Blocked, Blocked, Blocked } },
-        },
-    };
-
-    const std::array FULL_DNS_PROFILE {
+    const std::array SPLIT_TUNNEL_CASES {
         //                                                        before   up       no route detached freed
         // disabled
         std::array {
-            ProbeCase { UNLISTED_RESOLVER,  Sender::App, { Uplink,  Tunnel,  Uplink,  Uplink,  Uplink  }, DNS_PORT },
-            ProbeCase { UNLISTED_RESOLVER,  Sender::App, { Uplink,  Tunnel,  Uplink,  Uplink,  Uplink  }, DNS_TLS_PORT },
+            ProbeCase { ROUTED_HOST_V4,          Sender::App,   { Uplink,  Tunnel,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { UNROUTED_HOST_V4,        Sender::App,   { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { UNROUTED_HOST_V6,        Sender::App,   { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { ROUTED_HOST_V4,          Sender::Proxy, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { CONFIGURED_DNS,          Sender::App,   { Uplink,  Tunnel,  Uplink,  Uplink,  Uplink  }, DNS_PORT },
+            ProbeCase { CONFIGURED_DNS,          Sender::App,   { Uplink,  Tunnel,  Uplink,  Uplink,  Uplink  }, DNS_TLS_PORT },
+            ProbeCase { CONFIGURED_UNROUTED_DNS, Sender::App,   { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  }, DNS_PORT },
+            ProbeCase { EXCEPTED_DNS,            Sender::App,   { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  }, DNS_PORT },
         },
         // soft
         std::array {
-            ProbeCase { UNLISTED_RESOLVER,  Sender::App, { Uplink,  Blocked, Blocked, Uplink,  Uplink  }, DNS_PORT },
-            ProbeCase { UNLISTED_RESOLVER,  Sender::App, { Uplink,  Blocked, Blocked, Uplink,  Uplink  }, DNS_TLS_PORT },
+            ProbeCase { ROUTED_HOST_V4,          Sender::App,   { Uplink,  Tunnel,  Blocked, Uplink,  Uplink  } },
+            ProbeCase { UNROUTED_HOST_V4,        Sender::App,   { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { UNROUTED_HOST_V6,        Sender::App,   { Uplink,  Blocked, Blocked, Uplink,  Uplink  } },
+            ProbeCase { ROUTED_HOST_V4,          Sender::Proxy, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { CONFIGURED_DNS,          Sender::App,   { Uplink,  Tunnel,  Blocked, Uplink,  Uplink  }, DNS_PORT },
+            ProbeCase { CONFIGURED_DNS,          Sender::App,   { Uplink,  Tunnel,  Blocked, Uplink,  Uplink  }, DNS_TLS_PORT },
+            ProbeCase { CONFIGURED_UNROUTED_DNS, Sender::App,   { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  }, DNS_PORT },
+            ProbeCase { EXCEPTED_DNS,            Sender::App,   { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  }, DNS_PORT },
         },
         // hard
         std::array {
-            ProbeCase { UNLISTED_RESOLVER,  Sender::App, { Uplink,  Blocked, Blocked, Blocked, Blocked }, DNS_PORT },
-            ProbeCase { UNLISTED_RESOLVER,  Sender::App, { Uplink,  Blocked, Blocked, Blocked, Blocked }, DNS_TLS_PORT },
+            ProbeCase { ROUTED_HOST_V4,          Sender::App,   { Uplink,  Tunnel,  Blocked, Blocked, Blocked } },
+            ProbeCase { UNROUTED_HOST_V4,        Sender::App,   { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { UNROUTED_HOST_V6,        Sender::App,   { Uplink,  Blocked, Blocked, Blocked, Blocked } },
+            ProbeCase { ROUTED_HOST_V4,          Sender::Proxy, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { CONFIGURED_DNS,          Sender::App,   { Uplink,  Tunnel,  Blocked, Blocked, Blocked }, DNS_PORT },
+            ProbeCase { CONFIGURED_DNS,          Sender::App,   { Uplink,  Tunnel,  Blocked, Blocked, Blocked }, DNS_TLS_PORT },
+            ProbeCase { CONFIGURED_UNROUTED_DNS, Sender::App,   { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  }, DNS_PORT },
+            ProbeCase { EXCEPTED_DNS,            Sender::App,   { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  }, DNS_PORT },
         },
     };
 
-    const std::array SPLIT_DNS_PROFILE {
-        //                                                        before   up       no route detached freed
+    const std::array EXCLUDE_CASES {
+        //                                                      before   up       no route detached freed
         // disabled
         std::array {
-            ProbeCase { LISTED_RESOLVER,    Sender::App, { Uplink,  Tunnel,  Uplink,  Uplink,  Uplink  }, DNS_PORT },
-            ProbeCase { LISTED_RESOLVER,    Sender::App, { Uplink,  Tunnel,  Uplink,  Uplink,  Uplink  }, DNS_TLS_PORT },
-            ProbeCase { OUTSIDE_RESOLVER,   Sender::App, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  }, DNS_PORT },
-            ProbeCase { EXCEPTION_RESOLVER, Sender::App, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  }, DNS_PORT },
+            ProbeCase { ROUTED_HOST_V4,          Sender::App, { Uplink,  Tunnel,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { EXCLUDED_HOST_V4,        Sender::App, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { UNCONFIGURED_DNS,        Sender::App, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  }, DNS_PORT },
+            ProbeCase { CONFIGURED_EXCLUDED_DNS, Sender::App, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  }, DNS_PORT },
         },
         // soft
         std::array {
-            ProbeCase { LISTED_RESOLVER,    Sender::App, { Uplink,  Tunnel,  Blocked, Uplink,  Uplink  }, DNS_PORT },
-            ProbeCase { LISTED_RESOLVER,    Sender::App, { Uplink,  Tunnel,  Blocked, Uplink,  Uplink  }, DNS_TLS_PORT },
-            ProbeCase { OUTSIDE_RESOLVER,   Sender::App, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  }, DNS_PORT },
-            ProbeCase { EXCEPTION_RESOLVER, Sender::App, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  }, DNS_PORT },
+            ProbeCase { ROUTED_HOST_V4,          Sender::App, { Uplink,  Tunnel,  Blocked, Uplink,  Uplink  } },
+            ProbeCase { EXCLUDED_HOST_V4,        Sender::App, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { UNCONFIGURED_DNS,        Sender::App, { Uplink,  Blocked, Blocked, Uplink,  Uplink  }, DNS_PORT },
+            ProbeCase { CONFIGURED_EXCLUDED_DNS, Sender::App, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  }, DNS_PORT },
         },
         // hard
         std::array {
-            ProbeCase { LISTED_RESOLVER,    Sender::App, { Uplink,  Tunnel,  Blocked, Blocked, Blocked }, DNS_PORT },
-            ProbeCase { LISTED_RESOLVER,    Sender::App, { Uplink,  Tunnel,  Blocked, Blocked, Blocked }, DNS_TLS_PORT },
-            ProbeCase { OUTSIDE_RESOLVER,   Sender::App, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  }, DNS_PORT },
-            ProbeCase { EXCEPTION_RESOLVER, Sender::App, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  }, DNS_PORT },
+            ProbeCase { ROUTED_HOST_V4,          Sender::App, { Uplink,  Tunnel,  Blocked, Blocked, Blocked } },
+            ProbeCase { EXCLUDED_HOST_V4,        Sender::App, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  } },
+            ProbeCase { UNCONFIGURED_DNS,        Sender::App, { Uplink,  Blocked, Blocked, Blocked, Blocked }, DNS_PORT },
+            ProbeCase { CONFIGURED_EXCLUDED_DNS, Sender::App, { Uplink,  Uplink,  Uplink,  Uplink,  Uplink  }, DNS_PORT },
         },
     };
 }
@@ -276,7 +289,7 @@ TEST_P(KillswitchMode, DestructionHonoursPersistence)
         ASSERT_EQ(installed > 0, GetParam() != LIBXTUN_KILLSWITCH_MODE_DISABLED);
     }
     EXPECT_EQ(m_env.ruleCount(), persistent(GetParam()) ? installed : 0);
-    expectProbeResult(INTERNET_V4, Sender::App, persistent(GetParam()) ? Blocked : Uplink);
+    expectProbeResult(ROUTED_HOST_V4, Sender::App, persistent(GetParam()) ? Blocked : Uplink);
 }
 
 INSTANTIATE_TEST_SUITE_P(Killswitch, KillswitchMode, testing::ValuesIn(libxtun::test::allKillswitchModes()),
@@ -286,19 +299,20 @@ class KillswitchProfile : public libxtun::test::KillswitchTest,
                           public testing::WithParamInterface<std::tuple<libxtun_killswitch_mode, test::Setup>>
 {
 protected:
-    void checkLifecycle(const std::vector<std::string> &routes, std::span<const ProbeCase> baseCases,
-                        std::span<const ProbeCase> dnsCases)
+    void checkLifecycle(const libxtun_proxy_opts *proxyOpts, std::span<const ProbeCase> allCases)
     {
         const auto &[mode, setup] = GetParam();
         [[maybe_unused]] const auto srv = setup.createServer("server");
 
-        std::vector<ProbeCase> cases(baseCases.begin(), baseCases.end());
-        if (setup.name == LOCAL_SETUP) {
-            cases.insert(cases.end(), dnsCases.begin(), dnsCases.end());
+        std::vector<ProbeCase> cases(allCases.begin(), allCases.end());
+        if (setup.name != LOCAL_SETUP) {
+            std::erase_if(cases, [](const ProbeCase &probeCase) {
+                return probeCase.port == DNS_PORT || probeCase.port == DNS_TLS_PORT;
+            });
         }
 
-        libxtun::test::TunOpts opts;
-        opts.killswitchMode(mode).dnsExceptions({ EXCEPTION_RESOLVER.host });
+        libxtun::test::TunOpts tunOpts;
+        tunOpts.killswitchMode(mode).dnsExceptions({ EXCEPTED_DNS.host });
 
         libxtun::test::Logger log("client");
         libxtun::test::StatusChecker status;
@@ -306,7 +320,7 @@ protected:
         const auto check = [&](TunnelState state) {
             for (const ProbeCase &probeCase : cases) {
                 if (const std::optional<ProbeResult> result =
-                            m_env.probe(probeCase.to, probeCase.sender, probeCase.port)) {
+                            m_pathProbe.probe(probeCase.to, probeCase.sender, probeCase.port)) {
                     EXPECT_EQ(*result, probeCase.expected[state])
                             << probeCase.to.name << " port " << probeCase.port << ' ' << probeCase.sender << ", "
                             << TUNNEL_STATE_NAMES[state];
@@ -315,14 +329,18 @@ protected:
         };
 
         libxtun_tunnel tun {};
-        ASSERT_EQ(libxtun_tunnel_new(&tun, &opts.get()), LIBXTUN_OK);
+        ASSERT_EQ(libxtun_tunnel_new(&tun, &tunOpts.get()), LIBXTUN_OK);
         check(BEFORE_ATTACH);
 
         libxtun_proxy proxy {};
         setup.wrapper->wrapProxy(proxy);
         log.wrapProxy(proxy);
         status.wrapProxy(proxy);
-        ASSERT_EQ(libxtun_proxy_new(&proxy, setup.proto, setup.clientA.c_str(), nullptr), LIBXTUN_OK);
+        ASSERT_EQ(libxtun_proxy_new(&proxy, setup.proto, setup.clientA.c_str(), proxyOpts), LIBXTUN_OK);
+        std::vector<std::string> routes;
+        for (const net::IpPrefix &route : reinterpret_cast<Proxy *>(proxy.handle)->profile().includeRoutes) {
+            routes.push_back(route.toString());
+        }
         ASSERT_EQ(libxtun_tunnel_attach_proxy(&tun, &proxy), LIBXTUN_OK);
         ASSERT_TRUE(status.await(LIBXTUN_STATUS_CONNECTED, std::chrono::seconds(5)))
                 << "the tunnel did not connect after attach";
@@ -354,14 +372,14 @@ class KillswitchFullTunnel : public KillswitchProfile
 
 TEST_P(KillswitchFullTunnel, Lifecycle)
 {
-    checkLifecycle(FULL_ROUTES, FULL_PROFILE[std::get<0>(GetParam())], FULL_DNS_PROFILE[std::get<0>(GetParam())]);
+    checkLifecycle(nullptr, FULL_TUNNEL_CASES[std::get<0>(GetParam())]);
 }
 
 INSTANTIATE_TEST_SUITE_P(Killswitch, KillswitchFullTunnel,
                          testing::Combine(testing::ValuesIn(libxtun::test::allKillswitchModes()),
                                           testing::ValuesIn(test::SetupBuilder()
                                                                    .withRoutes(FULL_ROUTES)
-                                                                   .withDns({ LISTED_RESOLVER.host })
+                                                                   .withDns({ CONFIGURED_DNS.host })
                                                                    .build())),
                          [](const auto &info) {
                              const auto mode = std::get<0>(info.param);
@@ -375,15 +393,40 @@ class KillswitchSplitTunnel : public KillswitchProfile
 
 TEST_P(KillswitchSplitTunnel, Lifecycle)
 {
-    checkLifecycle(SPLIT_ROUTES, SPLIT_PROFILE[std::get<0>(GetParam())], SPLIT_DNS_PROFILE[std::get<0>(GetParam())]);
+    checkLifecycle(nullptr, SPLIT_TUNNEL_CASES[std::get<0>(GetParam())]);
 }
 
 INSTANTIATE_TEST_SUITE_P(Killswitch, KillswitchSplitTunnel,
                          testing::Combine(testing::ValuesIn(libxtun::test::allKillswitchModes()),
                                           testing::ValuesIn(test::SetupBuilder()
                                                                    .withRoutes(SPLIT_ROUTES)
-                                                                   .withDns({ LISTED_RESOLVER.host,
-                                                                              OUTSIDE_RESOLVER.host })
+                                                                   .withDns({ CONFIGURED_DNS.host,
+                                                                              CONFIGURED_UNROUTED_DNS.host })
+                                                                   .build())),
+                         [](const auto &info) {
+                             const auto mode = std::get<0>(info.param);
+                             const auto &setup = std::get<1>(info.param);
+                             return modeName(mode) + "_" + setup.name;
+                         });
+
+class KillswitchExclude : public KillswitchProfile
+{
+};
+
+TEST_P(KillswitchExclude, Lifecycle)
+{
+    const std::string excludedHost = EXCLUDED_HOST_V4.host + "/32";
+    const std::string excludedDns = CONFIGURED_EXCLUDED_DNS.host + "/32";
+    const char *excludes[] = { excludedHost.c_str(), excludedDns.c_str(), nullptr };
+    const libxtun_proxy_opts excludeHosts { .size = sizeof(libxtun_proxy_opts), .excludeRoutes = excludes };
+    checkLifecycle(&excludeHosts, EXCLUDE_CASES[std::get<0>(GetParam())]);
+}
+
+INSTANTIATE_TEST_SUITE_P(Killswitch, KillswitchExclude,
+                         testing::Combine(testing::ValuesIn(libxtun::test::allKillswitchModes()),
+                                          testing::ValuesIn(test::SetupBuilder()
+                                                                   .withRoutes(FULL_ROUTES)
+                                                                   .withDns({ CONFIGURED_EXCLUDED_DNS.host })
                                                                    .build())),
                          [](const auto &info) {
                              const auto mode = std::get<0>(info.param);
