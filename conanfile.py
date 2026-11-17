@@ -35,7 +35,7 @@ class Xtun(ConanFile):
         if self.options.bundle_wintun and self.settings.os == "Windows":
             self.requires("wintun/0.14.1@amnezia")
         if self.settings.os == "Linux":
-            self.requires("libsystemd/255.10")
+            self.requires("libsystemd/262.2")
     
     def build_requirements(self):
         self.tool_requires("go/[>=1.27]@amnezia")
