@@ -221,7 +221,7 @@ namespace libxtun
         return LIBXTUN_OK;
     }
 
-    libxtun_error WindowsRouter::setProxyRoutes(const std::vector<net::IpPrefix> &routes,
+    libxtun_error WindowsRouter::addProxyRoutes(const std::vector<net::IpPrefix> &routes,
                                                 const std::vector<net::IpPrefix> &excludes)
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
@@ -249,7 +249,7 @@ namespace libxtun
         return LIBXTUN_OK;
     }
 
-    void WindowsRouter::clearProxyRoutes()
+    void WindowsRouter::removeProxyRoutes()
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
         for (const int family : { AF_INET, AF_INET6 }) {

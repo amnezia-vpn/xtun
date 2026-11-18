@@ -10,6 +10,7 @@ set(XTUN_TEST_SOURCES
     test_net_socket.cpp
     test_net_packet_builder.cpp
     test_proxy.cpp
+    test_router.cpp
     test_routing.cpp
     test_scenario.cpp
     test_tunnel.cpp

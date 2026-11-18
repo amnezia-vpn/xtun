@@ -328,7 +328,7 @@ namespace libxtun
         return LIBXTUN_OK;
     }
 
-    libxtun_error LinuxRouter::setProxyRoutes(const std::vector<net::IpPrefix> &routes,
+    libxtun_error LinuxRouter::addProxyRoutes(const std::vector<net::IpPrefix> &routes,
                                               const std::vector<net::IpPrefix> &excludes)
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
@@ -358,7 +358,7 @@ namespace libxtun
         return LIBXTUN_OK;
     }
 
-    void LinuxRouter::clearProxyRoutes()
+    void LinuxRouter::removeProxyRoutes()
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
         for (const auto &exclude : m_excludes) {

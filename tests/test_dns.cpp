@@ -213,6 +213,26 @@ namespace
         ASSERT_TRUE(actual) << "could not read the resolvers of " << tun.name();
         EXPECT_EQ(*actual, expected);
     }
+
+    class CountingDns final : public libxtun::Dns
+    {
+    public:
+        int applies = 0;
+        int reverts = 0;
+        libxtun_error applyResult = LIBXTUN_OK;
+
+    protected:
+        libxtun_error applyResolvers(const std::vector<libxtun::net::IpAddress> &) override
+        {
+            ++applies;
+            return applyResult;
+        }
+
+        void revertResolvers() noexcept override
+        {
+            ++reverts;
+        }
+    };
 }
 
 class DnsTunnel : public testing::Test
@@ -361,6 +381,35 @@ TEST(DnsOpts, InvalidAddressIsRejected)
         const auto tun = Tunnel::fromOpts(opts.get());
         EXPECT_TRUE(tun) << "the same opts with valid entries were rejected";
     }
+}
+
+TEST(Dns, EqualSetChangesNothing)
+{
+    CountingDns dns;
+    const std::vector<libxtun::net::IpAddress> x { *libxtun::net::IpAddress::parse("192.0.2.1") };
+    const std::vector<libxtun::net::IpAddress> y { *libxtun::net::IpAddress::parse("192.0.2.2") };
+
+    ASSERT_EQ(dns.apply(x), LIBXTUN_OK);
+    ASSERT_EQ(dns.apply(x), LIBXTUN_OK);
+    EXPECT_EQ(dns.applies, 1) << "an equal set was applied again";
+
+    ASSERT_EQ(dns.apply(y), LIBXTUN_OK);
+    EXPECT_EQ(dns.applies, 2);
+    EXPECT_EQ(dns.reverts, 0) << "a different set was reverted before it was applied";
+
+    dns.revert();
+    ASSERT_EQ(dns.apply(y), LIBXTUN_OK);
+    EXPECT_EQ(dns.applies, 3) << "a reverted set counted as applied";
+
+    ASSERT_EQ(dns.apply({}), LIBXTUN_OK);
+    EXPECT_EQ(dns.reverts, 2) << "an empty list did not revert";
+    EXPECT_EQ(dns.applies, 3);
+
+    dns.applyResult = LIBXTUN_ERR_DNS;
+    EXPECT_EQ(dns.apply(x), LIBXTUN_ERR_DNS);
+    dns.applyResult = LIBXTUN_OK;
+    ASSERT_EQ(dns.apply(x), LIBXTUN_OK);
+    EXPECT_EQ(dns.applies, 5) << "a failed set counted as applied";
 }
 
 #if defined(_WIN32)

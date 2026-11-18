@@ -55,12 +55,9 @@ namespace libxtun
         return std::make_unique<MacosDns>(std::move(store), ifName);
     }
 
-    libxtun_error MacosDns::apply(const std::vector<net::IpAddress> &resolvers)
+    libxtun_error MacosDns::applyResolvers(const std::vector<net::IpAddress> &resolvers)
     {
         revert();
-        if (resolvers.empty()) {
-            return LIBXTUN_OK;
-        }
 
         std::vector<std::string> servers;
         servers.reserve(resolvers.size());
@@ -92,7 +89,7 @@ namespace libxtun
         return LIBXTUN_OK;
     }
 
-    void MacosDns::revert() noexcept
+    void MacosDns::revertResolvers() noexcept
     {
         try {
             for (const char *entity : { "IPv4", "DNS" }) {

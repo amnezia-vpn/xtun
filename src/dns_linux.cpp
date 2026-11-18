@@ -122,13 +122,8 @@ namespace libxtun
         return std::make_unique<LinuxDns>(std::move(bus), ifIndex);
     }
 
-    libxtun_error LinuxDns::apply(const std::vector<net::IpAddress> &resolvers)
+    libxtun_error LinuxDns::applyResolvers(const std::vector<net::IpAddress> &resolvers)
     {
-        if (resolvers.empty()) {
-            revert();
-            return LIBXTUN_OK;
-        }
-
         if (setLinkDns(m_bus.get(), m_ifIndex, resolvers) < 0 || setLinkDomains(m_bus.get(), m_ifIndex) < 0) {
             revert();
             return LIBXTUN_ERR_DNS;
@@ -137,7 +132,7 @@ namespace libxtun
         return LIBXTUN_OK;
     }
 
-    void LinuxDns::revert() noexcept
+    void LinuxDns::revertResolvers() noexcept
     {
         BusMessage(m_bus.get(), "RevertLink").append("i", m_ifIndex).send();
     }
