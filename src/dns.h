@@ -16,10 +16,17 @@ namespace libxtun
     public:
         virtual ~Dns() = default;
 
-        virtual libxtun_error apply(const std::vector<net::IpAddress> &resolvers) = 0; // empty -> revert()
-        virtual void revert() noexcept = 0;
+        libxtun_error apply(const std::vector<net::IpAddress> &resolvers);
+        void revert() noexcept;
 
         static std::unique_ptr<Dns> create(int ifIndex, const std::string &ifName);
+
+    protected:
+        virtual libxtun_error applyResolvers(const std::vector<net::IpAddress> &resolvers) = 0;
+        virtual void revertResolvers() noexcept = 0;
+
+    private:
+        std::vector<net::IpAddress> m_appliedResolvers;
     };
 }
 

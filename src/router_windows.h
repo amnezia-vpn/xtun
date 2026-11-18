@@ -17,12 +17,14 @@ namespace libxtun
 
         libxtun_error configureInterface(const std::string &ifname, int ifindex,
                                          const std::vector<std::string> &addresses, int mtu) override;
-        libxtun_error setProxyRoutes(const std::vector<net::IpPrefix> &routes,
-                                     const std::vector<net::IpPrefix> &excludes) override;
-        void clearProxyRoutes() override;
         void revert() override;
         void protectSocket(int fd) override;
         void onRouteChanged() override;
+
+    protected:
+        libxtun_error addProxyRoutes(const std::vector<net::IpPrefix> &routes,
+                                     const std::vector<net::IpPrefix> &excludes) override;
+        void removeProxyRoutes() override;
 
     private:
         libxtun_error addAddress(const std::string &cidr);

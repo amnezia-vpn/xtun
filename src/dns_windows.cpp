@@ -40,13 +40,8 @@ namespace libxtun
         return std::make_unique<WindowsDns>(ifIndex, guid, setSettings);
     }
 
-    libxtun_error WindowsDns::apply(const std::vector<net::IpAddress> &resolvers)
+    libxtun_error WindowsDns::applyResolvers(const std::vector<net::IpAddress> &resolvers)
     {
-        if (resolvers.empty()) {
-            revert();
-            return LIBXTUN_OK;
-        }
-
         for (const int family : { AF_INET, AF_INET6 }) {
             std::vector<net::IpAddress> servers;
             std::ranges::copy_if(resolvers, std::back_inserter(servers),
@@ -60,7 +55,7 @@ namespace libxtun
         return LIBXTUN_OK;
     }
 
-    void WindowsDns::revert() noexcept
+    void WindowsDns::revertResolvers() noexcept
     {
         try {
             setNameServers(AF_INET, {});

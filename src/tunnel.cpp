@@ -110,6 +110,9 @@ namespace libxtun
 
         if (m_killswitch != nullptr) {
             if (auto rc = m_killswitch->protect(profile.includeRoutes, profile.excludeRoutes, resolvers); rc != LIBXTUN_OK) {
+                if (m_router != nullptr) {
+                    m_router->clearProxyRoutes();
+                }
                 detachProxyLocked(m_proxy);
                 if (m_dns != nullptr) {
                     m_dns->revert();
@@ -186,6 +189,10 @@ namespace libxtun
         if (m_dns != nullptr) {
             m_dns->revert();
         }
+        if (m_router != nullptr) {
+            // FIXME(cd-amn): clear routes only for particular Proxy
+            m_router->clearProxyRoutes();
+        }
         detachProxyLocked(proxy);
         if (m_killswitch != nullptr) {
             m_killswitch->protect({}, {}, {});
@@ -196,11 +203,6 @@ namespace libxtun
     {
         if (proxy == nullptr || m_proxy != proxy) {
             return;
-        }
-
-        if (m_router) {
-            // FIXME(cd-amn): clear routes only for particular Proxy
-            m_router->clearProxyRoutes();
         }
 
         // FIXME: this abstraction make sense for ONE to MANY model

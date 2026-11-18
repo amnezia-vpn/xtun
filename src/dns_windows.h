@@ -25,8 +25,9 @@ namespace libxtun
 
         static std::unique_ptr<WindowsDns> open(int ifIndex);
 
-        libxtun_error apply(const std::vector<net::IpAddress> &resolvers) override;
-        void revert() noexcept override;
+    protected:
+        libxtun_error applyResolvers(const std::vector<net::IpAddress> &resolvers) override;
+        void revertResolvers() noexcept override;
 
     private:
         bool setNameServers(int family, const std::vector<net::IpAddress> &servers);

@@ -364,7 +364,7 @@ namespace libxtun
         return LIBXTUN_OK;
     }
 
-    libxtun_error MacosRouter::setProxyRoutes(const std::vector<net::IpPrefix> &routes,
+    libxtun_error MacosRouter::addProxyRoutes(const std::vector<net::IpPrefix> &routes,
                                               const std::vector<net::IpPrefix> &excludes)
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
@@ -398,7 +398,7 @@ namespace libxtun
         return LIBXTUN_OK;
     }
 
-    void MacosRouter::clearProxyRoutes()
+    void MacosRouter::removeProxyRoutes()
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
         for (const int family : { AF_INET, AF_INET6 }) {
