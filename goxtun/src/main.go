@@ -306,6 +306,17 @@ func goxtun_xray_event(ctx unsafe.Pointer, event C.int) {
 	instance.TriggerEvent(xray.Event(event))
 }
 
+//export goxtun_xray_downlink_bytes
+func goxtun_xray_downlink_bytes(ctx unsafe.Pointer) C.uint64_t {
+	if ctx == nil {
+		return 0
+	}
+
+	instance, _ := fromCtx[xray.Instance](ctx)
+
+	return C.uint64_t(instance.DownlinkBytes())
+}
+
 func wrapLog(cb C.goxtun_logcb, priv unsafe.Pointer) func(string) {
 	if cb == nil {
 		return func(string) {}

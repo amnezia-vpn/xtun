@@ -3,6 +3,8 @@ package xray
 import (
 	"context"
 	"fmt"
+	"io"
+	"sync/atomic"
 	"time"
 
 	"github.com/xtls/xray-core/features/routing"
@@ -100,9 +102,12 @@ func (i *Instance) handleTCP(ctx context.Context, request *tcp.ForwarderRequest)
 
 	flowCtx = context.WithValue(flowCtx, socketScopeKey{}, scope)
 
+	outbound := new(session.Outbound)
+	flowCtx = session.ContextWithOutbounds(flowCtx, []*session.Outbound{outbound})
+
 	link := &transport.Link{
 		Reader: buf.NewReader(conn),
-		Writer: buf.NewWriter(conn),
+		Writer: buf.NewWriter(NewDownlinkWriter(conn, outbound, &i.downlinkBytes)),
 	}
 
 	if err := i.dispatcher.DispatchLink(
@@ -173,4 +178,26 @@ func (i *Instance) abortFlows() {
 		case <-ticker.C:
 		}
 	}
+}
+
+type downlinkWriter struct {
+	conn             io.Writer
+	outbound         *session.Outbound
+	downLinkBytesPtr *atomic.Uint64
+}
+
+func NewDownlinkWriter(conn io.Writer, outbound *session.Outbound, downLinkBytesPtr *atomic.Uint64) *downlinkWriter {
+	return &downlinkWriter{
+		conn:             conn,
+		outbound:         outbound,
+		downLinkBytesPtr: downLinkBytesPtr,
+	}
+}
+
+func (d *downlinkWriter) Write(p []byte) (n int, err error) {
+	n, err = d.conn.Write(p)
+	if n > 0 && d.outbound.Tag == "xtun" {
+		d.downLinkBytesPtr.Add(uint64(n))
+	}
+	return n, err
 }

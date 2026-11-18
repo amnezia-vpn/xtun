@@ -138,6 +138,9 @@ func (i *Instance) handleUDP(ctx context.Context, conn *gonet.UDPConn, id stack.
 
 	flowCtx = context.WithValue(flowCtx, socketScopeKey{}, scope)
 
+	outbound := new(session.Outbound)
+	flowCtx = session.ContextWithOutbounds(flowCtx, []*session.Outbound{outbound})
+
 	activityConn := &udpActivityConn{
 		conn:  conn,
 		timer: timer,
@@ -145,7 +148,7 @@ func (i *Instance) handleUDP(ctx context.Context, conn *gonet.UDPConn, id stack.
 
 	link := &transport.Link{
 		Reader: buf.NewPacketReader(activityConn),
-		Writer: buf.NewWriter(activityConn),
+		Writer: buf.NewWriter(NewDownlinkWriter(activityConn, outbound, &i.downlinkBytes)),
 	}
 
 	if err := i.dispatcher.DispatchLink(flowCtx, destination, link); err != nil && ctx.Err() == nil {

@@ -69,6 +69,8 @@ type Instance struct {
 	xrayctx    context.Context
 	inboundTag string
 	sniffing   session.SniffingRequest
+
+	downlinkBytes atomic.Uint64
 }
 
 func NewInstance(
@@ -316,4 +318,8 @@ func (i *Instance) runEvents(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (i *Instance) DownlinkBytes() uint64 {
+	return i.downlinkBytes.Load()
 }
