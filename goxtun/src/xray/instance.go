@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -120,19 +121,13 @@ func NewInstance(
 		return nil, err
 	}
 
-	if len(preparedConfig.Outbound) == 0 {
-		return nil, errors.New("xray: at least one outbound is required")
-	}
-
-	if len(preparedConfig.Inbound) > 1 {
-		return nil, errors.New("xray: at most one inbound is supported")
-	}
-
 	var sniffingConfig *proxyman.SniffingConfig
 
-	if len(preparedConfig.Inbound) == 1 {
-		inbound := preparedConfig.Inbound[0]
-		if inbound == nil || inbound.ReceiverSettings == nil {
+	for idx, inbound := range preparedConfig.Inbound {
+		if inbound.GetTag() != "xtun" {
+			continue
+		}
+		if inbound.ReceiverSettings == nil {
 			return nil, errors.New("xray: inbound receiver settings are required")
 		}
 
@@ -141,14 +136,15 @@ func NewInstance(
 			return nil, fmt.Errorf("xray: inbound receiver settings: %w", err)
 		}
 
-		reciever, ok := settings.(*proxyman.ReceiverConfig)
-		if !ok || reciever == nil {
+		receiver, ok := settings.(*proxyman.ReceiverConfig)
+		if !ok || receiver == nil {
 			return nil, fmt.Errorf("xray: unexpected receiver settings %T", settings)
 		}
 
 		i.inboundTag = inbound.Tag
-		sniffingConfig = reciever.SniffingSettings
-		preparedConfig.Inbound = nil // argueable but needed.
+		sniffingConfig = receiver.SniffingSettings
+		preparedConfig.Inbound = slices.Delete(preparedConfig.Inbound, idx, idx+1)
+		break
 	}
 
 	i.engine, err = core.NewWithContext(ctx, preparedConfig)
