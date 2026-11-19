@@ -23,10 +23,15 @@ target_compile_definitions(xtun_tests PRIVATE
     XTUN_TEST_SECRETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/secrets")
 
 if(WIN32)
-    target_sources(xtun_tests PRIVATE test_split_tunnel_windows.cpp test_wfp_windows.cpp)
+    target_sources(xtun_tests PRIVATE test_split_tunnel_windows.cpp test_split_traffic_windows.cpp test_wfp_windows.cpp)
     target_include_directories(xtun_tests PRIVATE $<TARGET_PROPERTY:amnezia::wintun,INTERFACE_INCLUDE_DIRECTORIES>)
     target_link_libraries(xtun_tests PRIVATE advapi32 iphlpapi fwpuclnt)
     target_compile_definitions(xtun_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+    # Test app for the SplitTraffic tests.
+    add_executable(xtun_split_probe split_probe_windows.cpp)
+    target_link_libraries(xtun_split_probe PRIVATE ws2_32)
+    add_dependencies(xtun_tests xtun_split_probe)
 
     add_custom_command(TARGET xtun_tests POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -46,6 +51,7 @@ endif()
 
 gtest_discover_tests(xtun_tests TEST_FILTER "Killswitch*:Dns*:Routing*" PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE)
 # These tests own the driver while they run, so they must not run in parallel with other tests.
-gtest_discover_tests(xtun_tests TEST_FILTER "SplitTunnelDriver*"
+gtest_discover_tests(xtun_tests TEST_FILTER "SplitTunnelDriver*:SplitTraffic*"
                      PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE FIXTURES_REQUIRED SplitDriver)
-gtest_discover_tests(xtun_tests TEST_FILTER "-Killswitch*:Dns*:Routing*:SplitTunnelDriver*" PROPERTIES TIMEOUT 30)
+gtest_discover_tests(xtun_tests TEST_FILTER "-Killswitch*:Dns*:Routing*:SplitTunnelDriver*:SplitTraffic*"
+                     PROPERTIES TIMEOUT 30)
