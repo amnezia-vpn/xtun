@@ -99,7 +99,8 @@ struct libxtun_tunnel_opts
 };
 
 typedef int (*libxtun_tunfactory_createtun)(const char *const *dns,
-                                            const char *const *routes,
+                                            const char *const *includeRoutes,
+                                            const char *const *excludeRoutes,
                                             int mtu,
                                             void* priv);
 

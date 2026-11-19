@@ -3,7 +3,7 @@ import Foundation
 
 public final class XtunTunnel: @unchecked Sendable {
     public typealias TunFactory =
-        @Sendable (_ dns: [String], _ routes: [String], _ mtu: Int32) throws -> Int32
+        @Sendable (_ dns: [String], _ includeRoutes: [String], _ excludeRoutes: [String], _ mtu: Int32) throws -> Int32
 
     private let raw: UnsafeMutablePointer<libxtun_tunnel>
     private let factory: TunFactory
@@ -19,9 +19,9 @@ public final class XtunTunnel: @unchecked Sendable {
             var tf = libxtun_tunfactory()
             tf.size = MemoryLayout<libxtun_tunfactory>.size
             tf.factory_priv = priv
-            tf.factory_func = { dns, routes, mtu, priv in 
+            tf.factory_func = { dns, includeRoutes, excludeRoutes, mtu, priv in 
                 return Unmanaged<XtunTunnel>.fromOpaque(priv!)._withUnsafeGuaranteedRef {
-                    (try? $0.factory(stringArray(dns), stringArray(routes), mtu)) ?? -1
+                    (try? $0.factory(stringArray(dns), stringArray(includeRoutes), stringArray(excludeRoutes), mtu)) ?? -1
                 }
             }
             tf.if_addrs = ptrs

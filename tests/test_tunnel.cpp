@@ -91,7 +91,8 @@ TEST_F(TunnelTestTunfactory, AttachesProxy)
     test::MemProxy proxy(log.defaultCallbacks());
 
     auto res = Tunnel::fromTunfactory(
-            [&](std::vector<net::IpAddress> &dns, std::vector<net::IpPrefix> &routes, int mtu) {
+            [&](std::vector<net::IpAddress> &dns, std::vector<net::IpPrefix> &includeRoutes,
+                std::vector<net::IpPrefix> &excludeRoutes, int mtu) {
                 auto tun = libxtun::test::createTun();
                 if (!tun) {
                     return -1;
@@ -103,5 +104,37 @@ TEST_F(TunnelTestTunfactory, AttachesProxy)
     auto &tunnel = res.value();
 
     EXPECT_EQ(tunnel->attachProxy(&proxy), 0);
+}
+
+TEST_F(TunnelTestTunfactory, PassesRoutesAndExcludes)
+{
+    test::Logger log;
+
+    ProxyProfile profile;
+    profile.routes = { *net::IpPrefix::parse("0.0.0.0/0") };
+    const std::vector<net::IpPrefix> includes { *net::IpPrefix::parse("10.0.0.0/8") };
+    const std::vector<net::IpPrefix> excludes { *net::IpPrefix::parse("10.1.0.0/16") };
+    test::MemProxy proxy(log.defaultCallbacks(), profile, includes, excludes);
+
+    std::vector<net::IpPrefix> receivedIncludeRoutes;
+    std::vector<net::IpPrefix> receivedExcludeRoutes;
+    auto res = Tunnel::fromTunfactory(
+            [&](std::vector<net::IpAddress> &dns, std::vector<net::IpPrefix> &includeRoutes,
+                std::vector<net::IpPrefix> &excludeRoutes, int mtu) {
+                receivedIncludeRoutes = includeRoutes;
+                receivedExcludeRoutes = excludeRoutes;
+                auto tun = libxtun::test::createTun();
+                if (!tun) {
+                    return -1;
+                }
+                return tun->first.release();
+            },
+            { "10.0.0.1" });
+    ASSERT_TRUE(res) << "Tunnel::fromTunfactory failed with " << res.error() << " error code";
+    auto &tunnel = res.value();
+
+    ASSERT_EQ(tunnel->attachProxy(&proxy), 0);
+    EXPECT_EQ(receivedIncludeRoutes, includes) << "the factory did not get the resolved routes";
+    EXPECT_EQ(receivedExcludeRoutes, excludes) << "the factory did not get the excludes";
 }
 #endif // WIN32

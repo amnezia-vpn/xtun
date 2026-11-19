@@ -214,13 +214,13 @@ static void statushandler(int status, void *priv) {
         (*g_vm)->DetachCurrentThread(g_vm);
 }
 
-static int tunfactory(const char *const *dns, const char *const *routes, int mtu, void *priv) {
+static int tunfactory(const char *const *dns, const char *const *includeRoutes, const char *const *excludeRoutes, int mtu, void *priv) {
     jobject obj = priv;
     JNIEnv *env;
     int res;
     int detached = 0;
     jint out = -1;
-    jobjectArray jdns, jroutes;
+    jobjectArray jdns, jincludeRoutes, jexcludeRoutes;
 
     if (obj == NULL)
         return -1;
@@ -239,9 +239,10 @@ static int tunfactory(const char *const *dns, const char *const *routes, int mtu
     }
 
     jdns = toStringArray(env, dns);
-    jroutes = jdns != NULL ? toStringArray(env, routes) : NULL;
-    if (jdns != NULL && jroutes != NULL)
-        out = (*env)->CallIntMethod(env, obj, g_XtunTunnel_createTun, jdns, jroutes, (jint)mtu);
+    jincludeRoutes = jdns != NULL ? toStringArray(env, includeRoutes) : NULL;
+    jexcludeRoutes = jincludeRoutes != NULL ? toStringArray(env, excludeRoutes) : NULL;
+    if (jdns != NULL && jincludeRoutes != NULL && jexcludeRoutes != NULL)
+        out = (*env)->CallIntMethod(env, obj, g_XtunTunnel_createTun, jdns, jincludeRoutes, jexcludeRoutes, (jint)mtu);
 
     if ((*env)->ExceptionCheck(env)) {
         (*env)->ExceptionClear(env);
@@ -250,8 +251,10 @@ static int tunfactory(const char *const *dns, const char *const *routes, int mtu
 
     if (jdns != NULL)
         (*env)->DeleteLocalRef(env, jdns);
-    if (jroutes != NULL)
-        (*env)->DeleteLocalRef(env, jroutes);
+    if (jincludeRoutes != NULL)
+        (*env)->DeleteLocalRef(env, jincludeRoutes);
+    if (jexcludeRoutes != NULL)
+        (*env)->DeleteLocalRef(env, jexcludeRoutes);
 
     if (detached)
         (*g_vm)->DetachCurrentThread(g_vm);
@@ -331,7 +334,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     clazz = (*env)->FindClass(env, "org/amnezia/xtun/XtunTunnel$TunFactory");
     if (clazz == NULL)
         return JNI_ERR;
-    method = (*env)->GetMethodID(env, clazz, "createTun", "([Ljava/lang/String;[Ljava/lang/String;I)I");
+    method = (*env)->GetMethodID(env, clazz, "createTun", "([Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;I)I");
     if (method == NULL)
         return JNI_ERR;
 

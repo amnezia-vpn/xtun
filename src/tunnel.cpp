@@ -127,7 +127,7 @@ namespace libxtun
         }
 
         if (m_tunfactory) {
-            if (int fd = m_tunfactory(profile.dnsServers, profile.includeRoutes, profile.mtu); fd >= 0) {
+            if (int fd = m_tunfactory(profile.dnsServers, profile.includeRoutes, profile.excludeRoutes, profile.mtu); fd >= 0) {
                 auto dev = createTunDevice();
                 if (auto err = dev->adoptFd(fd)) {
                     return err;
@@ -351,10 +351,12 @@ int libxtun_tunnel_new_from_tunfactory(struct libxtun_tunnel *tun, libxtun_tunfa
 
     auto res = Tunnel::fromTunfactory(
             [createTun = tunfactory->factory_func, priv = tunfactory->factory_priv](
-                    std::vector<net::IpAddress> &dns, std::vector<net::IpPrefix> &routes, int mtu) {
+                    std::vector<net::IpAddress> &dns, std::vector<net::IpPrefix> &includeRoutes,
+                    std::vector<net::IpPrefix> &excludeRoutes, int mtu) {
                 const auto cDns = cinterop::toStrList(dns);
-                const auto cRoutes = cinterop::toStrList(routes);
-                return createTun(cDns.data(), cRoutes.data(), mtu, priv);
+                const auto cIncludeRoutes = cinterop::toStrList(includeRoutes);
+                const auto cExcludeRoutes = cinterop::toStrList(excludeRoutes);
+                return createTun(cDns.data(), cIncludeRoutes.data(), cExcludeRoutes.data(), mtu, priv);
             },
             cinterop::parseStrList(tunfactory->if_addrs));
     if (!res) {

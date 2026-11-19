@@ -2,17 +2,21 @@ package org.amnezia.xtunsample;
 
 import android.content.Intent;
 import android.net.ConnectivityManager;
+import android.net.IpPrefix;
 import android.net.LinkAddress;
 import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
 import android.net.VpnService;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import android.util.Log;
 
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.List;
 
 import org.amnezia.xtun.XtunException;
@@ -60,7 +64,7 @@ public class XtunVpnService extends VpnService {
                     this::protect,
                     log -> Log.d("awg", log),
                     status -> Log.d("status", "status " + status));
-            tunnel = new XtunTunnel((dns, routes, mtu) -> {
+            tunnel = new XtunTunnel((dns, includeRoutes, excludeRoutes, mtu) -> {
                 Builder builder = new Builder()
                         .setSession("xtun")
                         .setMtu(mtu > 0 ? mtu : 1280)
@@ -70,13 +74,26 @@ public class XtunVpnService extends VpnService {
                 for (String addr : dns) {
                     builder.addDnsServer(addr);
                 }
-                for (String prefix : routes) {
+                for (String prefix : includeRoutes) {
                     int slash = prefix.indexOf('/');
                     try {
                         builder.addRoute(prefix.substring(0, slash), Integer.parseInt(prefix.substring(slash + 1)));
                     } catch (IllegalArgumentException | IndexOutOfBoundsException e) {
                         Log.w("xtun", "skipping route " + prefix, e);
                     }
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    for (String prefix : excludeRoutes) {
+                        int slash = prefix.indexOf('/');
+                        try {
+                            builder.excludeRoute(new IpPrefix(InetAddress.getByName(prefix.substring(0, slash)),
+                                    Integer.parseInt(prefix.substring(slash + 1))));
+                        } catch (UnknownHostException | IllegalArgumentException | IndexOutOfBoundsException e) {
+                            Log.w("xtun", "skipping excluded route " + prefix, e);
+                        }
+                    }
+                } else if (excludeRoutes.length > 0) {
+                    Log.w("xtun", "excluded routes need API " + Build.VERSION_CODES.TIRAMISU);
                 }
 
                 ParcelFileDescriptor fd = builder.establish();

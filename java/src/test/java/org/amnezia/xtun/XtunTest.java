@@ -28,8 +28,8 @@ public final class XtunTest {
 
     public static void attachFailsWhenTunFactoryFails() {
         try (XtunProxy proxy = newAwgProxy(CONF_A);
-            XtunTunnel tunnel = new XtunTunnel((dns, routes, mtu) -> {
-                check(dns != null && routes != null, "JNI passed null dns/routes");
+            XtunTunnel tunnel = new XtunTunnel((dns, includeRoutes, excludeRoutes, mtu) -> {
+                check(dns != null && includeRoutes != null && excludeRoutes != null, "JNI passed null dns/includeRoutes/excludeRoutes");
                 return -1;
             }, new String[]{"10.0.0.1"})) {
             expectError(XtunException.LIBXTUN_ERR_DEVICE_CREATE, () -> tunnel.attachProxy(proxy));
@@ -39,7 +39,7 @@ public final class XtunTest {
 
     public static void attachFailsWhenTunFactoryThrows() {
         try (XtunProxy proxy = newAwgProxy(CONF_A);
-            XtunTunnel tunnel = new XtunTunnel((dns, routes, mtu) -> {
+            XtunTunnel tunnel = new XtunTunnel((dns, includeRoutes, excludeRoutes, mtu) -> {
                 throw new IllegalStateException("factory failure");
             }, new String[]{"10.0.0.1"})) {
             expectError(XtunException.LIBXTUN_ERR_DEVICE_CREATE, () -> tunnel.attachProxy(proxy));
@@ -51,7 +51,7 @@ public final class XtunTest {
         skipUnless(XtunTestNative.privileged(), "creating a tun device requires root");
 
         try (XtunProxy proxy = newAwgProxy(CONF_A);
-            XtunTunnel tunnel = new XtunTunnel((dns, routes, mtu) -> {
+            XtunTunnel tunnel = new XtunTunnel((dns, includeRoutes, excludeRoutes, mtu) -> {
                 return XtunTestNative.createTun();
             }, new String[]{"10.0.0.1"})) {
             tunnel.attachProxy(proxy);
