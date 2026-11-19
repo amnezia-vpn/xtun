@@ -28,10 +28,47 @@ public final class XtunProxy implements AutoCloseable {
         void onStatus(int status);
     }
 
+    public static final class Builder {
+        private String[] includeRoutes;
+        private String[] excludeRoutes;
+        private SocketHandler socketHandler = socket -> {};
+        private LogHandler logHandler = log -> {};
+        private StatusHandler statusHandler = status -> {};
+
+        public Builder withIncludeRoutes(String[] includeRoutes) {
+            this.includeRoutes = includeRoutes;
+            return this;
+        }
+
+        public Builder withExcludeRoutes(String[] excludeRoutes) {
+            this.excludeRoutes = excludeRoutes;
+            return this;
+        }
+
+        public Builder withSocketHandler(SocketHandler socketHandler) {
+            this.socketHandler = socketHandler;
+            return this;
+        }
+
+        public Builder withLogHandler(LogHandler logHandler) {
+            this.logHandler = logHandler;
+            return this;
+        }
+
+        public Builder withStatusHandler(StatusHandler statusHandler) {
+            this.statusHandler = statusHandler;
+            return this;
+        }
+
+        public XtunProxy build(Proto proto, String conf) {
+            return new XtunProxy(proto, conf, includeRoutes, excludeRoutes, socketHandler, logHandler, statusHandler);
+        }
+    }
+
     private long handle;
 
-    public XtunProxy(Proto proto, String conf, String[] includeRoutes, String[] excludeRoutes, SocketHandler socketHandler,
-                     LogHandler logHandler, StatusHandler statusHandler) {
+    private XtunProxy(Proto proto, String conf, String[] includeRoutes, String[] excludeRoutes, SocketHandler socketHandler,
+                      LogHandler logHandler, StatusHandler statusHandler) {
         Xtun.load();
         handle = nativeInit(proto.getValue(), conf, includeRoutes, excludeRoutes, socketHandler, logHandler, statusHandler);
     }

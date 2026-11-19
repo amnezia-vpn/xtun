@@ -60,10 +60,11 @@ public final class XtunTest {
     }
 
     private static XtunProxy newAwgProxy(String conf) {
-        return new XtunProxy(XtunProxy.Proto.AWG, conf, null, null,
-            sock -> System.out.println("[Proxy]: new socket(" + sock + ") created"),
-            log -> System.out.println("[Proxy]: " + log),
-            status -> System.out.println("[Proxy]: status " + status));
+        return new XtunProxy.Builder()
+            .withSocketHandler(sock -> System.out.println("[Proxy]: new socket(" + sock + ") created"))
+            .withLogHandler(log -> System.out.println("[Proxy]: " + log))
+            .withStatusHandler(status -> System.out.println("[Proxy]: status " + status))
+            .build(XtunProxy.Proto.AWG, conf);
     }
 
     private static void check(boolean cond, String msg) {

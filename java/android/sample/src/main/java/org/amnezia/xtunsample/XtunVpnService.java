@@ -60,10 +60,11 @@ public class XtunVpnService extends VpnService {
     private void connect(XtunProxy.Proto proto, String conf) {
         disconnect();
         try {
-            proxy = new XtunProxy(proto, conf, null, null,
-                    this::protect,
-                    log -> Log.d("awg", log),
-                    status -> Log.d("status", "status " + status));
+            proxy = new XtunProxy.Builder()
+                    .withSocketHandler(this::protect)
+                    .withLogHandler(log -> Log.d("awg", log))
+                    .withStatusHandler(status -> Log.d("status", "status " + status))
+                    .build(proto, conf);
             tunnel = new XtunTunnel((dns, includeRoutes, excludeRoutes, mtu) -> {
                 Builder builder = new Builder()
                         .setSession("xtun")
