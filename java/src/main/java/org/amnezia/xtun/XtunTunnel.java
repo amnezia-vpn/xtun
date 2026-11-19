@@ -3,7 +3,7 @@ package org.amnezia.xtun;
 public final class XtunTunnel implements AutoCloseable {
 
     public interface TunFactory {
-        int createTun(String[] dns, String[] routes, int mtu);
+        int createTun(String[] dns, String[] includeRoutes, String[] excludeRoutes, int mtu);
     }
 
     private long handle;

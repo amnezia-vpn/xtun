@@ -21,7 +21,8 @@ namespace libxtun
     class Tunnel : public TunnelIo, public TunDeviceListener, public RouterListener
     {
     public:
-        using TunfactoryFunc = std::function<int(std::vector<net::IpAddress> &, std::vector<net::IpPrefix> &, int)>;
+        using TunfactoryFunc = std::function<int(std::vector<net::IpAddress> &, std::vector<net::IpPrefix> &,
+                                                 std::vector<net::IpPrefix> &, int)>;
 
         enum class Event {
             Up,

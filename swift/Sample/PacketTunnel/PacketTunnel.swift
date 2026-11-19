@@ -41,14 +41,17 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                                           onLog: { self.log.notice("\($0, privacy: .public)") },
                                           onStatus: { self.log.notice("new status: \(String(describing: $0), privacy: .public)") })
                 
-                let tunnel = try XtunTunnel(ifAddrs: [Self.address4, Self.address6]) { dns, routes, mtu in
-                    let (routes4, routes6) = try Self.parseRoutes(routes)
+                let tunnel = try XtunTunnel(ifAddrs: [Self.address4, Self.address6]) { dns, includeRoutes, excludeRoutes, mtu in
+                    let (includeRoutes4, includeRoutes6) = try Self.parseRoutes(includeRoutes)
+                    let (excludeRoutes4, excludeRoutes6) = try Self.parseRoutes(excludeRoutes)
                     
                     let v4settings = NEIPv4Settings(addresses: [Self.address4], subnetMasks: ["255.255.255.255"])
-                    v4settings.includedRoutes = routes4
+                    v4settings.includedRoutes = includeRoutes4
+                    v4settings.excludedRoutes = excludeRoutes4
                     
                     let v6settings = NEIPv6Settings(addresses: [Self.address6], networkPrefixLengths: [128])
-                    v6settings.includedRoutes = routes6
+                    v6settings.includedRoutes = includeRoutes6
+                    v6settings.excludedRoutes = excludeRoutes6
                     
                     let dnsSettings = NEDNSSettings(servers: dns)
                     
