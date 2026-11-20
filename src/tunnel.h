@@ -1,6 +1,7 @@
 #ifndef LIBXTUN_TUNNEL_H
 #define LIBXTUN_TUNNEL_H
 
+#include "dispatch/dispatcher.h"
 #include "dns.h"
 #include "killswitch.h"
 #include "net/ip.h"
@@ -21,7 +22,7 @@ namespace libxtun
     class Tunnel : public TunnelIo, public TunDeviceListener
     {
     public:
-        using TunfactoryFunc = std::function<int(std::vector<net::IpAddress> &, std::vector<net::IpPrefix> &, int)>;
+        using TunfactoryFunc = std::function<int(const std::vector<net::IpAddress> &, const std::vector<net::IpPrefix> &, int)>;
 
         enum class Event {
             Up,
@@ -58,10 +59,11 @@ namespace libxtun
         void onRouteChanged() override;
 
     private:
-        Tunnel() = default;
+        Tunnel();
 
         void emit(Event ev);
-        void detachProxyLocked(Proxy *proxy);
+        int applyLocked(const ProxyProfile &profile);
+        void teardownLocked();
 
         std::unique_ptr<TunDevice> m_device;
         std::unique_ptr<Router> m_router;
@@ -71,9 +73,9 @@ namespace libxtun
         std::mutex m_mutex;
         bool m_started = false;
         TunfactoryFunc m_tunfactory;
-        Proxy *m_proxy = nullptr;
         std::vector<net::IpPrefix> m_addrs;
         std::vector<net::IpAddress> m_dnsDefaults;
+        dispatch::Dispatcher m_dispatcher;
     };
 }
 

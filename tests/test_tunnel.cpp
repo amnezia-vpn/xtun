@@ -59,7 +59,7 @@ TEST_F(TunnelTestTunfactory, AttachesProxy)
     test::MemProxy proxy(log.defaultCallbacks());
 
     auto res = Tunnel::fromTunfactory(
-            [&](std::vector<net::IpAddress> &dns, std::vector<net::IpPrefix> &routes, int mtu) {
+            [&](const std::vector<net::IpAddress> &dns, const std::vector<net::IpPrefix> &routes, int mtu) {
                 auto tun = libxtun::test::createTun();
                 if (!tun) {
                     return -1;

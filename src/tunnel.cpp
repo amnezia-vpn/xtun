@@ -9,20 +9,26 @@
 
 namespace libxtun
 {
+    Tunnel::Tunnel() : m_dispatcher(*this)
+    {
+    }
+
     Tunnel::~Tunnel()
     {
-        if (m_proxy) {
-            m_proxy->attachIo(nullptr);
-        }
-        if (m_device != nullptr) {
+        if (m_device) {
             m_device->stopMonitor();
             m_device->cancelRead();
         }
-        if (m_dns != nullptr) {
-            m_dns->revert();
+        std::unique_lock lock(m_mutex);
+        m_dispatcher.clear();
+        if (m_killswitch) {
+            m_killswitch->protect({}, {});
         }
-        if (m_router != nullptr) {
+        if (m_router) {
             m_router->revert();
+        }
+        if (m_dns) {
+            m_dns->revert();
         }
     }
 
@@ -52,6 +58,7 @@ namespace libxtun
         }
 
         dev->startMonitor(*tun);
+        tun->emit(dev->up() ? Event::Up : Event::Down);
 
         const auto ifAddrs = cinterop::parseStrList(opts.if_addrs);
         if (auto rc = router->configureInterface(dev->name(), dev->ifIndex(), ifAddrs, opts.mtu); rc != LIBXTUN_OK) {
@@ -99,31 +106,53 @@ namespace libxtun
 
     int Tunnel::attachProxy(Proxy *proxy)
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::unique_lock lock(m_mutex);
 
         if (proxy == nullptr) {
             return LIBXTUN_ERR_INVALID_ARGS;
         }
 
-        ProxyProfile profile = proxy->profile();
+        if (!m_dispatcher.attach(proxy)) {
+            return LIBXTUN_OK;
+        }
+
+        auto rc = applyLocked(m_dispatcher.profile());
+        if (rc == LIBXTUN_OK) {
+            return LIBXTUN_OK;
+        }
+
+        m_dispatcher.detach(proxy);
+        if (m_dispatcher.empty() || applyLocked(m_dispatcher.profile()) != LIBXTUN_OK) {
+            teardownLocked();
+        }
+
+        return rc;
+    }
+
+    void Tunnel::detachProxy(Proxy *proxy)
+    {
+        std::unique_lock lock(m_mutex);
+
+        if (!m_dispatcher.detach(proxy)) {
+            return;
+        }
+        if (m_dispatcher.empty() || applyLocked(m_dispatcher.profile()) != LIBXTUN_OK) {
+            teardownLocked();
+        }
+    }
+
+    int Tunnel::applyLocked(const ProxyProfile &profile)
+    {
         const std::vector<net::IpAddress> &resolvers = profile.dnsServers.empty() ? m_dnsDefaults : profile.dnsServers;
 
-        if (m_killswitch != nullptr) {
+        if (m_killswitch) {
             if (auto rc = m_killswitch->protect(profile.routes, resolvers); rc != LIBXTUN_OK) {
-                detachProxyLocked(m_proxy);
-                if (m_dns != nullptr) {
-                    m_dns->revert();
-                }
-                m_killswitch->protect({}, {});
                 return rc;
             }
         }
 
-        if (m_proxy) {
-            detachProxyLocked(m_proxy);
-        }
-
         if (m_tunfactory) {
+            m_dispatcher.event(ProxyEvent::Down);
             if (int fd = m_tunfactory(profile.dnsServers, profile.routes, profile.mtu); fd >= 0) {
                 auto dev = createTunDevice();
                 if (auto err = dev->adoptFd(fd)) {
@@ -133,14 +162,13 @@ namespace libxtun
             } else {
                 return LIBXTUN_ERR_DEVICE_CREATE;
             }
+            if (m_device->up()) {
+                m_dispatcher.event(ProxyEvent::Up);
+            }
         }
 
-        if (profile.mtu) {
-            // TODO(cd-amn): write MTU
-            void(profile.mtu);
-        }
-
-        if (m_router != nullptr) {
+        if (m_router) {
+            m_router->clearProxyRoutes();
             // TODO(cd-amn): use net::IpPrefix in routers
             std::vector<std::string> strRoutes;
             strRoutes.reserve(profile.routes.size());
@@ -148,78 +176,35 @@ namespace libxtun
                 strRoutes.push_back(route.toString());
             }
             if (auto rc = m_router->setProxyRoutes(strRoutes); rc != LIBXTUN_OK) {
-                // FIXME(cd-amn): we are reverting too much in here. Should be rollback() or similar
-                m_router->revert();
-                if (m_dns != nullptr) {
-                    m_dns->revert();
-                }
-                if (m_killswitch != nullptr) {
-                    m_killswitch->protect({}, {});
-                }
-                return LIBXTUN_ERR_SYSTEM;
+                return rc;
             }
         }
 
-        if (m_dns != nullptr) {
-            if (m_dns->apply(resolvers) != LIBXTUN_OK) {
-                m_dns->revert();
-                if (m_router != nullptr) {
-                    m_router->clearProxyRoutes();
-                }
-                if (m_killswitch != nullptr) {
-                    m_killswitch->protect({}, {});
-                }
-                return LIBXTUN_ERR_DNS;
+        if (m_dns) {
+            if (auto rc = m_dns->apply(resolvers); rc != LIBXTUN_OK) {
+                return rc;
             }
         }
-
-        m_device->resetReadCancellation();
-
-        proxy->attachIo(this);
-        proxy->event(m_device->up() ? ProxyEvent::Up : ProxyEvent::Down);
-        m_proxy = proxy;
 
         return LIBXTUN_OK;
     }
 
-    void Tunnel::detachProxy(Proxy *proxy)
+    void Tunnel::teardownLocked()
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        if (proxy == nullptr || m_proxy != proxy) {
-            return;
-        }
-
-        if (m_dns != nullptr) {
-            m_dns->revert();
-        }
-        detachProxyLocked(proxy);
-        if (m_killswitch != nullptr) {
+        if (m_killswitch) {
             m_killswitch->protect({}, {});
         }
-    }
-
-    void Tunnel::detachProxyLocked(Proxy *proxy)
-    {
-        if (proxy == nullptr || m_proxy != proxy) {
-            return;
-        }
-
         if (m_router) {
-            // FIXME(cd-amn): clear routes only for particular Proxy
             m_router->clearProxyRoutes();
         }
-
-        // FIXME: this abstraction make sense for ONE to MANY model
-        (void)proxy;
-
-        m_proxy->event(ProxyEvent::Down);
-        m_proxy->attachIo(nullptr);
-        m_proxy = nullptr;
+        if (m_dns) {
+            m_dns->revert();
+        }
     }
 
     int Tunnel::start()
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::unique_lock lock(m_mutex);
         m_started = true;
         // TODO(cd-amn): implement kick-off and suspend/shutdown based on metrics for the routes
         // The idea:
@@ -234,15 +219,13 @@ namespace libxtun
 
     void Tunnel::emit(Event ev)
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        if (m_proxy == nullptr) {
-            return;
-        }
+        std::unique_lock lock(m_mutex);
 
+        // FIXME(cd-amn): why do we have 2 different-same type?
         switch (ev) {
-        case Event::Up: m_proxy->event(ProxyEvent::Up); break;
-        case Event::Down: m_proxy->event(ProxyEvent::Down); break;
-        case Event::MtuUpdate: m_proxy->event(ProxyEvent::MtuUpdate); break;
+        case Event::Up: m_dispatcher.event(ProxyEvent::Up); break;
+        case Event::Down: m_dispatcher.event(ProxyEvent::Down); break;
+        case Event::MtuUpdate: m_dispatcher.event(ProxyEvent::MtuUpdate); break;
         }
     }
 
@@ -343,7 +326,7 @@ int libxtun_tunnel_new_from_tunfactory(struct libxtun_tunnel *tun, libxtun_tunfa
 
     auto res = Tunnel::fromTunfactory(
             [createTun = tunfactory->factory_func, priv = tunfactory->factory_priv](
-                    std::vector<net::IpAddress> &dns, std::vector<net::IpPrefix> &routes, int mtu) {
+                    const std::vector<net::IpAddress> &dns, const std::vector<net::IpPrefix> &routes, int mtu) {
                 const auto cDns = cinterop::toStrList(dns);
                 const auto cRoutes = cinterop::toStrList(routes);
                 return createTun(cDns.data(), cRoutes.data(), mtu, priv);
