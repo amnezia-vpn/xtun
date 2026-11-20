@@ -36,6 +36,8 @@ endif()
 project(xtun VERSION 0.0.1)
 
 add_library(${PROJECT_NAME}
+    ${CMAKE_CURRENT_LIST_DIR}/src/dispatch/dispatcher.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/dispatch/ip_classifier.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/error.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/health/dns_probe.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/health/dns_query.cpp
@@ -43,6 +45,7 @@ add_library(${PROJECT_NAME}
     ${CMAKE_CURRENT_LIST_DIR}/src/health/icmp_probe.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/health/scheduler.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/io/awaiting_io.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/io/injection_io.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/io/remapping_io.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/net/checksum.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/net/ip.cpp
