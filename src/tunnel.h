@@ -11,18 +11,21 @@
 #include "util/result.h"
 #include "xtun.h"
 
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <string>
+#include <vector>
 
 namespace libxtun
 {
     class Tunnel : public TunnelIo, public TunDeviceListener, public RouterListener
     {
     public:
-        using TunfactoryFunc = std::function<int(std::vector<net::IpAddress> &, std::vector<net::IpPrefix> &,
-                                                 std::vector<net::IpPrefix> &, int)>;
+        using TunfactoryFunc = std::function<int(const std::vector<net::IpAddress> &, const std::vector<net::IpPrefix> &,
+                                                 const std::vector<net::IpPrefix> &, int)>;
 
         enum class Event {
             Up,
@@ -33,7 +36,8 @@ namespace libxtun
 
         static ResultXtun<std::unique_ptr<Tunnel>> fromOpts(const libxtun_tunnel_opts &opts);
         static ResultXtun<std::unique_ptr<Tunnel>> fromTunfactory(TunfactoryFunc tunfactory,
-                                                                  std::vector<std::string> ifaddrs);
+                                                                  std::vector<net::IpPrefix> ifaddrs,
+                                                                  std::vector<net::IpAddress> defaultDns);
 
         ~Tunnel();
 

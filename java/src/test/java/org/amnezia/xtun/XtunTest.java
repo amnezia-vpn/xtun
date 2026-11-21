@@ -31,7 +31,7 @@ public final class XtunTest {
             XtunTunnel tunnel = new XtunTunnel((dns, includeRoutes, excludeRoutes, mtu) -> {
                 check(dns != null && includeRoutes != null && excludeRoutes != null, "JNI passed null dns/includeRoutes/excludeRoutes");
                 return -1;
-            }, new String[]{"10.0.0.1"})) {
+            }, new String[]{"10.0.0.1"}, new String[]{"8.8.8.8"})) {
             expectError(XtunException.LIBXTUN_ERR_DEVICE_CREATE, () -> tunnel.attachProxy(proxy));
             tunnel.detachProxy(proxy);
         }
@@ -41,7 +41,7 @@ public final class XtunTest {
         try (XtunProxy proxy = newAwgProxy(CONF_A);
             XtunTunnel tunnel = new XtunTunnel((dns, includeRoutes, excludeRoutes, mtu) -> {
                 throw new IllegalStateException("factory failure");
-            }, new String[]{"10.0.0.1"})) {
+            }, new String[]{"10.0.0.1"}, new String[]{"8.8.8.8"})) {
             expectError(XtunException.LIBXTUN_ERR_DEVICE_CREATE, () -> tunnel.attachProxy(proxy));
             tunnel.detachProxy(proxy);
         }
@@ -53,7 +53,7 @@ public final class XtunTest {
         try (XtunProxy proxy = newAwgProxy(CONF_A);
             XtunTunnel tunnel = new XtunTunnel((dns, includeRoutes, excludeRoutes, mtu) -> {
                 return XtunTestNative.createTun();
-            }, new String[]{"10.0.0.1"})) {
+            }, new String[]{"10.0.0.1"}, new String[]{"8.8.8.8"})) {
             tunnel.attachProxy(proxy);
             tunnel.detachProxy(proxy);
         }

@@ -8,9 +8,9 @@ public final class XtunTunnel implements AutoCloseable {
 
     private long handle;
 
-    public XtunTunnel(TunFactory factory, String[] ifaddrs) {
+    public XtunTunnel(TunFactory factory, String[] ifaddrs, String[] dns) {
         Xtun.load();
-        handle = nativeInit(factory, ifaddrs);
+        handle = nativeInit(factory, ifaddrs, dns);
     }
 
     @Override
@@ -35,7 +35,7 @@ public final class XtunTunnel implements AutoCloseable {
         nativeNetworkChanged(handle);
     }
 
-    private static native long nativeInit(TunFactory factory, String[] ifaddrs);
+    private static native long nativeInit(TunFactory factory, String[] ifaddrs, String[] dns);
     private static native void nativeFree(long handle);
     private static native void nativeStart(long handle);
     private static native void nativeAttachProxy(long handle, XtunProxy proxy);

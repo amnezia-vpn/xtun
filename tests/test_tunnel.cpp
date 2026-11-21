@@ -1,6 +1,9 @@
 #include "mock/memproxy.h"
+#include "net/ip.h"
+#include "proxy.h"
 #include "tunnel.h"
 #include "util/config.h"
+#include "util/guaranteed.h"
 #include "util/log.h"
 #include "util/os.h"
 #include "xtun.h"
@@ -10,6 +13,7 @@
 #include <chrono>
 #include <gtest/gtest.h>
 #include <thread>
+#include <vector>
 
 using namespace libxtun;
 
@@ -80,7 +84,7 @@ TEST_F(TunnelTestTunfactory, RejectsInvalidFactory)
     test::Logger log;
     test::MemProxy proxy(log.defaultCallbacks());
 
-    auto res = Tunnel::fromTunfactory(nullptr, {});
+    auto res = Tunnel::fromTunfactory(nullptr, {}, {});
     ASSERT_FALSE(res);
     ASSERT_EQ(res.error(), LIBXTUN_ERR_INVALID_ARGS);
 }
@@ -91,15 +95,19 @@ TEST_F(TunnelTestTunfactory, AttachesProxy)
     test::MemProxy proxy(log.defaultCallbacks());
 
     auto res = Tunnel::fromTunfactory(
-            [&](std::vector<net::IpAddress> &dns, std::vector<net::IpPrefix> &includeRoutes,
-                std::vector<net::IpPrefix> &excludeRoutes, int mtu) {
+            [&](const std::vector<net::IpAddress> &dns, const std::vector<net::IpPrefix> &includeRoutes,
+                const std::vector<net::IpPrefix> &excludeRoutes, int mtu) {
                 auto tun = libxtun::test::createTun();
                 if (!tun) {
                     return -1;
                 }
                 return tun->first.release();
             },
-            { "10.0.0.1" });
+            { test::guaranteed(net::IpPrefix::parse("10.0.0.1/32")) },
+            {
+                    test::guaranteed(net::IpAddress::parse("8.8.8.8")),
+                    test::guaranteed(net::IpAddress::parse("8.8.4.4")),
+            });
     EXPECT_TRUE(res) << "Tunnel::fromTunfactory failed with " << res.error() << " error code";
     auto &tunnel = res.value();
 
@@ -119,8 +127,8 @@ TEST_F(TunnelTestTunfactory, PassesRoutesAndExcludes)
     std::vector<net::IpPrefix> receivedIncludeRoutes;
     std::vector<net::IpPrefix> receivedExcludeRoutes;
     auto res = Tunnel::fromTunfactory(
-            [&](std::vector<net::IpAddress> &dns, std::vector<net::IpPrefix> &includeRoutes,
-                std::vector<net::IpPrefix> &excludeRoutes, int mtu) {
+            [&](const std::vector<net::IpAddress> &dns, const std::vector<net::IpPrefix> &includeRoutes,
+                const std::vector<net::IpPrefix> &excludeRoutes, int mtu) {
                 receivedIncludeRoutes = includeRoutes;
                 receivedExcludeRoutes = excludeRoutes;
                 auto tun = libxtun::test::createTun();
@@ -129,7 +137,11 @@ TEST_F(TunnelTestTunfactory, PassesRoutesAndExcludes)
                 }
                 return tun->first.release();
             },
-            { "10.0.0.1" });
+            { test::guaranteed(net::IpPrefix::parse("10.0.0.1/32")) },
+            {
+                    test::guaranteed(net::IpAddress::parse("8.8.8.8")),
+                    test::guaranteed(net::IpAddress::parse("8.8.4.4")),
+            });
     ASSERT_TRUE(res) << "Tunnel::fromTunfactory failed with " << res.error() << " error code";
     auto &tunnel = res.value();
 

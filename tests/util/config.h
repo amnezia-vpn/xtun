@@ -182,7 +182,7 @@ namespace libxtun::test
             std::vector<Setup> res;
             res.emplace_back(awgLocalSetup());
             if (auto setup = awgRealSetup()) {
-                res.emplace_back(std::move(setup.value()));
+                res.emplace_back(std::move(setup).value());
             }
             if (auto setup = xrayRealSetup()) {
                 res.emplace_back(std::move(setup).value());

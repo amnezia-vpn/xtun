@@ -6,7 +6,10 @@
 
 #include "gtest/gtest.h"
 #include <chrono>
+#include <cstdint>
 #include <gtest/gtest.h>
+#include <string>
+#include <vector>
 
 using namespace std::chrono;
 using namespace libxtun;
