@@ -8,6 +8,8 @@ import Xtun
 final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private static let address4 = "10.111.0.2"
     private static let address6 = "fd00:111::2"
+    private static let dnsA = "8.8.8.8"
+    private static let dnsB = "8.8.4.4"
     
     private let log = Logger(subsystem: "org.amnezia.sample", category: "tunnel")
     private let queue = DispatchQueue(label: "org.amnezia.sample")
@@ -41,7 +43,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                                           onLog: { self.log.notice("\($0, privacy: .public)") },
                                           onStatus: { self.log.notice("new status: \(String(describing: $0), privacy: .public)") })
                 
-                let tunnel = try XtunTunnel(ifAddrs: [Self.address4, Self.address6]) { dns, includeRoutes, excludeRoutes, mtu in
+                let tunnel = try XtunTunnel(ifAddrs: [Self.address4, Self.address6], dns: [Self.dnsA, Self.dnsB]) { dns, includeRoutes, excludeRoutes, mtu in
                     let (includeRoutes4, includeRoutes6) = try Self.parseRoutes(includeRoutes)
                     let (excludeRoutes4, excludeRoutes6) = try Self.parseRoutes(excludeRoutes)
                     

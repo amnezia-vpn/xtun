@@ -1,11 +1,19 @@
 #include "tunnel.h"
+#include "dns.h"
 #include "killswitch.h"
 #include "net/ip.h"
 #include "proxy.h"
+#include "router.h"
 #include "tun_device.h"
 #include "util/cinterop.h"
+#include "util/result.h"
 #include "xtun.h"
+#include <cstddef>
+#include <memory>
+#include <mutex>
+#include <span>
 #include <utility>
+#include <vector>
 
 namespace libxtun
 {
@@ -75,7 +83,8 @@ namespace libxtun
     }
 
     ResultXtun<std::unique_ptr<Tunnel>> Tunnel::fromTunfactory(Tunnel::TunfactoryFunc tunfactory,
-                                                               std::vector<std::string> ifaddrs)
+                                                               std::vector<net::IpPrefix> ifaddrs,
+                                                               std::vector<net::IpAddress> defaultDns)
     {
 #ifdef WIN32
         return fail(LIBXTUN_ERR_UNSUPPORTED);
@@ -87,13 +96,8 @@ namespace libxtun
 
         auto tun = std::unique_ptr<Tunnel>(new Tunnel());
         tun->m_tunfactory = tunfactory;
-
-        // FIXME(cd-amn): too much of workarounds here. I would suggest storing values in Tun impls directly
-        for (const auto &ifAddr : ifaddrs) {
-            if (auto prefix = net::IpPrefix::parse(ifAddr)) {
-                tun->m_addrs.emplace_back(std::move(*prefix));
-            }
-        }
+        tun->m_addrs = std::move(ifaddrs);
+        tun->m_dnsDefaults = std::move(defaultDns);
         return tun;
     }
 
@@ -109,7 +113,8 @@ namespace libxtun
         const std::vector<net::IpAddress> &resolvers = profile.dnsServers.empty() ? m_dnsDefaults : profile.dnsServers;
 
         if (m_killswitch != nullptr) {
-            if (auto rc = m_killswitch->protect(profile.includeRoutes, profile.excludeRoutes, resolvers); rc != LIBXTUN_OK) {
+            if (auto rc = m_killswitch->protect(profile.includeRoutes, profile.excludeRoutes, resolvers);
+                rc != LIBXTUN_OK) {
                 if (m_router != nullptr) {
                     m_router->clearProxyRoutes();
                 }
@@ -127,7 +132,7 @@ namespace libxtun
         }
 
         if (m_tunfactory) {
-            if (int fd = m_tunfactory(profile.dnsServers, profile.includeRoutes, profile.excludeRoutes, profile.mtu); fd >= 0) {
+            if (int fd = m_tunfactory(resolvers, profile.includeRoutes, profile.excludeRoutes, profile.mtu); fd >= 0) {
                 auto dev = createTunDevice();
                 if (auto err = dev->adoptFd(fd)) {
                     return err;
@@ -349,16 +354,25 @@ int libxtun_tunnel_new_from_tunfactory(struct libxtun_tunnel *tun, libxtun_tunfa
 
     tun->handle = nullptr;
 
+    auto ifaddrs = cinterop::parseListT<net::IpPrefix>(tunfactory->if_addrs);
+    if (!ifaddrs) {
+        return ifaddrs.error();
+    }
+    auto dns = cinterop::parseListT<net::IpAddress>(tunfactory->dns);
+    if (!dns) {
+        return dns.error();
+    }
+
     auto res = Tunnel::fromTunfactory(
             [createTun = tunfactory->factory_func, priv = tunfactory->factory_priv](
-                    std::vector<net::IpAddress> &dns, std::vector<net::IpPrefix> &includeRoutes,
-                    std::vector<net::IpPrefix> &excludeRoutes, int mtu) {
+                    const std::vector<net::IpAddress> &dns, const std::vector<net::IpPrefix> &includeRoutes,
+                    const std::vector<net::IpPrefix> &excludeRoutes, int mtu) {
                 const auto cDns = cinterop::toStrList(dns);
                 const auto cIncludeRoutes = cinterop::toStrList(includeRoutes);
                 const auto cExcludeRoutes = cinterop::toStrList(excludeRoutes);
                 return createTun(cDns.data(), cIncludeRoutes.data(), cExcludeRoutes.data(), mtu, priv);
             },
-            cinterop::parseStrList(tunfactory->if_addrs));
+            ifaddrs.value(), dns.value());
     if (!res) {
         return res.error();
     }

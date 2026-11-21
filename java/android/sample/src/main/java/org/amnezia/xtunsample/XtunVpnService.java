@@ -29,6 +29,8 @@ public class XtunVpnService extends VpnService {
 
     private static final String ADDRESS4 = "10.111.0.2";
     private static final String ADDRESS6 = "fd00:111::2";
+    private static final String DNS_A = "8.8.8.8";
+    private static final String DNS_B = "8.8.4.4";
 
     private XtunProxy proxy;
     private XtunTunnel tunnel;
@@ -103,7 +105,7 @@ public class XtunVpnService extends VpnService {
                     return -1;
                 }
                 return fd.detachFd();
-            }, new String[]{ADDRESS4, ADDRESS6});
+            }, new String[]{ADDRESS4, ADDRESS6}, new String[]{ DNS_A, DNS_B });
             getSystemService(ConnectivityManager.class).requestNetwork(UPLINK, callback);
             tunnel.attachProxy(proxy);
         } catch (XtunException ex) {

@@ -34,7 +34,7 @@ enum libxtun_error {
     LIBXTUN_ERR_RESERVED_9 = -10009,
 };
 
-const char* libxtun_strerror(int error);
+const char *libxtun_strerror(int error);
 
 enum libxtun_proxy_proto {
     LIBXTUN_PROXY_PROTO_AWG = 1,
@@ -98,11 +98,8 @@ struct libxtun_tunnel_opts
     int macos_group;
 };
 
-typedef int (*libxtun_tunfactory_createtun)(const char *const *dns,
-                                            const char *const *includeRoutes,
-                                            const char *const *excludeRoutes,
-                                            int mtu,
-                                            void* priv);
+typedef int (*libxtun_tunfactory_createtun)(const char *const *dns, const char *const *includeRoutes,
+                                            const char *const *excludeRoutes, int mtu, void *priv);
 
 struct libxtun_tunfactory
 {
@@ -110,6 +107,7 @@ struct libxtun_tunfactory
     libxtun_tunfactory_createtun factory_func;
     void *factory_priv;
     const char *const *if_addrs;
+    const char *const *dns;
 };
 
 int libxtun_tunnel_new(struct libxtun_tunnel *tun, const struct libxtun_tunnel_opts *opts);

@@ -459,13 +459,13 @@ struct libxtun_jtunnel
     void *priv;
 };
 
-JNIEXPORT jlong JNICALL Java_org_amnezia_xtun_XtunTunnel_nativeInit(JNIEnv *env, jclass c, jobject tunfactoryHandle, jobjectArray jifaddrs) {
+JNIEXPORT jlong JNICALL Java_org_amnezia_xtun_XtunTunnel_nativeInit(JNIEnv *env, jclass c, jobject tunfactoryHandle, jobjectArray jifaddrs, jobjectArray jdns) {
     struct libxtun_jtunnel *jtunnel;
     struct libxtun_tunfactory factory;
     int res = -1;
-    const char **ifaddrs;
+    const char **ifaddrs, **dns;
 
-    if (jifaddrs == NULL) {
+    if (jifaddrs == NULL || jdns == NULL) {
         throwException(env, LIBXTUN_ERR_JNI_WRONG_PARAM);
         return 0;
     }
@@ -484,7 +484,8 @@ JNIEXPORT jlong JNICALL Java_org_amnezia_xtun_XtunTunnel_nativeInit(JNIEnv *env,
     }
 
     ifaddrs = toCStringList(env, jifaddrs);
-    if (ifaddrs == NULL) {
+    dns = ifaddrs != NULL ? toCStringList(env, jdns) : NULL;
+    if (ifaddrs == NULL || dns == NULL) {
         goto free_priv;
     }
 
@@ -492,6 +493,7 @@ JNIEXPORT jlong JNICALL Java_org_amnezia_xtun_XtunTunnel_nativeInit(JNIEnv *env,
     factory.factory_func = tunfactory;
     factory.factory_priv = jtunnel->priv;
     factory.if_addrs = ifaddrs;
+    factory.dns = dns;
 
     res = libxtun_tunnel_new_from_tunfactory(&jtunnel->tunnel, &factory);
     if (res) {
@@ -499,6 +501,7 @@ JNIEXPORT jlong JNICALL Java_org_amnezia_xtun_XtunTunnel_nativeInit(JNIEnv *env,
     }
 
     freeCStringList(ifaddrs);
+    freeCStringList(dns);
 
     if (res == 0) {
         return (jlong)jtunnel;
