@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>org.amnezia</groupId>
     <artifactId>xtun</artifactId>
-    <version>@PROJECT_VERSION@</version>
+    <version>@XTUN_VERSION_FULL@</version>
     <packaging>aar</packaging>
     <name>xtun</name>
     <description>Android bindings for xtun library</description>

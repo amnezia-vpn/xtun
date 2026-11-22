@@ -17,16 +17,16 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Read version from CMakeLists.txt
+      - name: Read version from cmake/version.cmake
         id: read
         run: |
-          V=$(sed -nE 's/^project\(xtun VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
+          V=$(cmake -P cmake/version.cmake)
           if [ -z "$V" ]; then
-            echo "::error::no project(xtun VERSION ...) in CMakeLists.txt"
+            echo "::error::cmake -P cmake/version.cmake printed no version"
             exit 1
           fi
           if [ "${{ github.ref_type }}" = tag ] && [ "${{ github.ref_name }}" != "$V" ]; then
-            echo "::error::tag ${{ github.ref_name }} != CMakeLists.txt version $V"
+            echo "::error::tag ${{ github.ref_name }} != cmake/version.cmake version $V"
             exit 1
           fi
           echo "value=$V" >> "$GITHUB_OUTPUT"
