@@ -40,6 +40,7 @@ add_library(${PROJECT_NAME}
     ${CMAKE_CURRENT_LIST_DIR}/src/health/dns_probe.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/health/dns_query.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/health/health_io.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/health/health_monitor.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/health/icmp_probe.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/health/scheduler.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/io/awaiting_io.cpp
