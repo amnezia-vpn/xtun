@@ -142,6 +142,24 @@ namespace libxtun::test
             };
         }
 
+        std::optional<Setup> xrayRealSetup()
+        {
+            auto cfgA = loadFromFile(XTUN_TEST_SECRETS_DIR "/xray.json");
+            if (!cfgA) {
+                return std::nullopt;
+            }
+            auto cfgB = loadFromFile(XTUN_TEST_SECRETS_DIR "/xrayB.json");
+
+            return Setup {
+                .name = "xray_real",
+                .proto = LIBXTUN_PROXY_PROTO_XRAY,
+                .clientA = std::move(cfgA).value(),
+                .clientB = std::move(cfgB),
+                .wrapper = std::make_shared<DummyWrapper>(),
+                .createServer = [](std::string log) { return nullptr; },
+            };
+        }
+
     public:
         SetupBuilder &withPort(uint16_t port)
         {
@@ -165,6 +183,9 @@ namespace libxtun::test
             res.emplace_back(awgLocalSetup());
             if (auto setup = awgRealSetup()) {
                 res.emplace_back(std::move(setup.value()));
+            }
+            if (auto setup = xrayRealSetup()) {
+                res.emplace_back(std::move(setup).value());
             }
             return res;
         }

@@ -3,6 +3,7 @@ module CXtun {
     export *
 
     link "c++"
+    link "resolv"
     link framework "CoreFoundation"
     link framework "Security"
     link framework "SystemConfiguration"
