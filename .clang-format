@@ -1,20 +1,20 @@
 BasedOnStyle: WebKit
-AccessModifierOffset: '-4'
+AccessModifierOffset: -4
 AlignAfterOpenBracket: Align
-AlignConsecutiveMacros: 'true'
-AlignTrailingComments: 'true'
-AllowAllArgumentsOnNextLine: 'true'
-AllowAllParametersOfDeclarationOnNextLine: 'true'
-AllowShortBlocksOnASingleLine: 'false'
-AllowShortCaseLabelsOnASingleLine: 'true'
-AllowShortEnumsOnASingleLine: 'false'
+AlignConsecutiveMacros: AcrossEmptyLines
+AlignTrailingComments: true
+AllowAllArgumentsOnNextLine: true
+AllowAllParametersOfDeclarationOnNextLine: true
+AllowShortBlocksOnASingleLine: Never
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortEnumsOnASingleLine: false
 AllowShortFunctionsOnASingleLine: None
-AlwaysBreakTemplateDeclarations: 'No'
+AlwaysBreakTemplateDeclarations: "No"
 BreakBeforeBinaryOperators: NonAssignment
 BreakBeforeBraces: Custom
 BraceWrapping:
     AfterClass: true
-    AfterControlStatement: false
+    AfterControlStatement: Never
     AfterEnum: false
     AfterFunction: true
     AfterNamespace: true
@@ -25,16 +25,17 @@ BraceWrapping:
     BeforeElse: false
     IndentBraces: false
 BreakConstructorInitializers: BeforeColon
-ColumnLimit: '120'
+ColumnLimit: 120
 CommentPragmas: '"^!|^:"'
-ConstructorInitializerAllOnOneLineOrOnePerLine: 'true'
-ConstructorInitializerIndentWidth: '4'
-ContinuationIndentWidth: '8'
+ConstructorInitializerAllOnOneLineOrOnePerLine: true
+ConstructorInitializerIndentWidth: 4
+ContinuationIndentWidth: 8
 IndentPPDirectives: BeforeHash
 NamespaceIndentation: All
-PenaltyExcessCharacter: '10'
+PenaltyExcessCharacter: 10
 PointerAlignment: Right
-SortIncludes: 'true'
-SpaceAfterTemplateKeyword: 'false'
+SortIncludes:
+    Enabled: true
+SpaceAfterTemplateKeyword: false
 SpaceInEmptyBraces: Never
 Standard: Auto
