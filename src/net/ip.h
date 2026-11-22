@@ -2,7 +2,7 @@
 #define NET_IP_H
 
 #include "net/checksum.h"
-#include "net/sys.h" // IWYU pragma: keep
+#include "net/sys.h" // IWYU pragma: export
 
 #include <array>
 #include <cassert>
