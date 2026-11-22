@@ -26,7 +26,7 @@
             |            |                                   v                               v
             |            |                         +-- native providers --+       +-- goxtun (go glue) --+
             |       Net Harness                    |   |- OpenVPN     TBD |       |    |- AmneziaWG      |
-            |       is optional                    |   `- IPsec/IKEv2 TBD |       |    `- Xray-core TBD  |
+            |       is optional                    |   `- IPsec/IKEv2 TBD |       |    `- Xray-core      |
             |                                      |          |           |       |          |           |
             |                                      +--------- | ----------+       +--------- | ----------+
             |                                                 |                              |
@@ -59,7 +59,38 @@ Use `BUILD_SHARED_LIBS` to compile it as the shared one.
 
 ### Language-specific bindings
 
-To be done
+This project automatically deploys artifacts and recipes to package managers  
+The following ones are officially available:
+
+### C/C++ (Conan)
+
+The project's recipe is stored on our [artifactory](artifactory.amnezia.org) in `recipes` repository  
+Use this command to utilize this repo:
+```
+conan remote add amnezia "https://artifactory.amnezia.org/artifactory/api/conan/conan"
+```
+The recipe's name contains user `@amnezia` at the end, make sure to include it in your Conanfile
+```
+self.requires("xtun/0.0.2@amnezia")
+```
+
+### Java/Android
+
+Prebuilt `.aar` artifacts are stored in Maven repository and available via this link
+```
+https://maven.amnezia.org/
+```
+You can find there further instructions of using this repository under different setups  
+There is also a [sample project](https://github.com/amnezia-vpn/xtun/tree/master/java/android/sample) that demonstrates how you can use xtun library on Android
+
+### Swift (Swift Package Manager)
+
+SPM-compatible repository for Swift projects is available via this link:
+```
+https://github.com/amnezia-vpn/xtun-swift
+```
+You can use it directly in XCode (File->Add package dependencies... and paste the link above into search box at the top)  
+There is also a [sample project](https://github.com/amnezia-vpn/xtun/tree/master/swift/Sample) that demonstrates how you can use xtun library on Apple (NetworkExtension)
 
 ## Codestyle and coding guidelines
 
