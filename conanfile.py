@@ -91,5 +91,5 @@ class Xtun(ConanFile):
         elif self.settings.os in ("Linux", "Android"):
             self.cpp_info.system_libs = ["pthread", "dl"]
         elif self.settings.os in ("Macos", "iOS"):
-            self.cpp_info.frameworks = ["CoreFoundation", "Security"]
+            self.cpp_info.frameworks = ["SystemConfiguration", "CoreFoundation", "Security"]
             self.cpp_info.system_libs = ["resolv"]
