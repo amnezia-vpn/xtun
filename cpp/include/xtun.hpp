@@ -32,7 +32,17 @@ namespace xtun
     {
     public:
         Proxy(Proxy &&) noexcept = default;
-        Proxy &operator=(Proxy &&) noexcept = default;
+        Proxy &operator=(Proxy &&other) noexcept
+        {
+            if (this != &other) {
+                m_inner.reset();
+                m_sockCb = std::move(other.m_sockCb);
+                m_logCb = std::move(other.m_logCb);
+                m_statusCb = std::move(other.m_statusCb);
+                m_inner = std::move(other.m_inner);
+            }
+            return *this;
+        }
 
         friend class Tunnel;
         friend class ProxyBuilder;
@@ -53,18 +63,18 @@ namespace xtun
             }
         };
 
-        explicit Proxy(std::unique_ptr<libxtun_proxy, InnerCloser> inner, std::unique_ptr<SockCb> sockCb,
-                       std::unique_ptr<LogCb> logCb, std::unique_ptr<StatusCb> statusCb)
-            : m_inner(std::move(inner)),
-              m_sockCb(std::move(sockCb)),
+        explicit Proxy(std::unique_ptr<SockCb> sockCb, std::unique_ptr<LogCb> logCb, std::unique_ptr<StatusCb> statusCb,
+                       std::unique_ptr<libxtun_proxy, InnerCloser> inner)
+            : m_sockCb(std::move(sockCb)),
               m_logCb(std::move(logCb)),
-              m_statusCb(std::move(statusCb))
+              m_statusCb(std::move(statusCb)),
+              m_inner(std::move(inner))
         {
         }
-        std::unique_ptr<libxtun_proxy, InnerCloser> m_inner;
         std::unique_ptr<SockCb> m_sockCb;
         std::unique_ptr<LogCb> m_logCb;
         std::unique_ptr<StatusCb> m_statusCb;
+        std::unique_ptr<libxtun_proxy, InnerCloser> m_inner;
     };
 
     class ProxyBuilder
@@ -106,7 +116,7 @@ namespace xtun
 
             std::unique_ptr<decltype(m_sockCb)> sockCb = nullptr;
             if (m_sockCb) {
-                sockCb.reset(new std::function(std::move(m_sockCb)));
+                sockCb.reset(new std::function(m_sockCb));
                 inner->onsockspawn_priv = sockCb.get();
                 inner->onsockspawn = +[](int socket, void *priv) {
                     auto *fn = reinterpret_cast<decltype(&m_sockCb)>(priv);
@@ -116,10 +126,10 @@ namespace xtun
 
             std::unique_ptr<decltype(m_logHandlerCb)> logCb = nullptr;
             if (m_logHandlerCb) {
-                logCb.reset(new std::function(std::move(m_logHandlerCb)));
+                logCb.reset(new std::function(m_logHandlerCb));
                 inner->loghandler_priv = logCb.get();
                 inner->loghandler = +[](const char *log, void *priv) {
-                    auto *fn = static_cast<decltype(&m_logHandlerCb)>(priv);
+                    auto *fn = reinterpret_cast<decltype(&m_logHandlerCb)>(priv);
                     if (log != nullptr)
                         (*fn)(std::string(log));
                 };
@@ -127,10 +137,10 @@ namespace xtun
 
             std::unique_ptr<decltype(m_statusHandlerCb)> statusCb = nullptr;
             if (m_statusHandlerCb) {
-                statusCb.reset(new std::function(std::move(m_statusHandlerCb)));
+                statusCb.reset(new std::function(m_statusHandlerCb));
                 inner->statushandler_priv = statusCb.get();
                 inner->statushandler = +[](const int status, void *priv) {
-                    auto *fn = static_cast<decltype(&m_statusHandlerCb)>(priv);
+                    auto *fn = reinterpret_cast<decltype(&m_statusHandlerCb)>(priv);
                     (*fn)(status);
                 };
             }
@@ -147,7 +157,7 @@ namespace xtun
                 return res;
             }
 
-            return Proxy { std::move(inner), std::move(sockCb), std::move(logCb), std::move(statusCb) };
+            return Proxy { std::move(sockCb), std::move(logCb), std::move(statusCb), std::move(inner) };
         }
 
     private:
