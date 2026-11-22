@@ -1,5 +1,6 @@
 #include "proxy.h"
 #include "proto/awg.h"
+#include "proto/xray.h"
 #include "util/cinterop.h"
 #include "xtun.h"
 
@@ -36,15 +37,15 @@ namespace libxtun
         }
 
         std::erase_if(includeRoutes, [&](const net::IpPrefix &included) {
-            return std::ranges::any_of(m_excludeRoutes, [&](const net::IpPrefix &listed) {
-                return listed.network().contains(included);
-            });
+            return std::ranges::any_of(m_excludeRoutes,
+                                       [&](const net::IpPrefix &listed) { return listed.network().contains(included); });
         });
 
         std::vector<net::IpPrefix> excludeRoutes;
         for (const net::IpPrefix &listed : m_excludeRoutes) {
             const net::IpPrefix prefix = listed.network();
-            if (std::ranges::any_of(includeRoutes, [&](const net::IpPrefix &included) { return included.contains(prefix); })) {
+            if (std::ranges::any_of(includeRoutes,
+                                    [&](const net::IpPrefix &included) { return included.contains(prefix); })) {
                 addOnce(excludeRoutes, prefix);
             }
         }
@@ -55,8 +56,7 @@ namespace libxtun
     }
 
     ResultXtun<std::unique_ptr<Proxy>> Proxy::create(libxtun_proxy_proto proto, const char *conf,
-                                                     ClientCallbacks callbacks,
-                                                     const libxtun_proxy_opts *opts)
+                                                     ClientCallbacks callbacks, const libxtun_proxy_opts *opts)
     {
         if (opts != nullptr && opts->size < sizeof(*opts)) {
             return fail(LIBXTUN_ERR_INVALID_ARGS);
@@ -73,8 +73,7 @@ namespace libxtun
         ResultXtun<std::unique_ptr<Proxy>> proxy = fail(LIBXTUN_ERR_INVALID_ARGS);
         switch (proto) {
         case LIBXTUN_PROXY_PROTO_AWG: proxy = proto::Awg::create(conf, callbacks); break;
-        case LIBXTUN_PROXY_PROTO_XRAY: proxy = fail(LIBXTUN_ERR_UNSUPPORTED); break;
-        default: break;
+        case LIBXTUN_PROXY_PROTO_XRAY: proxy = proto::Xray::create(conf, callbacks); break;
         }
         if (!proxy) {
             return proxy;
