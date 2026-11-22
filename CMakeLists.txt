@@ -33,7 +33,8 @@ if(USE_CONAN_PROVIDER)
         CACHE STRING "" FORCE)
 endif()
 
-project(xtun VERSION 0.0.1)
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/version.cmake)
+project(xtun VERSION ${XTUN_VERSION_BASE})
 
 add_library(${PROJECT_NAME}
     ${CMAKE_CURRENT_LIST_DIR}/src/error.cpp

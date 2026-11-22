@@ -1,10 +1,10 @@
 import os
-import re
+import subprocess
 
 from conan import ConanFile
 from conan.errors import ConanException
 from conan.tools.scm import Git
-from conan.tools.files import load, update_conandata
+from conan.tools.files import update_conandata
 from conan.tools.cmake import CMake, CMakeToolchain, cmake_layout
 from conan.tools.build import check_min_cppstd
 
@@ -25,11 +25,11 @@ class Xtun(ConanFile):
     def set_version(self):
         if self.version:
             return
-        cmake = load(self, os.path.join(self.recipe_folder, "CMakeLists.txt"))
-        match = re.search(r"project\(\s*xtun\s+VERSION\s+([0-9.]+)", cmake)
-        if not match:
-            raise ConanException("Cannot find project(xtun VERSION ...) in CMakeLists.txt")
-        self.version = match.group(1)
+        script = os.path.join(self.recipe_folder, "cmake", "version.cmake")
+        version = subprocess.check_output(["cmake", "-P", script], text=True).strip()
+        if not version:
+            raise ConanException(f"'cmake -P {script}' printed no version")
+        self.version = version
 
     def requirements(self):
         if self.options.bundle_wintun and self.settings.os == "Windows":
