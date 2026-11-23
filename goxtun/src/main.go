@@ -53,15 +53,18 @@ import "C"
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"runtime/cgo"
+	"slices"
 	"strings"
 	"unsafe"
 
 	"github.com/amnezia-vpn/amneziawg-go/v3/tun"
 	"github.com/amnezia-vpn/libxtun/goxtun/awg"
 	"github.com/amnezia-vpn/libxtun/goxtun/xray"
+	"github.com/xtls/xray-core/infra/conf"
 	confserial "github.com/xtls/xray-core/infra/conf/serial"
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/header"
@@ -179,6 +182,27 @@ func goxtun_awg_setconf(ctx unsafe.Pointer, uapi *C.char) *C.char {
 	return nil
 }
 
+func takeXTunInbound(cfg *conf.Config) (*conf.InboundDetourConfig, error) {
+	var inbound conf.InboundDetourConfig
+	foundIdx := -1
+	for idx, inb := range cfg.InboundConfigs {
+		if strings.ToLower(inb.Protocol) == "xtun" {
+			if foundIdx >= 0 {
+				return nil, errors.New("only 1 xtun inbound supported")
+			}
+			inbound = inb
+			foundIdx = idx
+		}
+	}
+	if foundIdx == -1 {
+		return nil, nil
+	}
+
+	cfg.InboundConfigs = slices.Delete(cfg.InboundConfigs, foundIdx, foundIdx+1)
+
+	return &inbound, nil
+}
+
 const (
 	outboundQueueSize             = 1024
 	initialMTU        uint32      = 1500
@@ -220,9 +244,28 @@ func goxtun_xray_new(
 	}
 
 	confStr := C.GoString(configJSON)
-	cfg, err := confserial.LoadJSONConfig(strings.NewReader(confStr))
+	decodedCfg, err := confserial.DecodeJSONConfig(strings.NewReader(confStr))
 	if err != nil {
-		callbacks.Error("xray: parse config: " + err.Error())
+		callbacks.Error("xray: decode config: " + err.Error())
+		return nil
+	}
+
+	virtualInbound, err := takeXTunInbound(decodedCfg)
+	if err != nil {
+		callbacks.Error("xray: xtun inbound decode: " + err.Error())
+		return nil
+	}
+
+	if virtualInbound == nil && len(decodedCfg.InboundConfigs) == 1 {
+		inbound := &decodedCfg.InboundConfigs[0]
+		if strings.ToLower(inbound.Protocol) == "socks" && inbound.Tag != "xtun" {
+			virtualInbound = inbound
+		}
+	}
+
+	cfg, err := decodedCfg.Build()
+	if err != nil {
+		callbacks.Error("xray: build config: " + err.Error())
 		return nil
 	}
 
@@ -271,7 +314,7 @@ func goxtun_xray_new(
 		return nil
 	}
 
-	instance, err := xray.NewInstance(context.Background(), gStack, endpoint, nicID, callbacks, cfg)
+	instance, err := xray.NewInstance(context.Background(), gStack, endpoint, nicID, callbacks, cfg, virtualInbound)
 	if err != nil {
 		callbacks.Error("xray: new instance: " + err.Error())
 		return nil
