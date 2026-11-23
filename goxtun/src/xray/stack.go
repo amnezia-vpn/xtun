@@ -107,7 +107,7 @@ func (i *Instance) handleTCP(ctx context.Context, request *tcp.ForwarderRequest)
 
 	link := &transport.Link{
 		Reader: buf.NewReader(conn),
-		Writer: buf.NewWriter(NewDownlinkWriter(conn, outbound, &i.downlinkBytes)),
+		Writer: buf.NewWriter(NewDownlinkWriter(conn, outbound, &i.downlinkBytes, !i.hasHealthOutbound)),
 	}
 
 	if err := i.dispatcher.DispatchLink(
@@ -184,19 +184,21 @@ type downlinkWriter struct {
 	conn             io.Writer
 	outbound         *session.Outbound
 	downLinkBytesPtr *atomic.Uint64
+	countAll         bool
 }
 
-func NewDownlinkWriter(conn io.Writer, outbound *session.Outbound, downLinkBytesPtr *atomic.Uint64) *downlinkWriter {
+func NewDownlinkWriter(conn io.Writer, outbound *session.Outbound, downLinkBytesPtr *atomic.Uint64, countAll bool) *downlinkWriter {
 	return &downlinkWriter{
 		conn:             conn,
 		outbound:         outbound,
 		downLinkBytesPtr: downLinkBytesPtr,
+		countAll:         countAll,
 	}
 }
 
 func (d *downlinkWriter) Write(p []byte) (n int, err error) {
 	n, err = d.conn.Write(p)
-	if n > 0 && d.outbound.Tag == "xtun" {
+	if n > 0 && (d.countAll || d.outbound.Tag == "xtun") {
 		d.downLinkBytesPtr.Add(uint64(n))
 	}
 	return n, err

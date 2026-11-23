@@ -148,7 +148,7 @@ func (i *Instance) handleUDP(ctx context.Context, conn *gonet.UDPConn, id stack.
 
 	link := &transport.Link{
 		Reader: buf.NewPacketReader(activityConn),
-		Writer: buf.NewWriter(NewDownlinkWriter(activityConn, outbound, &i.downlinkBytes)),
+		Writer: buf.NewWriter(NewDownlinkWriter(activityConn, outbound, &i.downlinkBytes, !i.hasHealthOutbound)),
 	}
 
 	if err := i.dispatcher.DispatchLink(flowCtx, destination, link); err != nil && ctx.Err() == nil {

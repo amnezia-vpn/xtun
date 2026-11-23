@@ -16,6 +16,7 @@ import (
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/policy"
 	"github.com/xtls/xray-core/features/routing"
+	"github.com/xtls/xray-core/infra/conf"
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/link/channel"
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
@@ -70,7 +71,8 @@ type Instance struct {
 	inboundTag string
 	sniffing   session.SniffingRequest
 
-	downlinkBytes atomic.Uint64
+	downlinkBytes     atomic.Uint64
+	hasHealthOutbound bool
 }
 
 func NewInstance(
@@ -80,6 +82,7 @@ func NewInstance(
 	nicID tcpip.NICID,
 	callbacks Callbacks,
 	config *core.Config,
+	virtualInbound *conf.InboundDetourConfig,
 ) (*Instance, error) {
 	registerSocketHook()
 
@@ -124,29 +127,45 @@ func NewInstance(
 	}
 
 	var sniffingConfig *proxyman.SniffingConfig
-
-	for idx, inbound := range preparedConfig.Inbound {
-		if inbound.GetTag() != "xtun" {
-			continue
+	if virtualInbound != nil {
+		i.inboundTag = virtualInbound.Tag
+		if virtualInbound.SniffingConfig != nil {
+			sniffingConfig, err = virtualInbound.SniffingConfig.Build()
+			if err != nil {
+				return nil, fmt.Errorf("xray: xtun inbound sniff build error: %w", err)
+			}
 		}
-		if inbound.ReceiverSettings == nil {
-			return nil, errors.New("xray: inbound receiver settings are required")
-		}
+	} else {
+		for idx, inbound := range preparedConfig.Inbound {
+			if inbound.GetTag() != "xtun" {
+				continue
+			}
+			if inbound.ReceiverSettings == nil {
+				return nil, errors.New("xray: inbound receiver settings are required")
+			}
 
-		settings, err := inbound.ReceiverSettings.GetInstance()
-		if err != nil {
-			return nil, fmt.Errorf("xray: inbound receiver settings: %w", err)
-		}
+			settings, err := inbound.ReceiverSettings.GetInstance()
+			if err != nil {
+				return nil, fmt.Errorf("xray: inbound receiver settings: %w", err)
+			}
 
-		receiver, ok := settings.(*proxyman.ReceiverConfig)
-		if !ok || receiver == nil {
-			return nil, fmt.Errorf("xray: unexpected receiver settings %T", settings)
-		}
+			receiver, ok := settings.(*proxyman.ReceiverConfig)
+			if !ok || receiver == nil {
+				return nil, fmt.Errorf("xray: unexpected receiver settings %T", settings)
+			}
 
-		i.inboundTag = inbound.Tag
-		sniffingConfig = receiver.SniffingSettings
-		preparedConfig.Inbound = slices.Delete(preparedConfig.Inbound, idx, idx+1)
-		break
+			i.inboundTag = inbound.Tag
+			sniffingConfig = receiver.SniffingSettings
+			preparedConfig.Inbound = slices.Delete(preparedConfig.Inbound, idx, idx+1)
+			break
+		}
+	}
+
+	for _, outbound := range preparedConfig.Outbound {
+		if outbound.GetTag() == "xtun" {
+			i.hasHealthOutbound = true
+			break
+		}
 	}
 
 	i.engine, err = core.NewWithContext(ctx, preparedConfig)
