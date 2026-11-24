@@ -45,6 +45,17 @@ TEST(ContractTunnel, NewRejectsExcludedAppsItCannotUse)
     libxtun_tunnel_free(&tun);
 }
 
+TEST(ContractTunnel, NewRejectsLargerSize)
+{
+    libxtun::test::TunOpts opts;
+    libxtun_tunnel_opts larger = opts.get();
+    larger.size = sizeof(libxtun_tunnel_opts) + 1;
+
+    libxtun_tunnel tun {};
+    EXPECT_EQ(libxtun_tunnel_new(&tun, &larger), LIBXTUN_ERR_UNSUPPORTED);
+    libxtun_tunnel_free(&tun);
+}
+
 class ContractTunnelFd : public testing::TestWithParam<int>
 {
 };
@@ -58,6 +69,19 @@ TEST(ContractTunnel, RejectsNullTunfactory)
         .factory_priv = nullptr,
     };
     EXPECT_EQ(libxtun_tunnel_new_from_tunfactory(&tun, &factory), LIBXTUN_ERR_INVALID_ARGS);
+}
+
+TEST(ContractTunnel, TunfactoryRejectsLargerSize)
+{
+    const char *unparsable[] = { "x", nullptr };
+
+    libxtun_tunnel tun {};
+    libxtun_tunfactory factory {
+        .size = sizeof(libxtun_tunfactory) + 1,
+        .factory_func = [](const char *const *, const char *const *, const char *const *, int, void *) { return -1; },
+        .if_addrs = unparsable,
+    };
+    EXPECT_EQ(libxtun_tunnel_new_from_tunfactory(&tun, &factory), LIBXTUN_ERR_UNSUPPORTED);
 }
 
 TEST(ContractTunnel, FreeIgnoresNull)
@@ -179,6 +203,21 @@ TEST_P(ContractProxySetup, NewRejectsAllRoutesExcluded)
     libxtun_proxy_opts excludeAll { .size = sizeof(libxtun_proxy_opts), .excludeRoutes = all };
     int res = libxtun_proxy_new(&proxy, p.proto, p.clientA.c_str(), &excludeAll);
     EXPECT_EQ(res, LIBXTUN_ERR_INVALID_ARGS);
+    libxtun_proxy_free(&proxy);
+}
+
+TEST_P(ContractProxySetup, NewRejectsLargerSize)
+{
+    const auto &p = GetParam();
+
+    libxtun::test::Logger log;
+
+    libxtun_proxy proxy {};
+    log.wrapProxy(proxy);
+
+    libxtun_proxy_opts larger { .size = sizeof(libxtun_proxy_opts) + 1 };
+    int res = libxtun_proxy_new(&proxy, p.proto, p.clientA.c_str(), &larger);
+    EXPECT_EQ(res, LIBXTUN_ERR_UNSUPPORTED);
     libxtun_proxy_free(&proxy);
 }
 

@@ -3,6 +3,7 @@
 
 #include "util/result.h"
 #include "xtun.h"
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -22,6 +23,16 @@ namespace libxtun::cinterop
             out.emplace_back(std::move(*res));
             ++list;
         }
+        return out;
+    }
+
+    template<typename T> ResultXtun<T> inline readSized(const T &opts)
+    {
+        if (opts.size > sizeof(T)) {
+            return fail(LIBXTUN_ERR_UNSUPPORTED);
+        }
+        T out {};
+        std::memcpy(&out, &opts, opts.size);
         return out;
     }
 

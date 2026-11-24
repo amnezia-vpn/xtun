@@ -391,18 +391,17 @@ int libxtun_tunnel_new(struct libxtun_tunnel *tun, const struct libxtun_tunnel_o
 
     tun->handle = nullptr;
 
-    // TODO(cd-amn): handle all opts up to the specified size
-    // If a newer xtun .dll/.so is used in already compiled application - it
-    // should not break anything, just handle all available opts
-    if (opts->size < sizeof(*opts)) {
+    auto copied = libxtun::cinterop::readSized(*opts);
+    if (!copied) {
+        return copied.error();
+    }
+    const libxtun_tunnel_opts &tunOpts = copied.value();
+
+    if (tunOpts.killswitch_mode < LIBXTUN_KILLSWITCH_MODE_DISABLED || tunOpts.killswitch_mode > LIBXTUN_KILLSWITCH_MODE_LAST) {
         return LIBXTUN_ERR_INVALID_ARGS;
     }
 
-    if (opts->killswitch_mode < LIBXTUN_KILLSWITCH_MODE_DISABLED || opts->killswitch_mode > LIBXTUN_KILLSWITCH_MODE_LAST) {
-        return LIBXTUN_ERR_INVALID_ARGS;
-    }
-
-    auto res = libxtun::Tunnel::fromOpts(*opts);
+    auto res = libxtun::Tunnel::fromOpts(tunOpts);
     if (!res) {
         return res.error();
     }
@@ -415,23 +414,32 @@ int libxtun_tunnel_new_from_tunfactory(struct libxtun_tunnel *tun, libxtun_tunfa
 {
     using namespace libxtun;
 
-    if (!tun || !tunfactory || !tunfactory->factory_func) {
+    if (!tun || !tunfactory) {
+        return LIBXTUN_ERR_INVALID_ARGS;
+    }
+
+    auto copied = cinterop::readSized(*tunfactory);
+    if (!copied) {
+        return copied.error();
+    }
+    const libxtun_tunfactory &factory = copied.value();
+    if (!factory.factory_func) {
         return LIBXTUN_ERR_INVALID_ARGS;
     }
 
     tun->handle = nullptr;
 
-    auto ifaddrs = cinterop::parseListT<net::IpPrefix>(tunfactory->if_addrs);
+    auto ifaddrs = cinterop::parseListT<net::IpPrefix>(factory.if_addrs);
     if (!ifaddrs) {
         return ifaddrs.error();
     }
-    auto dns = cinterop::parseListT<net::IpAddress>(tunfactory->dns);
+    auto dns = cinterop::parseListT<net::IpAddress>(factory.dns);
     if (!dns) {
         return dns.error();
     }
 
     auto res = Tunnel::fromTunfactory(
-            [createTun = tunfactory->factory_func, priv = tunfactory->factory_priv](
+            [createTun = factory.factory_func, priv = factory.factory_priv](
                     const std::vector<net::IpAddress> &dns, const std::vector<net::IpPrefix> &includeRoutes,
                     const std::vector<net::IpPrefix> &excludeRoutes, int mtu) {
                 const auto cDns = cinterop::toStrList(dns);
