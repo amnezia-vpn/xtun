@@ -280,12 +280,16 @@ namespace libxtun
                 {
                     using slot = reflect::slot_t<M>;
                     if constexpr (reflect::is_vector_v<slot>) {
-                        for (auto range : str | std::views::split(',')) {
-                            auto part = trim(std::string_view(range.begin(), range.end()));
+                        for (std::size_t pos = 0; !str.empty();) {
+                            auto end = str.find(',', pos);
+                            auto part = trim(str.substr(pos, end == std::string_view::npos ? end : end - pos));
                             auto res = reflect::field_t<reflect::slot_t<M>>::fromConf(part);
                             if (!res)
                                 return res.error();
                             (owner.*M).emplace_back(std::move(res).value());
+                            if (end == std::string_view::npos)
+                                break;
+                            pos = end + 1;
                         }
                         return std::errc {};
                     } else {
