@@ -35,7 +35,7 @@ class Xtun(ConanFile):
         if self.options.bundle_wintun and self.settings.os == "Windows":
             self.requires("wintun/0.14.1@amnezia")
         if self.settings.os == "Linux":
-            self.requires("libsystemd/262.2")
+            self.requires("libsystemd/262.2", transitive_libs=True)
     
     def build_requirements(self):
         self.tool_requires("go/[>=1.27]@amnezia")
@@ -90,6 +90,7 @@ class Xtun(ConanFile):
             self.cpp_info.defines = ["WIN32_LEAN_AND_MEAN", "NOMINMAX"]
         elif self.settings.os in ("Linux", "Android"):
             self.cpp_info.system_libs = ["pthread", "dl"]
+            self.cpp_info.requires = ["libsystemd::libsystemd"]
         elif self.settings.os in ("Macos", "iOS"):
             self.cpp_info.frameworks = ["SystemConfiguration", "CoreFoundation", "Security"]
             self.cpp_info.system_libs = ["resolv"]
