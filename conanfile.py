@@ -90,7 +90,8 @@ class Xtun(ConanFile):
             self.cpp_info.defines = ["WIN32_LEAN_AND_MEAN", "NOMINMAX"]
         elif self.settings.os in ("Linux", "Android"):
             self.cpp_info.system_libs = ["pthread", "dl"]
-            self.cpp_info.requires = ["libsystemd::libsystemd"]
+            if self.settings.os == "Linux":
+                self.cpp_info.requires = ["libsystemd::libsystemd"]
         elif self.settings.os in ("Macos", "iOS"):
             self.cpp_info.frameworks = ["SystemConfiguration", "CoreFoundation", "Security"]
             self.cpp_info.system_libs = ["resolv"]
