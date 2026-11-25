@@ -1,6 +1,7 @@
 #include <TargetConditionals.h>
 
 #include "tun_device_macos.h"
+#include "util/scoped_fd.h"
 #include "xtun.h"
 
 #include <cerrno>
@@ -22,6 +23,14 @@
 #include <sys/sockio.h>
 #include <sys/uio.h>
 #include <unistd.h>
+
+#if !TARGET_OS_OSX
+namespace
+{
+    constexpr int SYSPROTO_CONTROL = 2;
+    constexpr int UTUN_OPT_IFNAME = 2;
+}
+#endif
 
 namespace libxtun
 {
@@ -76,16 +85,30 @@ namespace libxtun
     libxtun_error MacosTunDevice::adoptFd(int fd)
     {
         m_tunFd = fd;
-        m_up = true;
 
-#if TARGET_OS_OSX
         char ifname[IFNAMSIZ];
         socklen_t ifnameLen = sizeof(ifname);
         if (::getsockopt(fd, SYSPROTO_CONTROL, UTUN_OPT_IFNAME, ifname, &ifnameLen) < 0) {
             return LIBXTUN_ERR_DEVICE_CREATE;
         }
         m_name = ifname;
-#endif
+
+        ScopedFd sock(::socket(AF_INET, SOCK_DGRAM, 0));
+        if (sock.get() < 0) {
+            return LIBXTUN_ERR_SYSTEM;
+        }
+        ::fcntl(sock.get(), F_SETFD, FD_CLOEXEC);
+
+        struct ifreq ifr;
+        std::memset(&ifr, 0, sizeof(ifr));
+        std::strncpy(ifr.ifr_name, ifname, IFNAMSIZ - 1);
+        if (::ioctl(sock.get(), SIOCGIFFLAGS, &ifr) < 0) {
+            return LIBXTUN_ERR_SYSTEM;
+        }
+        if ((ifr.ifr_flags & IFF_UP) == 0) {
+            return LIBXTUN_ERR_DEVICE_CREATE;
+        }
+        m_up = true;
 
         return finishOpen();
     }

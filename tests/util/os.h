@@ -169,6 +169,30 @@ namespace libxtun::test
 #endif
     }
 
+    static bool setLinkUp(const std::string &name, bool up = true)
+    {
+#if defined(__linux__) || defined(__APPLE__)
+        ScopedFd sock(::socket(AF_INET, SOCK_DGRAM, 0));
+        if (!sock) {
+            return false;
+        }
+        struct ifreq ifr;
+        std::memset(&ifr, 0, sizeof(ifr));
+        std::strncpy(ifr.ifr_name, name.c_str(), IFNAMSIZ - 1);
+        if (::ioctl(sock.get(), SIOCGIFFLAGS, &ifr) < 0) {
+            return false;
+        }
+        if (up) {
+            ifr.ifr_flags |= IFF_UP;
+        } else {
+            ifr.ifr_flags &= ~IFF_UP;
+        }
+        return ::ioctl(sock.get(), SIOCSIFFLAGS, &ifr) == 0;
+#else
+        return false;
+#endif
+    }
+
     // Independent of libxtun: ask the kernel directly whether the interface exists.
     static std::optional<bool> ifaceExists(const std::string name)
     {
