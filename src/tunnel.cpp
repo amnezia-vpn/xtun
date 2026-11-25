@@ -381,17 +381,6 @@ namespace libxtun
     {
         onUplinkChanged();
     }
-
-    void Tunnel::onAddressChanged()
-    {
-        // Only the driver needs new addresses. The proxy is not restarted: its socket is bound
-        // to an interface, not to an address. Windows reports many address changes,
-        // for example while the TUN addresses become usable right after attach,
-        // and each restart would drop the handshake that is in progress.
-        if (m_splitTunnel) {
-            m_splitTunnel->updateAddresses();
-        }
-    }
 }
 
 int libxtun_tunnel_new(struct libxtun_tunnel *tun, const struct libxtun_tunnel_opts *opts)

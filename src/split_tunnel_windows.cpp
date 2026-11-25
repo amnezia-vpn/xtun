@@ -192,11 +192,19 @@ namespace libxtun
         if (const auto error = component->prepareDriverSublayers(); error != LIBXTUN_OK) {
             return fail(error);
         }
+        if (::NotifyUnicastIpAddressChange(AF_UNSPEC, &WindowsSplitTunnel::onAddressChangeCb, component.get(), FALSE,
+                                           &component->m_addressNotify)
+            != NO_ERROR) {
+            return fail(LIBXTUN_ERR_SYSTEM);
+        }
         return component;
     }
 
     WindowsSplitTunnel::~WindowsSplitTunnel()
     {
+        if (m_addressNotify != nullptr) {
+            ::CancelMibChangeNotify2(m_addressNotify);
+        }
         std::lock_guard<std::mutex> lock(m_mutex);
         if (m_device != INVALID_HANDLE_VALUE) {
             if (m_initialized) {
@@ -405,6 +413,11 @@ namespace libxtun
         m_addresses = addresses.value();
         m_addressesValid = true;
         return LIBXTUN_OK;
+    }
+
+    void CALLBACK WindowsSplitTunnel::onAddressChangeCb(void *ctx, MIB_UNICASTIPADDRESS_ROW *, MIB_NOTIFICATION_TYPE)
+    {
+        static_cast<WindowsSplitTunnel *>(ctx)->updateAddresses();
     }
 
     libxtun_error WindowsSplitTunnel::setTrafficBlocked(bool blocked)
