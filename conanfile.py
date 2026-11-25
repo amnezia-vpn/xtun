@@ -33,7 +33,9 @@ class Xtun(ConanFile):
 
     def requirements(self):
         if self.options.bundle_wintun and self.settings.os == "Windows":
-            self.requires("wintun/0.14.1@amnezia")
+            # revision is used here to clarify the latest version to use; that's because of frequent recipes update
+            # FIXME: remove this one on next upgrade
+            self.requires("wintun/0.14.1@amnezia#4671cbda56d3d2c1bea585faed62eeac", libs=False, run=True)
         if self.settings.os == "Linux":
             self.requires("libsystemd/262.2", transitive_libs=True)
     
@@ -84,14 +86,35 @@ class Xtun(ConanFile):
 
     def package_info(self):
         self.cpp_info.set_property("cmake_target_name", "amnezia::xtun")
-        self.cpp_info.libs = ["xtun", "libgoxtun"] if self.settings.os == "Windows" else ["xtun", "goxtun"]
-        if self.settings.os == "Windows":
-            self.cpp_info.system_libs = ["iphlpapi", "ws2_32", "fwpuclnt"]
-            self.cpp_info.defines = ["WIN32_LEAN_AND_MEAN", "NOMINMAX"]
-        elif self.settings.os in ("Linux", "Android"):
-            self.cpp_info.system_libs = ["pthread", "dl"]
-            if self.settings.os == "Linux":
-                self.cpp_info.requires = ["libsystemd::libsystemd"]
+
+        goxtun = self.cpp_info.components["goxtun"]
+        goxtun.set_property("cmake_target_name", "amnezia::goxtun")
+        goxtun.libs = ["libgoxtun"] if self.settings.os == "Windows" else ["goxtun"]
+        goxtun.includedirs = []
+        if self.settings.os == "Linux":
+            goxtun.system_libs = ["pthread", "dl"]
         elif self.settings.os in ("Macos", "iOS"):
-            self.cpp_info.frameworks = ["SystemConfiguration", "CoreFoundation", "Security"]
-            self.cpp_info.system_libs = ["resolv"]
+            goxtun.frameworks = ["CoreFoundation", "Security"]
+            goxtun.system_libs = ["resolv"]
+
+        core = self.cpp_info.components["core"]
+        core.set_property("cmake_target_name", "amnezia::xtun_core")
+        core.libs = ["xtun"]
+        if self.options.bundle_goxtun:
+            core.requires.append("goxtun")
+        if self.settings.os == "Windows":
+            core.type = "shared-library" if self.options.shared else "static-library"
+            if self.options.shared:
+                core.location = "bin/xtun.dll"
+                core.link_location = "lib/xtun.lib"
+            else:
+                core.location = "lib/xtun.lib"
+            core.system_libs = ["iphlpapi", "ws2_32", "fwpuclnt"]
+            if self.options.bundle_wintun:
+                core.requires.append("wintun::wintun")
+        elif self.settings.os in ("Linux", "Android"):
+            core.system_libs = ["pthread"]
+            if self.settings.os == "Linux":
+                core.requires.append("libsystemd::libsystemd")
+        elif self.settings.os in ("Macos", "iOS"):
+            core.frameworks = ["SystemConfiguration", "CoreFoundation"]
