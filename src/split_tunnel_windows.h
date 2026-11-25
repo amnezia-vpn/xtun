@@ -7,6 +7,11 @@
 #include "util/result.h"
 
 #include <windows.h>
+#include <winsock2.h>
+#include <ws2ipdef.h>
+
+#include <iphlpapi.h>
+#include <netioapi.h>
 
 #include <array>
 #include <cstddef>
@@ -78,9 +83,12 @@ namespace libxtun
         // The caller holds m_mutex.
         libxtun_error control(DWORD code, std::span<const std::byte> input, std::span<std::byte> output);
 
+        static void CALLBACK onAddressChangeCb(void *ctx, MIB_UNICASTIPADDRESS_ROW *row, MIB_NOTIFICATION_TYPE type);
+
         std::vector<std::wstring> m_paths;
         HANDLE m_driverOwnerMutex = nullptr;
         HANDLE m_device = INVALID_HANDLE_VALUE;
+        HANDLE m_addressNotify = nullptr;
         std::array<std::unique_ptr<wfp::WfpEngine>, 2> m_sharedWfpSessions;
         std::unique_ptr<wfp::WfpEngine> m_guardWfpSession;
         std::mutex m_mutex;

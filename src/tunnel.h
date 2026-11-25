@@ -64,7 +64,6 @@ namespace libxtun
         void onLinkStateChanged(bool up) override;
         void onMtuChanged(int) override;
         void onRouteChanged() override;
-        void onAddressChanged() override;
 
         void onUplinkChanged() override;
 
