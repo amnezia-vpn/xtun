@@ -5,10 +5,8 @@
 
 #include <cerrno>
 #include <cstdint>
-#include <cstdlib>
 #include <cstring>
 
-#include <arpa/inet.h>
 #include <net/if.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -21,32 +19,6 @@
 
 namespace
 {
-    bool splitCidr(const std::string &cidr, std::string &ip, int &prefix)
-    {
-        auto slash = cidr.find('/');
-        if (slash == std::string::npos) {
-            ip = cidr;
-            prefix = cidr.find(':') != std::string::npos ? 128 : 32;
-        } else {
-            ip = cidr.substr(0, slash);
-            prefix = std::atoi(cidr.c_str() + slash + 1);
-        }
-        return !ip.empty();
-    }
-
-    int parseIp(const std::string &ip, int &family, unsigned char out[16])
-    {
-        if (inet_pton(AF_INET, ip.c_str(), out) == 1) {
-            family = AF_INET;
-            return 4;
-        }
-        if (inet_pton(AF_INET6, ip.c_str(), out) == 1) {
-            family = AF_INET6;
-            return 16;
-        }
-        return -1;
-    }
-
     void addAttr(struct nlmsghdr *nlh, int type, const void *data, int len)
     {
         struct rtattr *rta =
@@ -151,19 +123,9 @@ namespace libxtun
         return rc < 0 ? LIBXTUN_ERR_SYSTEM : LIBXTUN_OK;
     }
 
-    libxtun_error LinuxRouter::updateAddress(const std::string &cidr, bool add)
+    libxtun_error LinuxRouter::updateAddress(const net::IpPrefix &prefix, bool add)
     {
-        std::string ip;
-        int prefix;
-        if (!splitCidr(cidr, ip, prefix)) {
-            return LIBXTUN_ERR_INVALID_ARGS;
-        }
-        int family;
-        unsigned char raw[16];
-        int len = parseIp(ip, family, raw);
-        if (len < 0) {
-            return LIBXTUN_ERR_INVALID_ARGS;
-        }
+        const auto octets = prefix.address().octets();
 
         struct
         {
@@ -178,13 +140,13 @@ namespace libxtun
         if (add) {
             req.nlh.nlmsg_flags |= NLM_F_CREATE | NLM_F_REPLACE;
         }
-        req.ifa.ifa_family = family;
-        req.ifa.ifa_prefixlen = static_cast<uint8_t>(prefix);
+        req.ifa.ifa_family = static_cast<uint8_t>(prefix.address().family());
+        req.ifa.ifa_prefixlen = static_cast<uint8_t>(prefix.bits());
         req.ifa.ifa_scope = RT_SCOPE_UNIVERSE;
         req.ifa.ifa_index = m_ifindex;
 
-        addAttr(&req.nlh, IFA_LOCAL, raw, len);
-        addAttr(&req.nlh, IFA_ADDRESS, raw, len);
+        addAttr(&req.nlh, IFA_LOCAL, octets.data(), static_cast<int>(octets.size()));
+        addAttr(&req.nlh, IFA_ADDRESS, octets.data(), static_cast<int>(octets.size()));
         
         if (int rc = nlSend(&req.nlh); rc != 0) {
             return LIBXTUN_ERR_SYSTEM;
@@ -302,7 +264,7 @@ namespace libxtun
     }
 
     libxtun_error LinuxRouter::configureInterface(const std::string &ifname, int ifindex,
-                                                  const std::vector<std::string> &addresses, int mtu)
+                                                  const std::vector<net::IpPrefix> &addresses, int mtu)
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
         m_ifname = ifname;

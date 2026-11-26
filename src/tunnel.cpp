@@ -45,6 +45,10 @@ namespace libxtun
         if (!dnsExceptions) {
             return fail(dnsExceptions.error());
         }
+        auto ifAddrs = cinterop::parseListT<net::IpPrefix>(opts.if_addrs);
+        if (!ifAddrs) {
+            return fail(ifAddrs.error());
+        }
         auto appSplitTunnel = AppSplitTunnel::create(opts.excluded_apps, opts.split_service_name);
         if (!appSplitTunnel) {
             return fail(appSplitTunnel.error());
@@ -52,6 +56,7 @@ namespace libxtun
 
         auto tun = std::unique_ptr<Tunnel>(new Tunnel());
         tun->m_dnsDefaults = std::move(dnsDefaults).value();
+        tun->m_addrs = std::move(ifAddrs).value();
         tun->m_device = createTunDevice();
         tun->m_router = Router::create(*tun);
         tun->m_splitTunnel = std::move(appSplitTunnel).value();
@@ -69,8 +74,7 @@ namespace libxtun
 
         dev->startMonitor(*tun);
 
-        const auto ifAddrs = cinterop::parseStrList(opts.if_addrs);
-        if (auto rc = router->configureInterface(dev->name(), dev->ifIndex(), ifAddrs, opts.mtu); rc != LIBXTUN_OK) {
+        if (auto rc = router->configureInterface(dev->name(), dev->ifIndex(), tun->m_addrs, opts.mtu); rc != LIBXTUN_OK) {
             return fail(rc);
         }
 
@@ -79,13 +83,6 @@ namespace libxtun
         }
 
         tun->m_dns = Dns::create(dev->ifIndex(), dev->name());
-
-        // FIXME(cd-amn): add a handle in router to obtain these addrs, and remove this one completely
-        for (const auto &ifAddr : ifAddrs) {
-            if (auto prefix = net::IpPrefix::parse(ifAddr)) {
-                tun->m_addrs.emplace_back(std::move(*prefix));
-            }
-        }
 
         return tun;
     }

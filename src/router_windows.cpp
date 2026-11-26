@@ -7,38 +7,11 @@
 // iphlpapi.h MUST NOT be included before winsock2.h to avoid redefinition errors.
 #include <iphlpapi.h>
 
-#include <cstdlib>
 #include <cstring>
 #include <vector>
 
 namespace
 {
-    bool splitCidr(const std::string &cidr, std::string &ip, int &prefix)
-    {
-        auto slash = cidr.find('/');
-        if (slash == std::string::npos) {
-            ip = cidr;
-            prefix = cidr.find(':') != std::string::npos ? 128 : 32;
-        } else {
-            ip = cidr.substr(0, slash);
-            prefix = std::atoi(cidr.c_str() + slash + 1);
-        }
-        return !ip.empty();
-    }
-
-    int parseIp(const std::string &ip, int &family, unsigned char out[16])
-    {
-        if (inet_pton(AF_INET, ip.c_str(), out) == 1) {
-            family = AF_INET;
-            return 4;
-        }
-        if (inet_pton(AF_INET6, ip.c_str(), out) == 1) {
-            family = AF_INET6;
-            return 16;
-        }
-        return -1;
-    }
-
     void toSockaddrInet(int family, const unsigned char *raw, SOCKADDR_INET &out)
     {
         std::memset(&out, 0, sizeof(out));
@@ -54,24 +27,15 @@ namespace
 
 namespace libxtun
 {
-    libxtun_error WindowsRouter::addAddress(const std::string &cidr)
+    libxtun_error WindowsRouter::addAddress(const net::IpPrefix &prefix)
     {
-        std::string ip;
-        int prefix;
-        if (!splitCidr(cidr, ip, prefix)) {
-            return LIBXTUN_ERR_INVALID_ARGS;
-        }
-        int family;
-        unsigned char raw[16];
-        if (parseIp(ip, family, raw) < 0) {
-            return LIBXTUN_ERR_INVALID_ARGS;
-        }
+        const auto octets = prefix.address().octets();
 
         MIB_UNICASTIPADDRESS_ROW row;
         InitializeUnicastIpAddressEntry(&row);
         row.InterfaceIndex = static_cast<NET_IFINDEX>(m_ifindex);
-        toSockaddrInet(family, raw, row.Address);
-        row.OnLinkPrefixLength = static_cast<UINT8>(prefix);
+        toSockaddrInet(prefix.address().family(), reinterpret_cast<const unsigned char *>(octets.data()), row.Address);
+        row.OnLinkPrefixLength = static_cast<UINT8>(prefix.bits());
         // Skip duplicate-address detection: the tun's address is ours alone.
         row.DadState = IpDadStatePreferred;
 
@@ -82,23 +46,14 @@ namespace libxtun
         return LIBXTUN_ERR_SYSTEM;
     }
 
-    libxtun_error WindowsRouter::removeAddress(const std::string &cidr)
+    libxtun_error WindowsRouter::removeAddress(const net::IpPrefix &prefix)
     {
-        std::string ip;
-        int prefix;
-        if (!splitCidr(cidr, ip, prefix)) {
-            return LIBXTUN_ERR_INVALID_ARGS;
-        }
-        int family;
-        unsigned char raw[16];
-        if (parseIp(ip, family, raw) < 0) {
-            return LIBXTUN_ERR_INVALID_ARGS;
-        }
+        const auto octets = prefix.address().octets();
 
         MIB_UNICASTIPADDRESS_ROW row;
         InitializeUnicastIpAddressEntry(&row);
         row.InterfaceIndex = static_cast<NET_IFINDEX>(m_ifindex);
-        toSockaddrInet(family, raw, row.Address);
+        toSockaddrInet(prefix.address().family(), reinterpret_cast<const unsigned char *>(octets.data()), row.Address);
 
         DWORD rc = DeleteUnicastIpAddressEntry(&row);
         if (rc == NO_ERROR || rc == ERROR_NOT_FOUND) {
@@ -190,7 +145,7 @@ namespace libxtun
     }
 
     libxtun_error WindowsRouter::configureInterface(const std::string &ifname, int ifindex,
-                                                    const std::vector<std::string> &addresses, int mtu)
+                                                    const std::vector<net::IpPrefix> &addresses, int mtu)
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
         (void)ifname; // Windows keys everything on the interface index.

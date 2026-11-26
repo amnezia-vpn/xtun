@@ -28,32 +28,6 @@ namespace
     const unsigned char DEFAULT_LOWER_HALF[16] = { 0x00 };
     const unsigned char DEFAULT_UPPER_HALF[16] = { 0x80 };
 
-    bool splitCidr(const std::string &cidr, std::string &ip, int &prefix)
-    {
-        auto slash = cidr.find('/');
-        if (slash == std::string::npos) {
-            ip = cidr;
-            prefix = cidr.find(':') != std::string::npos ? 128 : 32;
-        } else {
-            ip = cidr.substr(0, slash);
-            prefix = std::atoi(cidr.c_str() + slash + 1);
-        }
-        return !ip.empty();
-    }
-
-    int parseIp(const std::string &ip, int &family, unsigned char out[16])
-    {
-        if (inet_pton(AF_INET, ip.c_str(), out) == 1) {
-            family = AF_INET;
-            return 4;
-        }
-        if (inet_pton(AF_INET6, ip.c_str(), out) == 1) {
-            family = AF_INET6;
-            return 16;
-        }
-        return -1;
-    }
-
     // The space a route-message sockaddr occupies: its length rounded up to a 4-byte
     // boundary (a zero length still counts as one word), used to walk a dump.
     size_t saSize(const struct sockaddr *sa)
@@ -112,20 +86,11 @@ namespace libxtun
         return rc < 0 ? LIBXTUN_ERR_SYSTEM : LIBXTUN_OK;
     }
 
-    libxtun_error MacosRouter::addAddress(const std::string &cidr)
+    libxtun_error MacosRouter::addAddress(const net::IpPrefix &prefix)
     {
-        std::string ip;
-        int prefix;
-        if (!splitCidr(cidr, ip, prefix)) {
-            return LIBXTUN_ERR_INVALID_ARGS;
-        }
-        int family;
-        unsigned char raw[16];
-        if (parseIp(ip, family, raw) < 0) {
-            return LIBXTUN_ERR_INVALID_ARGS;
-        }
+        const auto octets = prefix.address().octets();
 
-        if (family == AF_INET) {
+        if (prefix.address().family() == AF_INET) {
             int fd = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
             if (fd < 0) {
                 return LIBXTUN_ERR_SYSTEM;
@@ -138,8 +103,8 @@ namespace libxtun
             auto *mask = reinterpret_cast<struct sockaddr_in *>(&ifra.ifra_mask);
             addr->sin_family = dst->sin_family = mask->sin_family = AF_INET;
             addr->sin_len = dst->sin_len = mask->sin_len = sizeof(struct sockaddr_in);
-            std::memcpy(&addr->sin_addr, raw, 4);
-            std::memcpy(&dst->sin_addr, raw, 4);
+            std::memcpy(&addr->sin_addr, octets.data(), 4);
+            std::memcpy(&dst->sin_addr, octets.data(), 4);
             std::memset(&mask->sin_addr, 0xff, sizeof(mask->sin_addr));
             int rc = ::ioctl(fd, SIOCAIFADDR, &ifra);
             ::close(fd);
@@ -155,7 +120,7 @@ namespace libxtun
         std::strncpy(ifra.ifra_name, m_ifname.c_str(), IFNAMSIZ - 1);
         ifra.ifra_addr.sin6_family = AF_INET6;
         ifra.ifra_addr.sin6_len = sizeof(struct sockaddr_in6);
-        std::memcpy(&ifra.ifra_addr.sin6_addr, raw, 16);
+        std::memcpy(&ifra.ifra_addr.sin6_addr, octets.data(), 16);
         ifra.ifra_prefixmask.sin6_family = AF_INET6;
         ifra.ifra_prefixmask.sin6_len = sizeof(struct sockaddr_in6);
         std::memset(&ifra.ifra_prefixmask.sin6_addr, 0xff, 16);
@@ -336,7 +301,7 @@ namespace libxtun
     }
 
     libxtun_error MacosRouter::configureInterface(const std::string &ifname, int ifindex,
-                                                  const std::vector<std::string> &addresses, int mtu)
+                                                  const std::vector<net::IpPrefix> &addresses, int mtu)
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
         m_ifname = ifname;

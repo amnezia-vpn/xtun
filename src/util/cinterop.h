@@ -36,19 +36,6 @@ namespace libxtun::cinterop
         return out;
     }
 
-    std::vector<std::string> inline parseStrList(const char *const *list)
-    {
-        std::vector<std::string> out;
-        if (list == nullptr) {
-            return out;
-        }
-        while (*list != nullptr) {
-            out.push_back(*list);
-            ++list;
-        }
-        return out;
-    }
-
     struct StrList
     {
         std::vector<std::string> strs;

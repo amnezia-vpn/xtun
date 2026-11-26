@@ -31,7 +31,7 @@ namespace
         int removes = 0;
         libxtun_error addResult = LIBXTUN_OK;
 
-        libxtun_error configureInterface(const std::string &, int, const std::vector<std::string> &, int) override
+        libxtun_error configureInterface(const std::string &, int, const std::vector<net::IpPrefix> &, int) override
         {
             return LIBXTUN_OK;
         }
