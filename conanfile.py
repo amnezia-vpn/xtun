@@ -36,8 +36,6 @@ class Xtun(ConanFile):
             # revision is used here to clarify the latest version to use; that's because of frequent recipes update
             # FIXME: remove this one on next upgrade
             self.requires("wintun/0.14.1@amnezia#4671cbda56d3d2c1bea585faed62eeac", libs=False, run=True)
-        if self.settings.os == "Windows" and self.settings.arch == "x86_64":
-            self.requires("win-split-tunnel/1.2.5.0@amnezia", headers=False, libs=False, run=True)
         if self.settings.os == "Linux":
             self.requires("libsystemd/262.2", transitive_libs=True)
     
@@ -46,6 +44,8 @@ class Xtun(ConanFile):
         if self.settings.os == "Windows":
             self.tool_requires("mingw-builds/15.1.0")
         self.test_requires("gtest/1.17.0")
+        if self.settings.os == "Windows" and self.settings.arch == "x86_64":
+            self.test_requires("win-split-tunnel/1.2.5.0@amnezia")
 
     def validate_build(self):
         # xtun requires c++20 for building. however, runtime features are limited by c++17
