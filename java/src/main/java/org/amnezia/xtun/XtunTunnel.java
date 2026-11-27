@@ -19,10 +19,6 @@ public final class XtunTunnel implements AutoCloseable {
         handle = 0;
     }
 
-    public void start() {
-        nativeStart(handle);
-    }
-
     public void attachProxy(XtunProxy proxy) {
         nativeAttachProxy(handle, proxy);
     }
@@ -37,7 +33,6 @@ public final class XtunTunnel implements AutoCloseable {
 
     private static native long nativeInit(TunFactory factory, String[] ifaddrs, String[] dns);
     private static native void nativeFree(long handle);
-    private static native void nativeStart(long handle);
     private static native void nativeAttachProxy(long handle, XtunProxy proxy);
     private static native void nativeDetachProxy(long handle, XtunProxy proxy);
     private static native void nativeNetworkChanged(long handle);

@@ -282,21 +282,6 @@ namespace libxtun
         m_proxy = nullptr;
     }
 
-    int Tunnel::start()
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        m_started = true;
-        // TODO(cd-amn): implement kick-off and suspend/shutdown based on metrics for the routes
-        // The idea:
-        // - All routes initialize with high metrics (system never use them until the raise)
-        // - Calling start() sets all routes' metrics to the lower value
-        // - So the traffic starts flowing
-        //
-        // This makes start() to respond almost instantly: interface is ready, and everything
-        // is established, no further change required
-        return LIBXTUN_OK;
-    }
-
     void Tunnel::emit(Event ev)
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -468,14 +453,6 @@ void libxtun_tunnel_free(struct libxtun_tunnel *tun)
     }
     delete reinterpret_cast<libxtun::Tunnel *>(tun->handle);
     tun->handle = nullptr;
-}
-
-int libxtun_tunnel_start(struct libxtun_tunnel *tun)
-{
-    if (tun == nullptr || tun->handle == nullptr) {
-        return LIBXTUN_ERR_INVALID_ARGS;
-    }
-    return reinterpret_cast<libxtun::Tunnel *>(tun->handle)->start();
 }
 
 int libxtun_tunnel_attach_proxy(struct libxtun_tunnel *tun, struct libxtun_proxy *proxy)

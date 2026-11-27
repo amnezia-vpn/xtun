@@ -174,10 +174,6 @@ namespace xtun
         Tunnel(Tunnel &&) noexcept = default;
         Tunnel &operator=(Tunnel &&) noexcept = default;
 
-        int start()
-        {
-            return libxtun_tunnel_start(m_inner.get());
-        }
         int attachProxy(Proxy &proxy)
         {
             return libxtun_tunnel_attach_proxy(m_inner.get(), proxy.m_inner.get());

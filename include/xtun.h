@@ -129,7 +129,6 @@ struct libxtun_tunfactory
 
 int libxtun_tunnel_new(struct libxtun_tunnel *tun, const struct libxtun_tunnel_opts *opts);
 int libxtun_tunnel_new_from_tunfactory(struct libxtun_tunnel *tun, struct libxtun_tunfactory *factory);
-int libxtun_tunnel_start(struct libxtun_tunnel *tun);
 void libxtun_tunnel_free(struct libxtun_tunnel *tun);
 int libxtun_tunnel_attach_proxy(struct libxtun_tunnel *tun, struct libxtun_proxy *proxy);
 void libxtun_tunnel_detach_proxy(struct libxtun_tunnel *tun, struct libxtun_proxy *proxy);

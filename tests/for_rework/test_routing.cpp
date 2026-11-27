@@ -280,7 +280,6 @@ TEST(Routing, AppliesAddressMtuUpAndRoutes)
     FixedRoutesProxy proxy;
     proxy.r = { "10.88.0.0/24" };
     ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
-    ASSERT_EQ(tunnel.start(), LIBXTUN_OK);
 
     const std::string name = tunnel.name();
     EXPECT_EQ(ifAddr(name), "10.99.0.2");
@@ -311,7 +310,6 @@ TEST(Routing, FullTunnelMarksBypassPhysical)
     FixedRoutesProxy proxy;
     proxy.r = { "0.0.0.0/0" };
     ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
-    ASSERT_EQ(tunnel.start(), LIBXTUN_OK);
 
     const std::string name = tunnel.name();
     // Unmarked traffic is captured by the tunnel; the proxy's marked traffic bypasses it.
@@ -342,7 +340,6 @@ TEST(Routing, SwapProxyReplacesRoutes)
     FixedRoutesProxy a;
     a.r = { "203.0.113.0/24" };
     ASSERT_EQ(tunnel.attachProxy(&a), LIBXTUN_OK);
-    ASSERT_EQ(tunnel.start(), LIBXTUN_OK);
     EXPECT_TRUE(routeExists(name, "203.0.113.0/24"));
 
     FixedRoutesProxy b;
@@ -366,7 +363,6 @@ TEST(Routing, InstallsIPv6Route)
     FixedRoutesProxy proxy;
     proxy.r = { "2001:db8::/32" };
     ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
-    ASSERT_EQ(tunnel.start(), LIBXTUN_OK);
     EXPECT_EQ(routeGetDev("2001:db8::1", 0), name);
 }
 
@@ -385,7 +381,6 @@ TEST(Routing, AppliesAddressMtuUpAndSplitRoute)
     FixedRoutesProxy proxy;
     proxy.r = { "203.0.113.0/24" };
     ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
-    ASSERT_EQ(tunnel.start(), LIBXTUN_OK);
 
     const std::string name = tunnel.name();
     EXPECT_EQ(ifAddr(name), "10.99.0.2");
@@ -415,7 +410,6 @@ TEST(Routing, FullTunnelCatchAllAndBoundSocketBypass)
     FixedRoutesProxy proxy;
     proxy.r = { "0.0.0.0/0" };
     ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
-    ASSERT_EQ(tunnel.start(), LIBXTUN_OK);
 
     EXPECT_EQ(routeGetIface("1.1.1.1"), name);
 
@@ -453,7 +447,6 @@ TEST(Routing, SwapProxyReplacesRoutes)
     FixedRoutesProxy a;
     a.r = { "203.0.113.0/24" };
     ASSERT_EQ(tunnel.attachProxy(&a), LIBXTUN_OK);
-    ASSERT_EQ(tunnel.start(), LIBXTUN_OK);
     EXPECT_EQ(routeGetIface("203.0.113.1"), name);
 
     FixedRoutesProxy b;
@@ -477,7 +470,6 @@ TEST(Routing, InstallsIPv6Route)
     FixedRoutesProxy proxy;
     proxy.r = { "2001:db8::/32" }; // RFC 3849 documentation prefix
     ASSERT_EQ(tunnel.attachProxy(&proxy), LIBXTUN_OK);
-    ASSERT_EQ(tunnel.start(), LIBXTUN_OK);
     EXPECT_EQ(routeGetIface("2001:db8::1"), name);
 }
 

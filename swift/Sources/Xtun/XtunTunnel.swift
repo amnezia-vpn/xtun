@@ -32,10 +32,6 @@ public final class XtunTunnel: @unchecked Sendable {
         }
     }
 
-    public func start() throws {
-        try XtunError.check(libxtun_tunnel_start(raw))
-    }
-
     public func attach(_ proxy: XtunProxy) throws {
         try XtunError.check(libxtun_tunnel_attach_proxy(raw, proxy.raw))
     }

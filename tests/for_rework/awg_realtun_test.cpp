@@ -538,7 +538,6 @@ TEST(AwgRealTun, FullTunnelDeliversThroughKernelTun)
 
     libxtun::proto::Awg a(confA());
     ASSERT_EQ(tunnel.attachProxy(&a), LIBXTUN_OK);
-    ASSERT_EQ(tunnel.start(), LIBXTUN_OK);
 
     a.event(libxtun::ProxyEvent::Up);
     b.event(libxtun::ProxyEvent::Up);
@@ -612,7 +611,6 @@ TEST(AwgRealTun, MarkedHandshakeBypassesTunnel)
 
     libxtun::proto::Awg a(confRemote());
     ASSERT_EQ(tunnel.attachProxy(&a), LIBXTUN_OK);
-    ASSERT_EQ(tunnel.start(), LIBXTUN_OK);
     a.event(libxtun::ProxyEvent::Up);
 
     int inj = ::socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
@@ -672,7 +670,6 @@ TEST(AwgRealTun, MarkedHandshakeBypassesTunnel)
 
     libxtun::proto::Awg a(confSplit());
     ASSERT_EQ(tunnel.attachProxy(&a), LIBXTUN_OK);
-    ASSERT_EQ(tunnel.start(), LIBXTUN_OK);
     a.event(libxtun::ProxyEvent::Up);
 
     int inj = ::socket(AF_INET, SOCK_DGRAM, 0);
@@ -1001,7 +998,6 @@ TEST(AwgRealTun, DeliversThroughWintunAdapter)
     a.bind(callbacksA);
     a.setInterface("xtunrta");
     ASSERT_EQ(tunnel.attachProxy(&a), LIBXTUN_OK);
-    ASSERT_EQ(tunnel.start(), LIBXTUN_OK);
 
     a.event(libxtun::ProxyEvent::Up);
     b.event(libxtun::ProxyEvent::Up);

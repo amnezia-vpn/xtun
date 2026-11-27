@@ -18,7 +18,6 @@ void libxtun_proxy_free(struct libxtun_proxy *proxy)
 
 struct FakeTunnel
 {
-    bool started = false;
     void *attachedProxy = nullptr;
 };
 int libxtun_tunnel_new(struct libxtun_tunnel *tun, const struct libxtun_tunnel_opts *opts)
@@ -29,18 +28,6 @@ int libxtun_tunnel_new(struct libxtun_tunnel *tun, const struct libxtun_tunnel_o
 int libxtun_tunnel_new_from_tunfactory(struct libxtun_tunnel *tun, struct libxtun_tunfactory *factory)
 {
     tun->handle = new FakeTunnel {};
-    return 0;
-}
-int libxtun_tunnel_start(struct libxtun_tunnel *tun)
-{
-    EXPECT_NE(tun, nullptr) << "libxtun_tunnel_start: tun is null";
-    EXPECT_NE(tun->handle, nullptr) << "libxtun_tunnel_start: tun->handle is null";
-    if (tun == nullptr || tun->handle == nullptr) {
-        return LIBXTUN_ERR_INVALID_ARGS;
-    }
-
-    auto *instance = reinterpret_cast<FakeTunnel *>(tun->handle);
-    instance->started = true;
     return 0;
 }
 void libxtun_tunnel_free(struct libxtun_tunnel *tun)
@@ -83,7 +70,6 @@ TEST(Fakextun, Lifecycle)
     EXPECT_TRUE(std::holds_alternative<xtun::Proxy>(resProxy)) << "Proxy build failed with " << std::get<int>(resProxy);
     auto &proxy = std::get<xtun::Proxy>(resProxy);
 
-    EXPECT_EQ(tun.start(), 0);
     EXPECT_EQ(tun.attachProxy(proxy), 0);
     tun.detachProxy(proxy);
 }
