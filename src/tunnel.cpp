@@ -45,6 +45,10 @@ namespace libxtun
         if (!dnsExceptions) {
             return fail(dnsExceptions.error());
         }
+        auto ifAddrs = cinterop::parseListT<net::IpPrefix>(opts.if_addrs);
+        if (!ifAddrs) {
+            return fail(ifAddrs.error());
+        }
         auto appSplitTunnel = AppSplitTunnel::create(opts.excluded_apps, opts.split_service_name);
         if (!appSplitTunnel) {
             return fail(appSplitTunnel.error());
@@ -52,6 +56,7 @@ namespace libxtun
 
         auto tun = std::unique_ptr<Tunnel>(new Tunnel());
         tun->m_dnsDefaults = std::move(dnsDefaults).value();
+        tun->m_addrs = std::move(ifAddrs).value();
         tun->m_device = createTunDevice();
         tun->m_router = Router::create(*tun);
         tun->m_splitTunnel = std::move(appSplitTunnel).value();
@@ -66,11 +71,11 @@ namespace libxtun
         if (auto rc = dev->open(); rc != LIBXTUN_OK) {
             return fail(rc);
         }
+        tun->m_defaultMtu = opts.mtu > 0 ? opts.mtu : dev->mtu();
 
         dev->startMonitor(*tun);
 
-        const auto ifAddrs = cinterop::parseStrList(opts.if_addrs);
-        if (auto rc = router->configureInterface(dev->name(), dev->ifIndex(), ifAddrs, opts.mtu); rc != LIBXTUN_OK) {
+        if (auto rc = router->configureInterface(dev->name(), dev->ifIndex(), tun->m_addrs); rc != LIBXTUN_OK) {
             return fail(rc);
         }
 
@@ -79,13 +84,6 @@ namespace libxtun
         }
 
         tun->m_dns = Dns::create(dev->ifIndex(), dev->name());
-
-        // FIXME(cd-amn): add a handle in router to obtain these addrs, and remove this one completely
-        for (const auto &ifAddr : ifAddrs) {
-            if (auto prefix = net::IpPrefix::parse(ifAddr)) {
-                tun->m_addrs.emplace_back(std::move(*prefix));
-            }
-        }
 
         return tun;
     }
@@ -174,9 +172,16 @@ namespace libxtun
             }
         }
 
-        if (profile.mtu) {
-            // TODO(cd-amn): write MTU
-            void(profile.mtu);
+        const int mtu = profile.mtu > 0 ? profile.mtu : m_defaultMtu;
+        if (m_router != nullptr && mtu > 0 && m_router->setMtu(mtu) != LIBXTUN_OK) {
+            if (m_dns != nullptr) {
+                m_dns->revert();
+            }
+            m_router->clearProxyRoutes();
+            if (m_killswitch != nullptr) {
+                m_killswitch->protect({}, {}, {});
+            }
+            return failed(LIBXTUN_ERR_SYSTEM);
         }
 
         if (m_router != nullptr) {
@@ -275,21 +280,6 @@ namespace libxtun
         m_proxy->event(ProxyEvent::Down);
         m_proxy->attachIo(nullptr);
         m_proxy = nullptr;
-    }
-
-    int Tunnel::start()
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        m_started = true;
-        // TODO(cd-amn): implement kick-off and suspend/shutdown based on metrics for the routes
-        // The idea:
-        // - All routes initialize with high metrics (system never use them until the raise)
-        // - Calling start() sets all routes' metrics to the lower value
-        // - So the traffic starts flowing
-        //
-        // This makes start() to respond almost instantly: interface is ready, and everything
-        // is established, no further change required
-        return LIBXTUN_OK;
     }
 
     void Tunnel::emit(Event ev)
@@ -391,18 +381,17 @@ int libxtun_tunnel_new(struct libxtun_tunnel *tun, const struct libxtun_tunnel_o
 
     tun->handle = nullptr;
 
-    // TODO(cd-amn): handle all opts up to the specified size
-    // If a newer xtun .dll/.so is used in already compiled application - it
-    // should not break anything, just handle all available opts
-    if (opts->size < sizeof(*opts)) {
+    auto copied = libxtun::cinterop::readSized(*opts);
+    if (!copied) {
+        return copied.error();
+    }
+    const libxtun_tunnel_opts &tunOpts = copied.value();
+
+    if (tunOpts.killswitch_mode < LIBXTUN_KILLSWITCH_MODE_DISABLED || tunOpts.killswitch_mode > LIBXTUN_KILLSWITCH_MODE_LAST) {
         return LIBXTUN_ERR_INVALID_ARGS;
     }
 
-    if (opts->killswitch_mode < LIBXTUN_KILLSWITCH_MODE_DISABLED || opts->killswitch_mode > LIBXTUN_KILLSWITCH_MODE_LAST) {
-        return LIBXTUN_ERR_INVALID_ARGS;
-    }
-
-    auto res = libxtun::Tunnel::fromOpts(*opts);
+    auto res = libxtun::Tunnel::fromOpts(tunOpts);
     if (!res) {
         return res.error();
     }
@@ -415,23 +404,32 @@ int libxtun_tunnel_new_from_tunfactory(struct libxtun_tunnel *tun, libxtun_tunfa
 {
     using namespace libxtun;
 
-    if (!tun || !tunfactory || !tunfactory->factory_func) {
+    if (!tun || !tunfactory) {
+        return LIBXTUN_ERR_INVALID_ARGS;
+    }
+
+    auto copied = cinterop::readSized(*tunfactory);
+    if (!copied) {
+        return copied.error();
+    }
+    const libxtun_tunfactory &factory = copied.value();
+    if (!factory.factory_func) {
         return LIBXTUN_ERR_INVALID_ARGS;
     }
 
     tun->handle = nullptr;
 
-    auto ifaddrs = cinterop::parseListT<net::IpPrefix>(tunfactory->if_addrs);
+    auto ifaddrs = cinterop::parseListT<net::IpPrefix>(factory.if_addrs);
     if (!ifaddrs) {
         return ifaddrs.error();
     }
-    auto dns = cinterop::parseListT<net::IpAddress>(tunfactory->dns);
+    auto dns = cinterop::parseListT<net::IpAddress>(factory.dns);
     if (!dns) {
         return dns.error();
     }
 
     auto res = Tunnel::fromTunfactory(
-            [createTun = tunfactory->factory_func, priv = tunfactory->factory_priv](
+            [createTun = factory.factory_func, priv = factory.factory_priv](
                     const std::vector<net::IpAddress> &dns, const std::vector<net::IpPrefix> &includeRoutes,
                     const std::vector<net::IpPrefix> &excludeRoutes, int mtu) {
                 const auto cDns = cinterop::toStrList(dns);
@@ -455,14 +453,6 @@ void libxtun_tunnel_free(struct libxtun_tunnel *tun)
     }
     delete reinterpret_cast<libxtun::Tunnel *>(tun->handle);
     tun->handle = nullptr;
-}
-
-int libxtun_tunnel_start(struct libxtun_tunnel *tun)
-{
-    if (tun == nullptr || tun->handle == nullptr) {
-        return LIBXTUN_ERR_INVALID_ARGS;
-    }
-    return reinterpret_cast<libxtun::Tunnel *>(tun->handle)->start();
 }
 
 int libxtun_tunnel_attach_proxy(struct libxtun_tunnel *tun, struct libxtun_proxy *proxy)

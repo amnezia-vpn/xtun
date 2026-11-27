@@ -98,7 +98,7 @@ TEST_F(TunnelTestTunfactory, AttachesProxy)
             [&](const std::vector<net::IpAddress> &dns, const std::vector<net::IpPrefix> &includeRoutes,
                 const std::vector<net::IpPrefix> &excludeRoutes, int mtu) {
                 auto tun = libxtun::test::createTun();
-                if (!tun) {
+                if (!tun || !libxtun::test::setLinkUp(tun->second)) {
                     return -1;
                 }
                 return tun->first.release();
@@ -132,7 +132,7 @@ TEST_F(TunnelTestTunfactory, PassesRoutesAndExcludes)
                 receivedIncludeRoutes = includeRoutes;
                 receivedExcludeRoutes = excludeRoutes;
                 auto tun = libxtun::test::createTun();
-                if (!tun) {
+                if (!tun || !libxtun::test::setLinkUp(tun->second)) {
                     return -1;
                 }
                 return tun->first.release();
@@ -148,5 +148,29 @@ TEST_F(TunnelTestTunfactory, PassesRoutesAndExcludes)
     ASSERT_EQ(tunnel->attachProxy(&proxy), 0);
     EXPECT_EQ(receivedIncludeRoutes, includes) << "the factory did not get the resolved routes";
     EXPECT_EQ(receivedExcludeRoutes, excludes) << "the factory did not get the excludes";
+}
+
+TEST_F(TunnelTestTunfactory, AttachFailsForDownInterface)
+{
+    test::Logger log;
+    test::MemProxy proxy(log.defaultCallbacks());
+
+    bool handedOver = false;
+    auto res = Tunnel::fromTunfactory(
+            [&](const std::vector<net::IpAddress> &, const std::vector<net::IpPrefix> &,
+                const std::vector<net::IpPrefix> &, int) {
+                auto tun = libxtun::test::createTun();
+                if (!tun || !tun->first || !libxtun::test::setLinkUp(tun->second, false)) {
+                    return -1;
+                }
+                handedOver = true;
+                return tun->first.release();
+            },
+            { test::guaranteed(net::IpPrefix::parse("10.0.0.1/32")) }, {});
+    ASSERT_TRUE(res) << "Tunnel::fromTunfactory failed with " << res.error() << " error code";
+    auto &tunnel = res.value();
+
+    EXPECT_EQ(tunnel->attachProxy(&proxy), LIBXTUN_ERR_DEVICE_CREATE);
+    EXPECT_TRUE(handedOver) << "the factory did not create a tun, so the error is not from the down check";
 }
 #endif // WIN32

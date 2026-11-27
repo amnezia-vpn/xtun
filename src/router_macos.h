@@ -16,7 +16,8 @@ namespace libxtun
         }
 
         libxtun_error configureInterface(const std::string &ifname, int ifindex,
-                                         const std::vector<std::string> &addresses, int mtu) override;
+                                         const std::vector<net::IpPrefix> &addresses) override;
+        libxtun_error setMtu(int mtu) override;
         void revert() override;
         void protectSocket(int fd) override;
         void onRouteChanged() override;
@@ -35,9 +36,8 @@ namespace libxtun
             friend bool operator==(const Uplink &, const Uplink &) = default;
         };
 
-        libxtun_error setMtu(int mtu);
         libxtun_error setUp();
-        libxtun_error addAddress(const std::string &cidr);
+        libxtun_error addAddress(const net::IpPrefix &prefix);
         libxtun_error rtSend(int family, const unsigned char *dst, int prefix, const void *gw, unsigned gwLen,
                              int flags, unsigned index, bool add);
         libxtun_error updateRoute(int family, const unsigned char *dst, int prefix, bool add);
@@ -51,7 +51,7 @@ namespace libxtun
         std::recursive_mutex m_mtx;
         int m_ifindex = -1;
         std::string m_ifname;
-        std::vector<std::string> m_addresses;
+        std::vector<net::IpPrefix> m_addresses;
         std::vector<net::IpPrefix> m_routes;
         std::vector<net::IpPrefix> m_excludes;
         bool m_fullV4 = false;

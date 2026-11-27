@@ -1,4 +1,5 @@
 #include "tun_device_linux.h"
+#include "util/scoped_fd.h"
 #include "xtun.h"
 
 #include <cerrno>
@@ -45,9 +46,6 @@ namespace libxtun
     libxtun_error LinuxTunDevice::adoptFd(int fd)
     {
         m_tunFd = fd;
-        // FIXME(cd-amn): check if iface described by fd is up on adoption (and maybe later)
-        // Note that restricted envs (e.g. Android) are NOT allowed to use monitorLoop
-        m_up = true;
 
         // read()/write() exchange raw IP packets, so the device must have been
         // attached with IFF_TUN | IFF_NO_PI; the flags cannot be changed on an
@@ -58,6 +56,16 @@ namespace libxtun
             return LIBXTUN_ERR_DEVICE_CREATE;
         }
         m_name = ifr.ifr_name;
+
+        ScopedFd sock(::socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0));
+        if (sock.get() < 0 || ::ioctl(sock.get(), SIOCGIFFLAGS, &ifr) < 0) {
+            return LIBXTUN_ERR_SYSTEM;
+        }
+        if ((ifr.ifr_flags & IFF_RUNNING) == 0) {
+            return LIBXTUN_ERR_DEVICE_CREATE;
+        }
+        m_up = true;
+
         return finishOpen();
     }
 

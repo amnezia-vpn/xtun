@@ -58,14 +58,19 @@ namespace libxtun
     ResultXtun<std::unique_ptr<Proxy>> Proxy::create(libxtun_proxy_proto proto, const char *conf,
                                                      ClientCallbacks callbacks, const libxtun_proxy_opts *opts)
     {
-        if (opts != nullptr && opts->size < sizeof(*opts)) {
-            return fail(LIBXTUN_ERR_INVALID_ARGS);
+        libxtun_proxy_opts proxyOpts {};
+        if (opts != nullptr) {
+            auto copied = cinterop::readSized(*opts);
+            if (!copied) {
+                return fail(copied.error());
+            }
+            proxyOpts = copied.value();
         }
-        auto includeRoutes = cinterop::parseListT<net::IpPrefix>(opts != nullptr ? opts->includeRoutes : nullptr);
+        auto includeRoutes = cinterop::parseListT<net::IpPrefix>(proxyOpts.includeRoutes);
         if (!includeRoutes) {
             return fail(includeRoutes.error());
         }
-        auto excludeRoutes = cinterop::parseListT<net::IpPrefix>(opts != nullptr ? opts->excludeRoutes : nullptr);
+        auto excludeRoutes = cinterop::parseListT<net::IpPrefix>(proxyOpts.excludeRoutes);
         if (!excludeRoutes) {
             return fail(excludeRoutes.error());
         }

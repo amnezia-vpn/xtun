@@ -525,22 +525,6 @@ JNIEXPORT void JNICALL Java_org_amnezia_xtun_XtunTunnel_nativeFree(JNIEnv *env, 
     free(jtunnel);
 }
 
-JNIEXPORT void JNICALL Java_org_amnezia_xtun_XtunTunnel_nativeStart(JNIEnv *env, jclass c, jlong handle) {
-    struct libxtun_jtunnel *jtunnel = (struct libxtun_jtunnel*)handle;
-    int res;
-
-    if (jtunnel == NULL) {
-        throwException(env, LIBXTUN_ERR_JNI_CLOSED);
-        return;
-    }
-
-    res = libxtun_tunnel_start(&jtunnel->tunnel);
-    if (res) {
-        throwException(env, res);
-        return;
-    }
-}
-
 JNIEXPORT void JNICALL Java_org_amnezia_xtun_XtunTunnel_nativeAttachProxy(JNIEnv *env, jclass c, jlong handle, jobject proxy_obj) {
     struct libxtun_jtunnel *jtunnel = (struct libxtun_jtunnel*)handle;
     struct libxtun_proxy *proxy;

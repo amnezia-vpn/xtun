@@ -46,8 +46,6 @@ namespace libxtun
         void detachProxy(Proxy *proxy);
         void networkChanged();
 
-        int start();
-
         int read(std::span<std::byte> buf) override;
         int write(std::span<const std::byte> packet) override;
         void protectSocket(int fd) override;
@@ -83,11 +81,11 @@ namespace libxtun
         std::unique_ptr<Killswitch> m_killswitch;
 
         std::mutex m_mutex;
-        bool m_started = false;
         TunfactoryFunc m_tunfactory;
         Proxy *m_proxy = nullptr;
         std::vector<net::IpPrefix> m_addrs;
         std::vector<net::IpAddress> m_dnsDefaults;
+        int m_defaultMtu = 0;
     };
 }
 

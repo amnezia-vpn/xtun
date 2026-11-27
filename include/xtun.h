@@ -69,12 +69,14 @@ struct libxtun_proxy
     void *statushandler_priv;
 };
 
+#pragma pack(push, 1)
 struct libxtun_proxy_opts
 {
     size_t size;
     const char *const *includeRoutes;
     const char *const *excludeRoutes;
 };
+#pragma pack(pop)
 
 int libxtun_proxy_new(struct libxtun_proxy *proxy, enum libxtun_proxy_proto proto, const char *conf,
                       const struct libxtun_proxy_opts *opts);
@@ -92,6 +94,7 @@ enum libxtun_killswitch_mode {
     LIBXTUN_KILLSWITCH_MODE_LAST = LIBXTUN_KILLSWITCH_MODE_HARD,
 };
 
+#pragma pack(push, 1)
 struct libxtun_tunnel_opts
 {
     size_t size;
@@ -108,10 +111,12 @@ struct libxtun_tunnel_opts
     const char *const *excluded_apps;
     const char *split_service_name;
 };
+#pragma pack(pop)
 
 typedef int (*libxtun_tunfactory_createtun)(const char *const *dns, const char *const *includeRoutes,
                                             const char *const *excludeRoutes, int mtu, void *priv);
 
+#pragma pack(push, 1)
 struct libxtun_tunfactory
 {
     size_t size;
@@ -120,10 +125,10 @@ struct libxtun_tunfactory
     const char *const *if_addrs;
     const char *const *dns;
 };
+#pragma pack(pop)
 
 int libxtun_tunnel_new(struct libxtun_tunnel *tun, const struct libxtun_tunnel_opts *opts);
 int libxtun_tunnel_new_from_tunfactory(struct libxtun_tunnel *tun, struct libxtun_tunfactory *factory);
-int libxtun_tunnel_start(struct libxtun_tunnel *tun);
 void libxtun_tunnel_free(struct libxtun_tunnel *tun);
 int libxtun_tunnel_attach_proxy(struct libxtun_tunnel *tun, struct libxtun_proxy *proxy);
 void libxtun_tunnel_detach_proxy(struct libxtun_tunnel *tun, struct libxtun_proxy *proxy);

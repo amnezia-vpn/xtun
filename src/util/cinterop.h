@@ -3,6 +3,7 @@
 
 #include "util/result.h"
 #include "xtun.h"
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -25,16 +26,13 @@ namespace libxtun::cinterop
         return out;
     }
 
-    std::vector<std::string> inline parseStrList(const char *const *list)
+    template<typename T> ResultXtun<T> inline readSized(const T &opts)
     {
-        std::vector<std::string> out;
-        if (list == nullptr) {
-            return out;
+        if (opts.size > sizeof(T)) {
+            return fail(LIBXTUN_ERR_UNSUPPORTED);
         }
-        while (*list != nullptr) {
-            out.push_back(*list);
-            ++list;
-        }
+        T out {};
+        std::memcpy(&out, &opts, opts.size);
         return out;
     }
 

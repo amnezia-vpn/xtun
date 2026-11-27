@@ -2,6 +2,7 @@ find_package(GTest REQUIRED)
 include(GoogleTest)
 
 set(XTUN_TEST_SOURCES
+    test_cinterop.cpp
     test_contract.cpp
     test_dns.cpp
     test_killswitch.cpp

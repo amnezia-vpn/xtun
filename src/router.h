@@ -27,7 +27,8 @@ namespace libxtun
         virtual ~Router() = default;
 
         virtual libxtun_error configureInterface(const std::string &ifname, int ifindex,
-                                                 const std::vector<std::string> &addresses, int mtu) = 0;
+                                                 const std::vector<net::IpPrefix> &addresses) = 0;
+        virtual libxtun_error setMtu(int mtu) = 0;
         libxtun_error setProxyRoutes(const std::vector<net::IpPrefix> &routes,
                                      const std::vector<net::IpPrefix> &excludes);
         void clearProxyRoutes();

@@ -16,7 +16,8 @@ namespace libxtun
         }
 
         libxtun_error configureInterface(const std::string &ifname, int ifindex,
-                                         const std::vector<std::string> &addresses, int mtu) override;
+                                         const std::vector<net::IpPrefix> &addresses) override;
+        libxtun_error setMtu(int mtu) override;
         void revert() override;
         void protectSocket(int fd) override;
         void onRouteChanged() override;
@@ -27,15 +28,15 @@ namespace libxtun
         void removeProxyRoutes() override;
 
     private:
-        libxtun_error addAddress(const std::string &cidr);
-        libxtun_error removeAddress(const std::string &cidr);
+        libxtun_error addAddress(const net::IpPrefix &prefix);
+        libxtun_error removeAddress(const net::IpPrefix &prefix);
         libxtun_error setMtuAndMetric(int family, int mtu);
         libxtun_error updateRouteFor(const net::IpPrefix &prefix, bool add, const net::WindowsUplink *uplink = nullptr);
         libxtun_error updateUplinkRoutes(int family, const net::WindowsUplink &uplink, bool add);
 
         std::recursive_mutex m_mtx;
         unsigned long m_ifindex = 0; // NET_IFINDEX
-        std::vector<std::string> m_addresses;
+        std::vector<net::IpPrefix> m_addresses;
         std::vector<net::IpPrefix> m_routes;
         std::vector<net::IpPrefix> m_excludes;
         net::WindowsUplink m_uplinkV4;
