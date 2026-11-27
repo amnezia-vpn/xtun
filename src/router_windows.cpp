@@ -145,7 +145,7 @@ namespace libxtun
     }
 
     libxtun_error WindowsRouter::configureInterface(const std::string &ifname, int ifindex,
-                                                    const std::vector<net::IpPrefix> &addresses, int mtu)
+                                                    const std::vector<net::IpPrefix> &addresses)
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
         (void)ifname; // Windows keys everything on the interface index.
@@ -167,9 +167,19 @@ namespace libxtun
         }
 
         for (int family : { AF_INET, AF_INET6 }) {
-            auto rc = setMtuAndMetric(family, mtu);
+            auto rc = setMtuAndMetric(family, 0);
             if (rc < 0) {
                 revert();
+                return rc;
+            }
+        }
+        return LIBXTUN_OK;
+    }
+
+    libxtun_error WindowsRouter::setMtu(int mtu)
+    {
+        for (int family : { AF_INET, AF_INET6 }) {
+            if (auto rc = setMtuAndMetric(family, mtu); rc != LIBXTUN_OK) {
                 return rc;
             }
         }

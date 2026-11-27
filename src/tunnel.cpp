@@ -71,10 +71,11 @@ namespace libxtun
         if (auto rc = dev->open(); rc != LIBXTUN_OK) {
             return fail(rc);
         }
+        tun->m_defaultMtu = opts.mtu > 0 ? opts.mtu : dev->mtu();
 
         dev->startMonitor(*tun);
 
-        if (auto rc = router->configureInterface(dev->name(), dev->ifIndex(), tun->m_addrs, opts.mtu); rc != LIBXTUN_OK) {
+        if (auto rc = router->configureInterface(dev->name(), dev->ifIndex(), tun->m_addrs); rc != LIBXTUN_OK) {
             return fail(rc);
         }
 
@@ -171,9 +172,16 @@ namespace libxtun
             }
         }
 
-        if (profile.mtu) {
-            // TODO(cd-amn): write MTU
-            void(profile.mtu);
+        const int mtu = profile.mtu > 0 ? profile.mtu : m_defaultMtu;
+        if (m_router != nullptr && mtu > 0 && m_router->setMtu(mtu) != LIBXTUN_OK) {
+            if (m_dns != nullptr) {
+                m_dns->revert();
+            }
+            m_router->clearProxyRoutes();
+            if (m_killswitch != nullptr) {
+                m_killswitch->protect({}, {}, {});
+            }
+            return failed(LIBXTUN_ERR_SYSTEM);
         }
 
         if (m_router != nullptr) {

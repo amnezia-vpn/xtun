@@ -16,7 +16,8 @@ namespace libxtun
         }
 
         libxtun_error configureInterface(const std::string &ifname, int ifindex,
-                                         const std::vector<net::IpPrefix> &addresses, int mtu) override;
+                                         const std::vector<net::IpPrefix> &addresses) override;
+        libxtun_error setMtu(int mtu) override;
         void revert() override;
         void protectSocket(int fd) override;
         void onRouteChanged() override;

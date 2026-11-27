@@ -301,19 +301,13 @@ namespace libxtun
     }
 
     libxtun_error MacosRouter::configureInterface(const std::string &ifname, int ifindex,
-                                                  const std::vector<net::IpPrefix> &addresses, int mtu)
+                                                  const std::vector<net::IpPrefix> &addresses)
     {
         std::lock_guard<std::recursive_mutex> lock(m_mtx);
         m_ifname = ifname;
         m_ifindex = ifindex;
         m_uplinkV4 = getGatewayAndIface(AF_INET);
         m_uplinkV6 = getGatewayAndIface(AF_INET6);
-
-        if (mtu > 0) {
-            if (libxtun_error err = setMtu(mtu); err != LIBXTUN_OK) {
-                return err;
-            }
-        }
 
         if (libxtun_error err = setUp(); err != LIBXTUN_OK) {
             return err;

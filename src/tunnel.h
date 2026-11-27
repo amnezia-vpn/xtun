@@ -88,6 +88,7 @@ namespace libxtun
         Proxy *m_proxy = nullptr;
         std::vector<net::IpPrefix> m_addrs;
         std::vector<net::IpAddress> m_dnsDefaults;
+        int m_defaultMtu = 0;
     };
 }
 
